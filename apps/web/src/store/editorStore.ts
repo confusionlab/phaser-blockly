@@ -1,5 +1,5 @@
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
-import type { StageViewMode } from '@/lib/stageViewport';
+import type { StageEditorViewport, StageViewMode } from '@/lib/stageViewport';
 import type { ProjectReferenceOwnerTarget } from '@/lib/projectReferenceUsage';
 import type { PlayValidationIssue } from '@/lib/playValidation';
 import type { Project } from '@/types';
@@ -188,6 +188,9 @@ interface EditorStore {
 
   setViewMode: (mode: StageViewMode) => void;
   cycleViewMode: () => void;
+  getStageEditorViewport: (sceneId: string | null | undefined) => StageEditorViewport | null;
+  setStageEditorViewport: (sceneId: string | null | undefined, viewport: StageEditorViewport | null) => void;
+  clearStageEditorViewports: () => void;
 
   setShowProjectDialog: (show: boolean) => void;
   setShowReusableLibrary: (show: boolean) => void;
@@ -273,6 +276,8 @@ function getActiveEditorHandler(
 }
 
 function createEditorStore(): EditorStoreHook {
+  const stageEditorViewportBySceneId = new Map<string, StageEditorViewport>();
+
   return create<EditorStore>((set, get) => ({
   // Selection state
   selectedSceneId: null,
@@ -919,6 +924,28 @@ function createEditorStore(): EditorStoreHook {
     const currentMode = useEditorStore.getState().viewMode;
     // Toggle between camera view and editor (world) view
     set({ viewMode: currentMode === 'editor' ? 'camera-viewport' : 'editor' });
+  },
+
+  getStageEditorViewport: (sceneId) => {
+    if (!sceneId) {
+      return null;
+    }
+    return stageEditorViewportBySceneId.get(sceneId) ?? null;
+  },
+
+  setStageEditorViewport: (sceneId, viewport) => {
+    if (!sceneId) {
+      return;
+    }
+    if (!viewport) {
+      stageEditorViewportBySceneId.delete(sceneId);
+      return;
+    }
+    stageEditorViewportBySceneId.set(sceneId, viewport);
+  },
+
+  clearStageEditorViewports: () => {
+    stageEditorViewportBySceneId.clear();
   },
 
   setShowProjectDialog: (show) => {

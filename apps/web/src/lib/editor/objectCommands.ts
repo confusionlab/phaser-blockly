@@ -1,5 +1,6 @@
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import type { GameObject, Project } from '@/types';
+import type { ScenePasteTargetCenter } from '@/lib/editor/scenePastePlacement';
 import { getNextSiblingOrder, getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { normalizeVariableDefinition, remapVariableIdsInBlocklyXml } from '@/lib/variableUtils';
 
@@ -114,6 +115,51 @@ function resolveClipboardPasteParentId(
   return parentId;
 }
 
+function getClipboardEntriesPositionCenter(
+  entries: SceneObjectClipboardEntry[],
+): ScenePasteTargetCenter | null {
+  if (entries.length === 0) {
+    return null;
+  }
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  entries.forEach((entry) => {
+    minX = Math.min(minX, entry.object.x);
+    minY = Math.min(minY, entry.object.y);
+    maxX = Math.max(maxX, entry.object.x);
+    maxY = Math.max(maxY, entry.object.y);
+  });
+
+  return {
+    x: minX + ((maxX - minX) / 2),
+    y: minY + ((maxY - minY) / 2),
+  };
+}
+
+function getClipboardPastePosition(
+  entry: SceneObjectClipboardEntry,
+  mode: SceneObjectClipboardMode,
+  targetCenter: ScenePasteTargetCenter | null,
+  sourceCenter: ScenePasteTargetCenter | null,
+): ScenePasteTargetCenter {
+  if (targetCenter && sourceCenter) {
+    return {
+      x: entry.object.x + (targetCenter.x - sourceCenter.x),
+      y: entry.object.y + (targetCenter.y - sourceCenter.y),
+    };
+  }
+
+  const positionOffset = mode === 'copy' ? COPY_POSITION_OFFSET : 0;
+  return {
+    x: entry.object.x + positionOffset,
+    y: entry.object.y + positionOffset,
+  };
+}
+
 export function clearSceneObjectClipboard(): void {
   setSceneObjectClipboard(null);
 }
@@ -221,6 +267,7 @@ type PasteSceneObjectClipboardWithHistoryArgs = {
   source: string;
   project: Project;
   sceneId: string;
+  targetCenter?: ScenePasteTargetCenter | null;
   addObject: (sceneId: string, name: string) => GameObject;
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
   selectObjects: (objectIds: string[], primaryObjectId?: string | null) => void;
@@ -230,6 +277,7 @@ export function pasteSceneObjectClipboardWithHistory({
   source,
   project,
   sceneId,
+  targetCenter = null,
   addObject,
   updateObject,
   selectObjects,
@@ -242,7 +290,7 @@ export function pasteSceneObjectClipboardWithHistory({
 
   const pastedIds: string[] = [];
   const nextOrderByParent = new Map<string, number>();
-  const positionOffset = clipboard.mode === 'copy' ? COPY_POSITION_OFFSET : 0;
+  const sourceCenter = getClipboardEntriesPositionCenter(clipboard.entries);
 
   runInHistoryTransaction(source, () => {
     clipboard.entries.forEach((entry) => {
@@ -262,12 +310,13 @@ export function pasteSceneObjectClipboardWithHistory({
         layer: _ignoredLayer,
         ...snapshotUpdates
       } = cloneValue(entry.object);
+      const pastePosition = getClipboardPastePosition(entry, clipboard.mode, targetCenter, sourceCenter);
 
       updateObject(sceneId, pastedObject.id, {
         ...snapshotUpdates,
         name: nextName,
-        x: entry.object.x + positionOffset,
-        y: entry.object.y + positionOffset,
+        x: pastePosition.x,
+        y: pastePosition.y,
         parentId,
         order: nextOrder,
         folderId: undefined,

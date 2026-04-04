@@ -368,6 +368,60 @@ test.describe('Object delete undo history', () => {
     expect(useEditorStore.getState().selectedObjectIds).toEqual(pastedIds);
   });
 
+  test('scene object paste can center a pasted group on a target view center', async () => {
+    const { useProjectStore, useEditorStore } = await loadStores();
+    const fixture = buildProjectFixture();
+    fixture.project.scenes[0]!.objects[0] = {
+      ...fixture.project.scenes[0]!.objects[0]!,
+      x: 120,
+      y: -40,
+    };
+    fixture.project.scenes[0]!.objects[1] = {
+      ...fixture.project.scenes[0]!.objects[1]!,
+      x: 240,
+      y: 80,
+    };
+
+    useProjectStore.getState().openProject(fixture.project);
+    useEditorStore.getState().selectScene(fixture.sceneId, { recordHistory: false });
+    useEditorStore.getState().selectObjects([fixture.heroId, fixture.enemyId], fixture.heroId, { recordHistory: false });
+
+    const copied = copySceneObjectsToClipboard(
+      useProjectStore.getState().project!,
+      fixture.sceneId,
+      [fixture.heroId, fixture.enemyId],
+    );
+    expect(copied).toBe(true);
+
+    const pastedIds = pasteSceneObjectClipboardWithHistory({
+      source: 'test:paste-object-centered',
+      project: useProjectStore.getState().project!,
+      sceneId: fixture.sceneId,
+      targetCenter: { x: 500, y: 300 },
+      addObject: useProjectStore.getState().addObject,
+      updateObject: useProjectStore.getState().updateObject,
+      selectObjects: useEditorStore.getState().selectObjects,
+    });
+
+    expect(pastedIds).toHaveLength(2);
+
+    const pastedObjects = useProjectStore
+      .getState()
+      .project?.scenes
+      .find((scene) => scene.id === fixture.sceneId)
+      ?.objects.filter((object) => pastedIds.includes(object.id)) ?? [];
+
+    expect(pastedObjects).toHaveLength(2);
+
+    const pastedHero = pastedObjects.find((object) => object.id === pastedIds[0]);
+    const pastedEnemy = pastedObjects.find((object) => object.id === pastedIds[1]);
+    expect(pastedHero?.x).toBe(440);
+    expect(pastedHero?.y).toBe(240);
+    expect(pastedEnemy?.x).toBe(560);
+    expect(pastedEnemy?.y).toBe(360);
+    expect(useEditorStore.getState().selectedObjectIds).toEqual(pastedIds);
+  });
+
   test('shared object clipboard cut/paste removes and restores the object in one flow', async () => {
     const { useProjectStore, useEditorStore } = await loadStores();
     const fixture = buildProjectFixture();

@@ -946,7 +946,6 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   const creationIdRef = useRef(0); // Track which creation attempt is current
   // Track the initial scene when play mode starts - don't recreate game when scene changes during play
   const playModeInitialSceneRef = useRef<string | null>(null);
-  const editorViewportBySceneIdRef = useRef<Map<string, StageEditorViewport>>(new Map());
   const [editorViewportState, setEditorViewportState] = useState<StageEditorViewport | null>(null);
   const [activeRuntime, setActiveRuntime] = useState<RuntimeEngine | null>(null);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemEntry[]>([]);
@@ -969,7 +968,18 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   const editorSurfaceResizeCountRef = useRef(0);
 
   const { project, updateObject, addComponentInstance } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
+  const {
+    selectedSceneId,
+    selectedObjectId,
+    selectedObjectIds,
+    selectObjects,
+    selectScene,
+    showColliderOutlines,
+    viewMode,
+    getStageEditorViewport,
+    setStageEditorViewport,
+    clearStageEditorViewports,
+  } = useEditorStore();
 
   // Use refs for values accessed in Phaser callbacks to avoid stale closures
   const selectedSceneIdRef = useRef(selectedSceneId);
@@ -1132,29 +1142,27 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   }, [flushScheduledEditorCanvasResize, isPlaying]);
 
   useEffect(() => {
-    editorViewportBySceneIdRef.current.clear();
+    clearStageEditorViewports();
     setEditorViewportState(null);
-  }, [project?.id]);
+  }, [clearStageEditorViewports, project?.id]);
 
   const getStoredEditorViewport = useCallback((
     sceneId: string | null | undefined,
     canvasSize: StageSize,
   ): StageEditorViewport => {
-    const key = sceneId ?? '__default__';
-    const stored = editorViewportBySceneIdRef.current.get(key);
+    const stored = getStageEditorViewport(sceneId);
     return normalizeStageEditorViewport(stored, canvasSize);
-  }, []);
+  }, [getStageEditorViewport]);
 
   const storeEditorViewport = useCallback((
     sceneId: string | null | undefined,
     viewport: StageEditorViewport,
   ) => {
-    const key = sceneId ?? '__default__';
-    editorViewportBySceneIdRef.current.set(key, viewport);
+    setStageEditorViewport(sceneId, viewport);
     if (sceneId === selectedSceneIdRef.current) {
       setEditorViewportState(viewport);
     }
-  }, []);
+  }, [setStageEditorViewport]);
 
   useEffect(() => {
     if (!project) {

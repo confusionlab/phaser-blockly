@@ -57,6 +57,7 @@ import {
   nudgeSceneObjectsWithHistory,
   pasteSceneObjectClipboardWithHistory,
 } from '@/lib/editor/objectCommands';
+import { getScenePasteTargetCenter } from '@/lib/editor/scenePastePlacement';
 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | null;
@@ -189,6 +190,8 @@ export function EditorLayout() {
     backgroundEditorOpen,
     worldBoundaryEditorOpen,
     cycleViewMode,
+    viewMode,
+    getStageEditorViewport,
     assistantLockRunId,
     assistantLockMessage,
   } = useEditorStore();
@@ -916,6 +919,12 @@ export function EditorLayout() {
     const selectedSceneObjectIds = selectedObjectIds.length > 0
       ? selectedObjectIds
       : (selectedObjectId ? [selectedObjectId] : []);
+    const stagePasteTargetCenter = getScenePasteTargetCenter({
+      project,
+      sceneId: selectedSceneId,
+      viewMode,
+      editorViewport: getStageEditorViewport(selectedSceneId),
+    });
 
     if (e.defaultPrevented || e.isComposing) {
       return;
@@ -1104,6 +1113,7 @@ export function EditorLayout() {
         source: 'shortcut:paste',
         project,
         sceneId: selectedSceneId,
+        targetCenter: stagePasteTargetCenter,
         addObject,
         updateObject,
         selectObjects,
@@ -1230,6 +1240,8 @@ export function EditorLayout() {
     backgroundEditorOpen,
     backgroundUndoHandler,
     cycleViewMode,
+    viewMode,
+    getStageEditorViewport,
     handleCodeEditorFullscreenChange,
     handleStageCanvasFullscreenChange,
     assistantLockRunId,

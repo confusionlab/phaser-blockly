@@ -75,6 +75,7 @@ import {
   hasSceneObjectClipboardContents,
   pasteSceneObjectClipboardWithHistory,
 } from '@/lib/editor/objectCommands';
+import { getScenePasteTargetCenter } from '@/lib/editor/scenePastePlacement';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { ShelfTreeRow } from './ShelfTreeRow';
@@ -245,6 +246,8 @@ export function SpriteShelf({
     clearSelection,
     collapsedFolderIdsByScene,
     setCollapsedFoldersForScene,
+    viewMode,
+    getStageEditorViewport,
   } = useEditorStore();
   const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
@@ -945,10 +948,17 @@ export function SpriteShelf({
 
   const handlePaste = () => {
     if (!project) return;
+    const targetCenter = getScenePasteTargetCenter({
+      project,
+      sceneId: selectedSceneId,
+      viewMode,
+      editorViewport: getStageEditorViewport(selectedSceneId),
+    });
     pasteSceneObjectClipboardWithHistory({
       source: 'sprite-shelf:paste-object',
       project,
       sceneId: selectedSceneId,
+      targetCenter,
       addObject,
       updateObject,
       selectObjects,
