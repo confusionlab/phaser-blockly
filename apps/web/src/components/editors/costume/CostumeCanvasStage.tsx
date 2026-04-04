@@ -140,6 +140,7 @@ export function CostumeCanvasStage({
         <div
           data-testid="costume-canvas-surface"
           className="border shadow-sm absolute top-0 left-0 overflow-hidden checkerboard-bg-soft"
+          onContextMenuCapture={onCanvasContextMenu}
           onContextMenu={onCanvasContextMenu}
           style={{
             width: CANVAS_SIZE,

@@ -157,6 +157,8 @@ interface BackgroundVectorCanvasProps {
   brushColor: string;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
+  vectorStyleChangeRevision: number;
+  latestVectorStyleUpdates: Partial<VectorToolStyle>;
   interactive: boolean;
   onDirty: () => void;
   onHistoryStateChange: (state: { canUndo: boolean; canRedo: boolean; isDirty: boolean }) => void;
@@ -170,6 +172,7 @@ interface BackgroundVectorCanvasProps {
   onVectorStyleSync: (snapshot: VectorToolStyleSelectionSnapshot) => boolean;
   onVectorStyleCapabilitiesSync: (capabilities: VectorStyleCapabilities) => void;
   onCanZoomToSelectionChange: (canZoom: boolean) => void;
+  onCanvasContextMenu?: (event: MouseEvent) => void;
 }
 
 function createPolygonShapePoints(kind: 'triangle' | 'star', start: WorldPoint, current: WorldPoint): { x: number; y: number }[] {
@@ -250,6 +253,37 @@ function buildVectorStyleProps(vectorStyle: VectorToolStyle, supportsFill: boole
   } as const;
 }
 
+function getChangedVectorStyleUpdates(
+  previous: VectorToolStyle,
+  next: VectorToolStyle,
+): Partial<VectorToolStyle> {
+  const updates: Partial<VectorToolStyle> = {};
+
+  if (previous.fillColor !== next.fillColor) {
+    updates.fillColor = next.fillColor;
+  }
+  if (previous.fillTextureId !== next.fillTextureId) {
+    updates.fillTextureId = next.fillTextureId;
+  }
+  if (previous.fillOpacity !== next.fillOpacity) {
+    updates.fillOpacity = next.fillOpacity;
+  }
+  if (previous.strokeColor !== next.strokeColor) {
+    updates.strokeColor = next.strokeColor;
+  }
+  if (previous.strokeOpacity !== next.strokeOpacity) {
+    updates.strokeOpacity = next.strokeOpacity;
+  }
+  if (previous.strokeWidth !== next.strokeWidth) {
+    updates.strokeWidth = next.strokeWidth;
+  }
+  if (previous.strokeBrushId !== next.strokeBrushId) {
+    updates.strokeBrushId = next.strokeBrushId;
+  }
+
+  return updates;
+}
+
 function getTextStyleSnapshot(obj: unknown): Partial<TextToolStyle> | null {
   if (!isTextObject(obj)) {
     return null;
@@ -317,6 +351,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   brushColor,
   textStyle,
   vectorStyle,
+  vectorStyleChangeRevision,
+  latestVectorStyleUpdates,
   interactive,
   onDirty,
   onHistoryStateChange,
@@ -330,6 +366,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   onVectorStyleSync,
   onVectorStyleCapabilitiesSync,
   onCanZoomToSelectionChange,
+  onCanvasContextMenu,
 }, ref) => {
   const hostElementRef = useRef<HTMLDivElement | null>(null);
   const textEditingHostRef = useRef<HTMLDivElement | null>(null);
@@ -387,6 +424,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const onVectorStyleSyncRef = useRef(onVectorStyleSync);
   const onVectorStyleCapabilitiesSyncRef = useRef(onVectorStyleCapabilitiesSync);
   const onCanZoomToSelectionChangeRef = useRef(onCanZoomToSelectionChange);
+  const onCanvasContextMenuRef = useRef(onCanvasContextMenu);
   const suppressDirtyRef = useRef(false);
   const pendingLoadPromiseRef = useRef<Promise<void>>(Promise.resolve());
   const ignoreCanvasHistoryEventsRef = useRef(false);
@@ -404,6 +442,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const renderVectorPointEditingGuideEffectRef = useRef<() => void>(() => undefined);
   const restoreAllOriginalControlsEffectRef = useRef<() => void>(() => undefined);
   const setVectorPointEditingTargetEffectRef = useRef<(target: any | null) => void>(() => undefined);
+  const previousVectorStyleRef = useRef(vectorStyle);
+  const previousVectorStyleChangeRevisionRef = useRef(vectorStyleChangeRevision);
 
   activeToolRef.current = activeTool;
   brushColorRef.current = brushColor;
@@ -428,6 +468,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   onVectorStyleSyncRef.current = onVectorStyleSync;
   onVectorStyleCapabilitiesSyncRef.current = onVectorStyleCapabilitiesSync;
   onCanZoomToSelectionChangeRef.current = onCanZoomToSelectionChange;
+  onCanvasContextMenuRef.current = onCanvasContextMenu;
 
   const emitHistoryState = useMemo(() => () => {
     const historyIndex = historyIndexRef.current;
@@ -1065,16 +1106,29 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       preserveObjectStacking: true,
       renderOnAddRemove: false,
       enableRetinaScaling: true,
-      stopContextMenu: true,
     });
     applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     const instrumentedCanvas = fabricCanvas as FabricCanvas & {
       upperCanvasEl?: HTMLCanvasElement;
       wrapperEl?: HTMLDivElement;
     };
+    const contextMenuTargets = [
+      instrumentedCanvas.upperCanvasEl,
+      instrumentedCanvas.wrapperEl,
+    ].filter((target): target is EventTarget => !!target);
     instrumentedCanvas.upperCanvasEl?.setAttribute('data-testid', 'background-vector-layer-canvas');
     instrumentedCanvas.wrapperEl?.setAttribute('data-testid', 'background-vector-layer-surface');
     instrumentedCanvas.wrapperEl?.classList.add('absolute', 'inset-0');
+    const handleContextMenu = (event: MouseEvent) => {
+      if (!interactive) {
+        return;
+      }
+      event.preventDefault();
+      onCanvasContextMenuRef.current?.(event);
+    };
+    contextMenuTargets.forEach((target) => {
+      target.addEventListener('contextmenu', handleContextMenu, true);
+    });
     const vectorTextureCanvas = document.createElement('canvas');
     vectorTextureCanvas.className = 'pointer-events-none absolute inset-0 z-[1]';
     vectorTextureCanvas.setAttribute('aria-hidden', 'true');
@@ -1112,6 +1166,9 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       clearHistoryEffectRef.current();
       onSelectionChangeRef.current(false);
       onTextSelectionChangeRef.current(false);
+      contextMenuTargets.forEach((target) => {
+        target.removeEventListener('contextmenu', handleContextMenu, true);
+      });
       try {
         fabricCanvas.dispose();
       } finally {
@@ -1197,6 +1254,12 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return;
     }
 
+    const liveSerializedDocument = serializeCanvas();
+    if (liveSerializedDocument && layer.vector.fabricJson === liveSerializedDocument) {
+      loadedLayerKeyRef.current = layerKey;
+      return;
+    }
+
     shapeDraftRef.current = null;
     shapeDraftHistoryBaselineRef.current = null;
     loadedLayerKeyRef.current = layerKey;
@@ -1209,6 +1272,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     loadSerializedDocument,
     renderVectorPointEditingGuide,
     restoreAllOriginalControls,
+    serializeCanvas,
     setVectorPointEditingTarget,
     syncSelectionState,
     syncTextSelectionState,
@@ -1917,6 +1981,12 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       const fabricCanvas = fabricCanvasRef.current;
       let flushed = false;
 
+      if (pendingVectorStyleHistorySaveRef.current !== null && typeof window !== 'undefined') {
+        window.clearTimeout(pendingVectorStyleHistorySaveRef.current);
+        pendingVectorStyleHistorySaveRef.current = null;
+        flushed = recordHistorySnapshot() || flushed;
+      }
+
       if (penAnchorPlacementSessionRef.current) {
         commitCurrentPenPlacement();
         flushed = true;
@@ -2142,14 +2212,23 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     syncTextStyleFromSelection,
   ]);
 
-  useEffect(() => {
+  const syncActiveVectorStyle = useCallback((
+    explicitVectorStyleUpdates?: Partial<VectorToolStyle>,
+    previousVectorStyle?: VectorToolStyle,
+  ) => {
     const fabricCanvas = fabricCanvasRef.current;
-    const activeObject = fabricCanvas?.getActiveObject() as any;
-    if (!fabricCanvas || !activeObject) {
+    if (!fabricCanvas) {
       return;
     }
-    if (skipNextSelectionSyncedVectorStyleApplyRef.current) {
+
+    const hasExplicitVectorStyleUpdates = !!explicitVectorStyleUpdates && Object.keys(explicitVectorStyleUpdates).length > 0;
+    if (!hasExplicitVectorStyleUpdates && skipNextSelectionSyncedVectorStyleApplyRef.current) {
       skipNextSelectionSyncedVectorStyleApplyRef.current = false;
+      return;
+    }
+
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    if (!activeObject) {
       return;
     }
 
@@ -2196,24 +2275,60 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
           textAlign: textStyle.textAlign,
           opacity: textStyle.opacity,
         });
-        activeObject.setCoords?.();
       }
     } else {
+      const vectorStyleUpdates =
+        hasExplicitVectorStyleUpdates
+          ? explicitVectorStyleUpdates
+          : previousVectorStyle
+            ? getChangedVectorStyleUpdates(previousVectorStyle, vectorStyle)
+            : vectorStyle;
+      if (Object.keys(vectorStyleUpdates).length === 0) {
+        return;
+      }
+
+      const fillStyleUpdates: Partial<Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>> = {};
+      const strokeStyleUpdates: Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>> = {};
+
+      if ('fillColor' in vectorStyleUpdates) {
+        fillStyleUpdates.fillColor = vectorStyleUpdates.fillColor;
+      }
+      if ('fillOpacity' in vectorStyleUpdates) {
+        fillStyleUpdates.fillOpacity = vectorStyleUpdates.fillOpacity;
+      }
+      if ('fillTextureId' in vectorStyleUpdates) {
+        fillStyleUpdates.fillTextureId = vectorStyleUpdates.fillTextureId;
+      }
+      if ('strokeColor' in vectorStyleUpdates) {
+        strokeStyleUpdates.strokeColor = vectorStyleUpdates.strokeColor;
+      }
+      if ('strokeOpacity' in vectorStyleUpdates) {
+        strokeStyleUpdates.strokeOpacity = vectorStyleUpdates.strokeOpacity;
+      }
+      if ('strokeWidth' in vectorStyleUpdates) {
+        strokeStyleUpdates.strokeWidth = vectorStyleUpdates.strokeWidth;
+      }
+      if ('strokeBrushId' in vectorStyleUpdates) {
+        strokeStyleUpdates.strokeBrushId = vectorStyleUpdates.strokeBrushId;
+      }
+
       didChange = applyVectorStyleUpdatesToSelection(activeObject, {
-        fillStyle: vectorStyle,
+        fillStyle: fillStyleUpdates,
         normalizeRendering: true,
-        strokeStyle: vectorStyle,
+        strokeStyle: strokeStyleUpdates,
       }) || didChange;
     }
 
-    if (didChange) {
-      fabricCanvas.requestRenderAll();
-      scheduleVectorStyleHistorySnapshot();
-      syncSelectionState();
+    if (!didChange) {
+      return;
     }
+
+    activeObject.setCoords?.();
+    fabricCanvas.requestRenderAll();
+    scheduleVectorStyleHistorySnapshot();
+    syncSelectionState();
   }, [
     brushColor,
-    recordHistorySnapshot,
     scheduleVectorStyleHistorySnapshot,
     syncSelectionState,
     textStyle.fontFamily,
@@ -2223,13 +2338,23 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     textStyle.opacity,
     textStyle.textAlign,
     textStyle.underline,
-    vectorStyle.fillColor,
-    vectorStyle.fillOpacity,
-    vectorStyle.fillTextureId,
-    vectorStyle.strokeBrushId,
-    vectorStyle.strokeColor,
-    vectorStyle.strokeOpacity,
-    vectorStyle.strokeWidth,
+    vectorStyle,
+  ]);
+
+  useEffect(() => {
+    const explicitVectorStyleUpdates = previousVectorStyleChangeRevisionRef.current !== vectorStyleChangeRevision
+      ? latestVectorStyleUpdates
+      : undefined;
+    syncActiveVectorStyle(explicitVectorStyleUpdates, previousVectorStyleRef.current);
+    previousVectorStyleRef.current = vectorStyle;
+    previousVectorStyleChangeRevisionRef.current = vectorStyleChangeRevision;
+  }, [
+    brushColor,
+    latestVectorStyleUpdates,
+    syncActiveVectorStyle,
+    textStyle,
+    vectorStyle,
+    vectorStyleChangeRevision,
   ]);
 
   return (

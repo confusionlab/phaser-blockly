@@ -388,7 +388,13 @@ async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promis
     slider.dispatchEvent(new Event('input', { bubbles: true }));
     slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
   }, opacityPercent);
-  await page.locator('div.fixed.inset-0.z-40').click({ force: true });
+  const overlay = page.locator('div.fixed.inset-0.z-40');
+  if (await overlay.count()) {
+    await overlay.first().click({ force: true });
+  } else {
+    await slider.focus();
+    await slider.press('Escape');
+  }
   await expect(slider).toBeHidden();
 }
 
@@ -397,7 +403,7 @@ function backgroundLayerRow(page: Page, index: number) {
 }
 
 async function setToolbarColorOpacity(page: Page, label: 'Fill' | 'Stroke', opacityPercent: number): Promise<void> {
-  const button = page.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }).first();
+  const button = page.getByRole('button', { name: new RegExp(`^${label}( \\(mixed\\))?$`, 'i') }).first();
   await button.click();
   const slider = page.getByTestId('compact-color-picker-opacity');
   await expect(slider).toBeVisible();
@@ -418,7 +424,7 @@ async function setToolbarColorOpacity(page: Page, label: 'Fill' | 'Stroke', opac
 }
 
 async function setToolbarHexColor(page: Page, label: 'Fill' | 'Stroke', hex: string): Promise<void> {
-  const button = page.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }).first();
+  const button = page.getByRole('button', { name: new RegExp(`^${label}( \\(mixed\\))?$`, 'i') }).first();
   await button.click();
   const hexInput = page.getByTestId('compact-color-picker-hex-input');
   await expect(hexInput).toBeVisible();
@@ -495,7 +501,7 @@ async function openBackgroundVectorContextMenu(
 
 async function expectVectorContextMenuOrder(page: Page): Promise<void> {
   const labels = await page.getByTestId('vector-selection-context-menu').getByRole('button').allTextContents();
-  expect(labels.map((label) => label.trim())).toEqual(['Copy', 'Cut', 'Paste', 'Duplicate']);
+  expect(labels.map((label) => label.trim())).toEqual(['Copy', 'Cut', 'Paste', 'Duplicate', 'Delete']);
 }
 
 async function cancelBackgroundEditor(page: Page): Promise<void> {
@@ -1125,7 +1131,7 @@ test.describe('Background editor', () => {
     await expectVectorContextMenuOrder(page);
     await page.getByTestId('vector-selection-context-menu').getByRole('button', { name: /^cut$/i }).click();
 
-    await expect(page.getByRole('button', { name: /^align$/i })).toBeDisabled();
+    await expect(page.getByRole('button', { name: /^align$/i })).toHaveCount(0);
 
     await openBackgroundVectorContextMenu(page, editor, 0.5, 0.5);
     await expectVectorContextMenuOrder(page);
@@ -1237,14 +1243,14 @@ test.describe('Background editor', () => {
 
     await page.getByRole('button', { name: /^rectangle$/i }).click();
 
-    await page.getByRole('button', { name: /^solid$/i }).first().click();
+    await page.getByRole('button', { name: /^solid$/i }).nth(1).click();
     await page.getByRole('menuitemradio', { name: /^paper$/i }).click();
     await page.mouse.move(editor.box.x + editor.box.width * 0.34, editor.box.y + editor.box.height * 0.34);
     await page.mouse.down();
     await page.mouse.move(editor.box.x + editor.box.width * 0.48, editor.box.y + editor.box.height * 0.5, { steps: 8 });
     await page.mouse.up();
 
-    await page.getByRole('button', { name: /^solid$/i }).nth(1).click();
+    await page.getByRole('button', { name: /^solid$/i }).first().click();
     await page.getByRole('menuitemradio', { name: /^marker$/i }).click();
     await page.getByRole('button', { name: /^paper$/i }).click();
     await page.getByRole('menuitemradio', { name: /^grain$/i }).click();
@@ -1267,7 +1273,7 @@ test.describe('Background editor', () => {
 
     await page.getByRole('button', { name: /^multiple$/i }).first().click();
     await page.getByRole('menuitemradio', { name: /^solid$/i }).click();
-    await page.getByRole('button', { name: /^multiple$/i }).nth(1).click();
+    await page.getByRole('button', { name: /^multiple$/i }).first().click();
     await page.getByRole('menuitemradio', { name: /^paper$/i }).click();
 
     await page.getByRole('button', { name: /done/i }).first().click();
@@ -1314,7 +1320,8 @@ test.describe('Background editor', () => {
     });
     await page.keyboard.up('Shift');
 
-    await expect(propertyBar.getByText('Multiple')).toHaveCount(2);
+    await expect(propertyBar.getByRole('button', { name: /stroke \(mixed\)/i }).getByText('?')).toBeVisible();
+    await expect(propertyBar.getByRole('button', { name: /fill \(mixed\)/i }).getByText('?')).toBeVisible();
 
     await setToolbarHexColor(page, 'Fill', '#FFFFFF');
 
@@ -1367,7 +1374,8 @@ test.describe('Background editor', () => {
     });
     await page.keyboard.up('Shift');
 
-    await expect(propertyBar.getByText('Multiple')).toHaveCount(2);
+    await expect(propertyBar.getByRole('button', { name: /stroke \(mixed\)/i }).getByText('?')).toBeVisible();
+    await expect(propertyBar.getByRole('button', { name: /fill \(mixed\)/i }).getByText('?')).toBeVisible();
 
     await setToolbarHexColor(page, 'Stroke', '#111111');
 
@@ -1545,6 +1553,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
     expect(baselineDarkPixels).toBeGreaterThan(0);
 
     const reopened = await openBackgroundEditor(page);
+    await reopened.canvas.click();
     await page.keyboard.press('v');
     await page.mouse.move(reopened.box.x + reopened.box.width * 0.34, reopened.box.y + reopened.box.height * 0.34);
     await page.mouse.down();

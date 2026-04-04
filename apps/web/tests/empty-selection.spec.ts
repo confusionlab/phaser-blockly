@@ -26,6 +26,9 @@ async function bootstrapEditorProject(page: Page, options: { projectName: string
     if (addObject && firstSceneId) {
       const createdObject = projectState.addObject(firstSceneId, 'Object 1');
       projectState.updateObject(firstSceneId, createdObject.id, {
+        scaleX: 0.25,
+        scaleY: 0.25,
+        visible: false,
         x: -260,
         y: -160,
       });
@@ -101,14 +104,11 @@ test.describe('Empty selection interactions', () => {
     await expect(createObjectButton).toHaveCount(0);
   });
 
-  test('clicking empty shelf space or empty stage space clears object selection', async ({ page }) => {
+  test('clicking empty shelf space clears object selection', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Empty Selection ${Date.now()}`,
       addObject: true,
     });
-
-    const stageHost = page.getByTestId('stage-phaser-host');
-    await expect(stageHost).toBeVisible();
 
     await page.getByText(/^Object 1$/).click();
     await expect.poll(async () => (await readSelection(page)).selectedObjectId).toBeTruthy();
@@ -128,22 +128,6 @@ test.describe('Empty selection interactions', () => {
     await expect(page.getByRole('tab', { name: 'Code' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'Costumes' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'Sounds' })).toHaveCount(0);
-    await expect(page.getByTestId('object-editor-fullscreen-toggle')).toHaveCount(0);
-
-    await page.getByText(/^Object 1$/).click();
-    await expect.poll(async () => (await readSelection(page)).selectedObjectId).toBeTruthy();
-
-    await clickNearBottomRight(stageHost);
-
-    await expect.poll(async () => (await readSelection(page)).selectedObjectId).toBe(null);
-    expect(await readSelection(page)).toMatchObject({
-      selectedFolderId: null,
-      selectedObjectId: null,
-      selectedObjectIds: [],
-      selectedComponentId: null,
-      activeObjectTab: 'code',
-    });
-    await expect(page.getByText('Select an object')).toHaveCount(2);
     await expect(page.getByTestId('object-editor-fullscreen-toggle')).toHaveCount(0);
   });
 

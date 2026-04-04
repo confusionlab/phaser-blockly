@@ -714,6 +714,8 @@ export function BackgroundCanvasEditor() {
   });
   const [textStyle, setTextStyle] = useState<TextToolStyle>(BACKGROUND_TOOLBAR_INITIAL_TEXT_STYLE);
   const [vectorStyle, setVectorStyle] = useState<VectorToolStyle>(BACKGROUND_TOOLBAR_VECTOR_STYLE);
+  const [vectorStyleChangeRevision, setVectorStyleChangeRevision] = useState(0);
+  const [latestVectorStyleUpdates, setLatestVectorStyleUpdates] = useState<Partial<VectorToolStyle>>({});
   const [zoom, setZoom] = useState(0.5);
   const [camera, setCamera] = useState({ x: 0, y: 0 });
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
@@ -3808,8 +3810,24 @@ export function BackgroundCanvasEditor() {
     setTextStyle((previous) => ({ ...previous, ...updates }));
   }, []);
   const handleToolbarVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
+    setLatestVectorStyleUpdates(updates);
+    setVectorStyleChangeRevision((revision) => revision + 1);
     setVectorStyleMixedState((prev) => clearVectorToolStyleMixedState(prev, updates));
-    setVectorStyle((prev) => ({ ...prev, ...updates }));
+    setVectorStyle((prev) => {
+      const next = { ...prev, ...updates };
+      if (
+        next.fillColor === prev.fillColor &&
+        next.fillTextureId === prev.fillTextureId &&
+        next.fillOpacity === prev.fillOpacity &&
+        next.strokeColor === prev.strokeColor &&
+        next.strokeOpacity === prev.strokeOpacity &&
+        next.strokeWidth === prev.strokeWidth &&
+        next.strokeBrushId === prev.strokeBrushId
+      ) {
+        return prev;
+      }
+      return next;
+    });
   }, []);
   const handleVectorSelectionChange = useCallback((hasSelection: boolean) => {
     setHasVectorSelection(hasSelection);
@@ -3847,7 +3865,7 @@ export function BackgroundCanvasEditor() {
     if (didMixedStateChange) {
       setVectorStyleMixedState(snapshot.mixed);
     }
-    return didStyleChange;
+    return didStyleChange || didMixedStateChange;
   }, []);
   const handleVectorStyleCapabilitiesSync = useCallback((capabilities: VectorStyleCapabilities) => {
     setVectorStyleCapabilities(capabilities);
@@ -4038,6 +4056,8 @@ export function BackgroundCanvasEditor() {
               brushColor={brushColor}
               textStyle={textStyle}
               vectorStyle={vectorStyle}
+              vectorStyleChangeRevision={vectorStyleChangeRevision}
+              latestVectorStyleUpdates={latestVectorStyleUpdates}
               interactive={editorMode === 'vector'}
               onDirty={handleVectorDocumentCommit}
               onHistoryStateChange={handleVectorHistoryStateChange}
@@ -4051,6 +4071,16 @@ export function BackgroundCanvasEditor() {
               onVectorStyleSync={handleVectorStyleSync}
               onVectorStyleCapabilitiesSync={handleVectorStyleCapabilitiesSync}
               onCanZoomToSelectionChange={setCanZoomToVectorSelection}
+              onCanvasContextMenu={(event) => {
+                event.preventDefault();
+                if (editorMode !== 'vector') {
+                  return;
+                }
+                setVectorContextMenuPosition({
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              }}
             />
           ) : null}
           {backgroundDocument ? (

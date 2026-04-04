@@ -616,7 +616,8 @@ export function useCostumeCanvasCommandController({
   ) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas || editorModeRef.current !== 'vector') return;
-    if (skipNextSelectionSyncedVectorStyleApplyRef.current) {
+    const hasExplicitVectorStyleUpdates = !!explicitVectorStyleUpdates && Object.keys(explicitVectorStyleUpdates).length > 0;
+    if (!hasExplicitVectorStyleUpdates && skipNextSelectionSyncedVectorStyleApplyRef.current) {
       skipNextSelectionSyncedVectorStyleApplyRef.current = false;
       return;
     }
@@ -646,7 +647,7 @@ export function useCostumeCanvasCommandController({
       });
     } else {
       const vectorStyleUpdates =
-        explicitVectorStyleUpdates && Object.keys(explicitVectorStyleUpdates).length > 0
+        hasExplicitVectorStyleUpdates
           ? explicitVectorStyleUpdates
           : previousVectorStyle
             ? getChangedVectorStyleUpdates(previousVectorStyle, vectorStyle)

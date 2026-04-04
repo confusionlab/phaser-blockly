@@ -1546,7 +1546,7 @@ export function CostumeEditor() {
     if (didMixedStateChange) {
       setVectorStyleMixedState(snapshot.mixed);
     }
-    return didStyleChange;
+    return didStyleChange || didMixedStateChange;
   }, []);
 
   const handleBitmapShapeStyleChange = useCallback((updates: Partial<BitmapShapeStyle>) => {

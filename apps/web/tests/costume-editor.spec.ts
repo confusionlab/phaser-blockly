@@ -105,7 +105,7 @@ async function openCostumeVectorContextMenu(page: Page, xFactor: number, yFactor
 
 async function expectVectorContextMenuOrder(page: Page): Promise<void> {
   const labels = await page.getByTestId('vector-selection-context-menu').getByRole('button').allTextContents();
-  expect(labels.map((label) => label.trim())).toEqual(['Copy', 'Cut', 'Paste', 'Duplicate']);
+  expect(labels.map((label) => label.trim())).toEqual(['Copy', 'Cut', 'Paste', 'Duplicate', 'Delete']);
 }
 
 async function readCostumeActiveLayerCursor(page: Page): Promise<string> {
@@ -1037,7 +1037,7 @@ test.describe('Costume editor tools', () => {
       await waitForCostumeCanvasReady(page);
     }
 
-    await page.getByRole('button', { name: /^brush$/i }).click();
+    await page.getByRole('button', { name: /^pencil$/i }).click();
 
     const propertyBar = page.getByTestId('costume-toolbar-properties');
     const toolBar = page.getByTestId('costume-toolbar-tools');
