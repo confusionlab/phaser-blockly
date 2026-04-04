@@ -78,13 +78,15 @@ type LegacyBackgroundPersistenceShape = PersistedBackgroundConfig & {
 };
 
 function toTypedBackgroundConfig(background: LegacyBackgroundPersistenceShape): BackgroundConfig {
+  const chunks = normalizeChunkDataMap(
+    background.chunks && typeof background.chunks === 'object'
+      ? background.chunks as Record<string, string>
+      : undefined,
+  );
+
   return {
     ...background,
-    chunks: normalizeChunkDataMap(
-      background.chunks && typeof background.chunks === 'object'
-        ? background.chunks as Record<string, string>
-        : undefined,
-    ),
+    ...(Object.keys(chunks).length > 0 ? { chunks } : {}),
   };
 }
 

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import { EDITOR_CHROME_Z_INDEX } from './editorChromeZIndices';
 
 type FloatingBottomToolbarVariant = 'property' | 'tool';
 
@@ -46,7 +47,10 @@ export function FloatingBottomToolbarDock({
   stackClassName,
 }: FloatingBottomToolbarDockProps) {
   return (
-    <div className={cn('pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4', className)}>
+    <div
+      className={cn('pointer-events-none absolute inset-x-0 bottom-4 flex justify-center px-4', className)}
+      style={{ zIndex: EDITOR_CHROME_Z_INDEX }}
+    >
       <div className={cn('flex max-w-full flex-col items-center gap-3', stackClassName)}>
         {children}
       </div>

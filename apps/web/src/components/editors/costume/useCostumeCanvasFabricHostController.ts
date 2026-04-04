@@ -21,8 +21,12 @@ import {
 } from '@/lib/editor/unifiedTransformGizmo';
 import {
   CANVAS_SIZE,
-  buildCenteredPolygonShapeDraft,
+  buildPolygonShapeDraft,
   getStrokedShapeBoundsFromPathBounds,
+  isSpaceKeyEvent,
+  resolveShapeDraft,
+  translateShapeDraftResolution,
+  type ShapeDraftSession,
 } from './costumeCanvasShared';
 import {
   getFabricFillValueForVectorTexture,
@@ -88,7 +92,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   penDraftRef: MutableRefObject<any>;
   pointSelectionMarqueeSessionRef: MutableRefObject<any>;
   pointSelectionTransformSessionRef: MutableRefObject<any>;
-  shapeDraftRef: MutableRefObject<any>;
+  shapeDraftRef: MutableRefObject<ShapeDraftSession | null>;
   suppressBitmapSelectionAutoCommitRef: MutableRefObject<boolean>;
   textEditingHostRef: RefObject<HTMLDivElement | null>;
   textStyleRef: MutableRefObject<any>;
@@ -223,6 +227,225 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     fabricCanvasRef.current = fabricCanvas;
     onFabricCanvasReady();
+
+    const shapeDraftModifierState = {
+      alt: false,
+      shift: false,
+      space: false,
+    };
+
+    const shouldIgnoreShapeShortcutTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.isContentEditable) return true;
+      const tagName = target.tagName.toLowerCase();
+      return tagName === 'input' || tagName === 'textarea' || tagName === 'select';
+    };
+
+    const applyResolvedShapeDraftToObject = (draft: ShapeDraftSession, start: Point, end: Point) => {
+      const object = draft.object;
+
+      if (draft.type === 'rectangle') {
+        const bounds = getStrokedShapeBoundsFromPathBounds(
+          start.x,
+          start.y,
+          end.x,
+          end.y,
+          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
+        );
+        object.set(bounds);
+        return;
+      }
+
+      if (draft.type === 'circle') {
+        const bounds = getStrokedShapeBoundsFromPathBounds(
+          start.x,
+          start.y,
+          end.x,
+          end.y,
+          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
+        );
+        object.set({
+          left: bounds.left,
+          top: bounds.top,
+          rx: bounds.width / 2,
+          ry: bounds.height / 2,
+        });
+        return;
+      }
+
+      if (draft.type === 'triangle' || draft.type === 'star') {
+        const polygonDraft = buildPolygonShapeDraft(draft.type, start, end);
+        object.set({
+          points: polygonDraft.points,
+        });
+        object.setDimensions?.();
+        object.set({
+          left: polygonDraft.left,
+          top: polygonDraft.top,
+        });
+        return;
+      }
+
+      object.set({
+        x1: start.x,
+        y1: start.y,
+        x2: end.x,
+        y2: end.y,
+      });
+    };
+
+    const renderActiveShapeDraft = (pointerOverride?: Point) => {
+      const draft = shapeDraftRef.current;
+      if (!draft) {
+        return false;
+      }
+
+      if (pointerOverride) {
+        draft.currentPointer = { x: pointerOverride.x, y: pointerOverride.y };
+      }
+
+      const rawPointer = new Point(draft.currentPointer.x, draft.currentPointer.y);
+      const resolution = draft.moveSession
+        ? translateShapeDraftResolution(draft.moveSession.originResolution, {
+            x: rawPointer.x - draft.moveSession.originPointer.x,
+            y: rawPointer.y - draft.moveSession.originPointer.y,
+          })
+        : resolveShapeDraft(
+            draft.type,
+            draft.anchor,
+            draft.currentPointer,
+            {
+              centered: shapeDraftModifierState.alt,
+              proportional: shapeDraftModifierState.shift,
+            },
+          );
+
+      applyResolvedShapeDraftToObject(
+        draft,
+        new Point(resolution.start.x, resolution.start.y),
+        new Point(resolution.end.x, resolution.end.y),
+      );
+      draft.object.setCoords();
+      fabricCanvas.requestRenderAll();
+      return true;
+    };
+
+    const setShapeDraftMoveMode = (enabled: boolean) => {
+      const draft = shapeDraftRef.current;
+      if (!draft) {
+        return false;
+      }
+
+      if (enabled) {
+        if (draft.moveSession) {
+          return false;
+        }
+        draft.moveSession = {
+          originPointer: { ...draft.currentPointer },
+          originAnchor: { ...draft.anchor },
+          originResolution: resolveShapeDraft(
+            draft.type,
+            draft.anchor,
+            draft.currentPointer,
+            {
+              centered: shapeDraftModifierState.alt,
+              proportional: shapeDraftModifierState.shift,
+            },
+          ),
+        };
+        return renderActiveShapeDraft();
+      }
+
+      if (!draft.moveSession) {
+        return false;
+      }
+
+      const { originAnchor, originPointer } = draft.moveSession;
+      draft.anchor = {
+        x: originAnchor.x + (draft.currentPointer.x - originPointer.x),
+        y: originAnchor.y + (draft.currentPointer.y - originPointer.y),
+      };
+      draft.moveSession = null;
+      return renderActiveShapeDraft();
+    };
+
+    const handleShapeModifierKeyDown = (event: KeyboardEvent) => {
+      if (shouldIgnoreShapeShortcutTarget(event.target) || !shapeDraftRef.current) {
+        return;
+      }
+
+      if (isSpaceKeyEvent(event)) {
+        event.preventDefault();
+        if (shapeDraftModifierState.space) {
+          return;
+        }
+        shapeDraftModifierState.space = true;
+        setShapeDraftMoveMode(true);
+        return;
+      }
+
+      if (event.key === 'Alt') {
+        event.preventDefault();
+        if (shapeDraftModifierState.alt) {
+          return;
+        }
+        shapeDraftModifierState.alt = true;
+        if (!shapeDraftRef.current.moveSession) {
+          renderActiveShapeDraft();
+        }
+        return;
+      }
+
+      if (event.key === 'Shift') {
+        event.preventDefault();
+        if (shapeDraftModifierState.shift) {
+          return;
+        }
+        shapeDraftModifierState.shift = true;
+        if (!shapeDraftRef.current.moveSession) {
+          renderActiveShapeDraft();
+        }
+      }
+    };
+
+    const handleShapeModifierKeyUp = (event: KeyboardEvent) => {
+      if (!shapeDraftRef.current) {
+        return;
+      }
+
+      if (isSpaceKeyEvent(event)) {
+        if (!shapeDraftModifierState.space) {
+          return;
+        }
+        event.preventDefault();
+        shapeDraftModifierState.space = false;
+        setShapeDraftMoveMode(false);
+        return;
+      }
+
+      if (event.key === 'Alt') {
+        if (!shapeDraftModifierState.alt) {
+          return;
+        }
+        event.preventDefault();
+        shapeDraftModifierState.alt = false;
+        if (!shapeDraftRef.current.moveSession) {
+          renderActiveShapeDraft();
+        }
+        return;
+      }
+
+      if (event.key === 'Shift') {
+        if (!shapeDraftModifierState.shift) {
+          return;
+        }
+        event.preventDefault();
+        shapeDraftModifierState.shift = false;
+        if (!shapeDraftRef.current.moveSession) {
+          renderActiveShapeDraft();
+        }
+      }
+    };
 
     const onMouseDown = (opt: any) => {
       const callbacks = callbacksRef.current;
@@ -406,6 +629,9 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       }
 
       if (tool === 'rectangle' || tool === 'circle' || tool === 'triangle' || tool === 'star' || tool === 'line') {
+        shapeDraftModifierState.alt = opt.e.altKey === true;
+        shapeDraftModifierState.shift = opt.e.shiftKey === true;
+        shapeDraftModifierState.space = false;
         const isVectorMode = mode === 'vector';
         const activeShapeStyle = isVectorMode ? vectorStyleRef.current : bitmapShapeStyleRef.current;
         const fillColor = activeShapeStyle.fillColor;
@@ -487,7 +713,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
         } else if (tool === 'triangle' || tool === 'star') {
-          const polygonDraft = buildCenteredPolygonShapeDraft(tool, pointer, pointer);
+          const polygonDraft = buildPolygonShapeDraft(tool, pointer, pointer);
           object = new Polygon(polygonDraft.points, {
             left: polygonDraft.left,
             top: polygonDraft.top,
@@ -525,8 +751,9 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         }
         shapeDraftRef.current = {
           type: tool,
-          startX: pointer.x,
-          startY: pointer.y,
+          anchor: { x: pointer.x, y: pointer.y },
+          currentPointer: { x: pointer.x, y: pointer.y },
+          moveSession: null,
           object,
         };
         fabricCanvas.add(object);
@@ -653,51 +880,9 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
       if (!shapeDraftRef.current || !opt.e) return;
       const pointer = fabricCanvas.getScenePoint(opt.e);
-      const draft = shapeDraftRef.current;
-      const object = draft.object;
-
-      if (draft.type === 'rectangle') {
-        const bounds = getStrokedShapeBoundsFromPathBounds(
-          draft.startX,
-          draft.startY,
-          pointer.x,
-          pointer.y,
-          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
-        );
-        object.set(bounds);
-      } else if (draft.type === 'circle') {
-        const bounds = getStrokedShapeBoundsFromPathBounds(
-          draft.startX,
-          draft.startY,
-          pointer.x,
-          pointer.y,
-          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
-        );
-        const rx = bounds.width / 2;
-        const ry = bounds.height / 2;
-        object.set({
-          left: bounds.left,
-          top: bounds.top,
-          rx,
-          ry,
-        });
-      } else if (draft.type === 'triangle' || draft.type === 'star') {
-        const polygonDraft = buildCenteredPolygonShapeDraft(
-          draft.type,
-          { x: draft.startX, y: draft.startY },
-          { x: pointer.x, y: pointer.y },
-        );
-        object.set({
-          left: polygonDraft.left,
-          top: polygonDraft.top,
-          points: polygonDraft.points,
-        });
-      } else {
-        object.set({ x2: pointer.x, y2: pointer.y });
-      }
-
-      object.setCoords();
-      fabricCanvas.requestRenderAll();
+      shapeDraftModifierState.alt = opt.e.altKey === true;
+      shapeDraftModifierState.shift = opt.e.shiftKey === true;
+      renderActiveShapeDraft(pointer);
     };
 
     const onMouseUp = () => {
@@ -897,6 +1082,10 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     fabricCanvas.on('text:changed', onTextChanged);
     fabricCanvas.on('text:editing:exited', onTextChanged);
     fabricCanvas.on('after:render', onAfterRender);
+    window.addEventListener('keydown', handleShapeModifierKeyDown, true);
+    window.addEventListener('keyup', handleShapeModifierKeyUp, true);
+    document.addEventListener('keydown', handleShapeModifierKeyDown, true);
+    document.addEventListener('keyup', handleShapeModifierKeyUp, true);
 
     const vectorStrokeCanvas = vectorStrokeCanvasRef.current;
     if (vectorStrokeCanvas) {
@@ -929,6 +1118,10 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       fabricCanvas.off('text:changed', onTextChanged);
       fabricCanvas.off('text:editing:exited', onTextChanged);
       fabricCanvas.off('after:render', onAfterRender);
+      window.removeEventListener('keydown', handleShapeModifierKeyDown, true);
+      window.removeEventListener('keyup', handleShapeModifierKeyUp, true);
+      document.removeEventListener('keydown', handleShapeModifierKeyDown, true);
+      document.removeEventListener('keyup', handleShapeModifierKeyUp, true);
       fabricCanvas.dispose();
       fabricCanvasHostRef.current?.replaceChildren();
       fabricCanvasElementRef.current = null;

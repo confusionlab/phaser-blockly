@@ -42,13 +42,19 @@ import {
 } from '@/lib/cloudProjectState';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
-import { isBlocklyShortcutTarget, isSceneObjectShortcutSurfaceTarget, isTextEntryTarget } from '@/utils/keyboard';
+import {
+  getSelectionNudgeDelta,
+  isBlocklyShortcutTarget,
+  isSceneObjectShortcutSurfaceTarget,
+  isTextEntryTarget,
+} from '@/utils/keyboard';
 import { useModal } from '@/components/ui/modal-provider';
 import {
   copySceneObjectsToClipboard,
   cutSceneObjectsWithHistory,
   deleteSceneObjectsWithHistory,
   duplicateSceneObjectsWithHistory,
+  nudgeSceneObjectsWithHistory,
   pasteSceneObjectClipboardWithHistory,
 } from '@/lib/editor/objectCommands';
 
@@ -1073,6 +1079,14 @@ export function EditorLayout() {
         return;
       }
 
+      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
+        e.preventDefault();
+        void Promise.resolve(costumeUndoHandler?.copySelection?.()).catch((error) => {
+          console.error('Failed to copy costume selection:', error);
+        });
+        return;
+      }
+
       if (!isSceneObjectShortcutContext || isInBlocklyArea || !project || !selectedSceneId || selectedSceneObjectIds.length === 0) {
         return;
       }
@@ -1084,6 +1098,14 @@ export function EditorLayout() {
 
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v' && !e.altKey) {
       if (isTyping) {
+        return;
+      }
+
+      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
+        e.preventDefault();
+        void Promise.resolve(costumeUndoHandler?.pasteSelection?.()).catch((error) => {
+          console.error('Failed to paste costume selection:', error);
+        });
         return;
       }
 
@@ -1107,6 +1129,14 @@ export function EditorLayout() {
 
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'x' && !e.altKey) {
       if (isTyping) {
+        return;
+      }
+
+      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
+        e.preventDefault();
+        void Promise.resolve(costumeUndoHandler?.cutSelection?.()).catch((error) => {
+          console.error('Failed to cut costume selection:', error);
+        });
         return;
       }
 
@@ -1169,6 +1199,33 @@ export function EditorLayout() {
         selectObjects,
       });
       return;
+    }
+
+    if (isSceneObjectShortcutContext && !isTyping && !isInBlocklyArea && project && selectedSceneId) {
+      const nudgeDelta = getSelectionNudgeDelta(e);
+      if (nudgeDelta && selectedSceneObjectIds.length > 0) {
+        const nudged = nudgeSceneObjectsWithHistory({
+          source: 'shortcut:nudge-scene-objects',
+          project,
+          sceneId: selectedSceneId,
+          objectIds: selectedSceneObjectIds,
+          dx: nudgeDelta.x,
+          dy: -nudgeDelta.y,
+          updateObject,
+        });
+        if (nudged) {
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+
+    if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes' && !isTyping && !isInBlocklyArea) {
+      const nudgeDelta = getSelectionNudgeDelta(e);
+      if (nudgeDelta && costumeUndoHandler?.nudgeSelection?.(nudgeDelta.x, nudgeDelta.y)) {
+        e.preventDefault();
+        return;
+      }
     }
 
     if (e.key === 'Enter' && activeObjectTab === 'costumes' && costumeUndoHandler?.isTextEditing?.()) {

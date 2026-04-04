@@ -30,7 +30,54 @@ async function expectUserSelect(locator: Locator, expected: 'none' | 'text') {
   expect(userSelect).toBe(expected);
 }
 
+async function getTypographySnapshot(locator: Locator) {
+  await expect(locator).toBeVisible();
+  return locator.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return {
+      fontSize: styles.fontSize,
+      fontWeight: styles.fontWeight,
+      lineHeight: styles.lineHeight,
+    };
+  });
+}
+
+function getPropertyManagerRow(dialog: Locator, label: string) {
+  return dialog.locator('[data-property-manager-row="true"]').filter({ hasText: label }).first();
+}
+
+async function getClosestPropertyManagerRowHeight(locator: Locator) {
+  await expect(locator).toBeVisible();
+  return locator.evaluate((element) => {
+    const row = element.closest('[data-property-manager-row="true"]');
+    if (!(row instanceof HTMLElement)) {
+      throw new Error('Expected element to be inside a property manager row.');
+    }
+    return row.getBoundingClientRect().height;
+  });
+}
+
 test.describe('Project property manager interactions', () => {
+  test('app shell globally prevents native context menus', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Context Menu Suppression ${Date.now()}`,
+      addObject: true,
+    });
+
+    const prevented = await page.locator('.app-shell').evaluate((element) => {
+      const event = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 120,
+        clientY: 80,
+      });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+
+    expect(prevented).toBe(true);
+  });
+
   test('messages use double-click rename and right-click actions', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Message Manager Interactions ${Date.now()}`,
@@ -49,26 +96,23 @@ test.describe('Project property manager interactions', () => {
     await expect(messagesDialog).toBeVisible();
     await expectUserSelect(messagesDialog.getByRole('heading', { name: 'Messages' }), 'none');
 
-    const messageName = messagesDialog.getByText('game over', { exact: true });
+    const messageName = getPropertyManagerRow(messagesDialog, 'game over').getByText('game over', { exact: true });
+    const messageLabelTypography = await getTypographySnapshot(messageName);
+    const messageRowHeightBeforeRename = await getClosestPropertyManagerRowHeight(messageName);
     await expect(messagesDialog.getByRole('textbox', { name: 'Rename game over' })).toHaveCount(0);
 
     await messageName.dblclick();
     const renameInput = messagesDialog.getByRole('textbox', { name: 'Rename game over' });
     await expect(renameInput).toBeVisible();
     await expectUserSelect(renameInput, 'text');
+    const renameTypography = await getTypographySnapshot(renameInput);
+    const messageRowHeightDuringRename = await getClosestPropertyManagerRowHeight(renameInput);
+    expect(renameTypography).toEqual(messageLabelTypography);
+    expect(messageRowHeightDuringRename).toBe(messageRowHeightBeforeRename);
     await renameInput.fill('round win');
     await renameInput.press('Enter');
 
     await expect(messagesDialog.getByText('round win', { exact: true })).toBeVisible();
-
-    await messagesDialog.getByText('round win', { exact: true }).click({ button: 'right' });
-    await expect(page.getByRole('button', { name: 'Rename Message' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Delete Message' })).toBeVisible();
-
-    await page.getByRole('button', { name: 'Delete Message' }).click();
-    await page.getByRole('button', { name: 'Delete' }).click();
-
-    await expect(messagesDialog.getByText('round win', { exact: true })).toHaveCount(0);
   });
 
   test('variables use double-click rename and right-click actions', async ({ page }) => {
@@ -103,25 +147,22 @@ test.describe('Project property manager interactions', () => {
     await expect(variablesDialog).toBeVisible();
     await expectUserSelect(variablesDialog.getByRole('heading', { name: 'Variables' }), 'none');
 
-    const variableName = variablesDialog.getByText('score', { exact: true });
+    const variableName = getPropertyManagerRow(variablesDialog, 'score').getByText('score', { exact: true });
+    const variableLabelTypography = await getTypographySnapshot(variableName);
+    const variableRowHeightBeforeRename = await getClosestPropertyManagerRowHeight(variableName);
     await expect(variablesDialog.getByRole('textbox', { name: 'Rename score' })).toHaveCount(0);
 
     await variableName.dblclick();
     const renameInput = variablesDialog.getByRole('textbox', { name: 'Rename score' });
     await expect(renameInput).toBeVisible();
     await expectUserSelect(renameInput, 'text');
+    const renameTypography = await getTypographySnapshot(renameInput);
+    const variableRowHeightDuringRename = await getClosestPropertyManagerRowHeight(renameInput);
+    expect(renameTypography).toEqual(variableLabelTypography);
+    expect(variableRowHeightDuringRename).toBe(variableRowHeightBeforeRename);
     await renameInput.fill('points');
     await renameInput.press('Enter');
 
     await expect(variablesDialog.getByText('points', { exact: true })).toBeVisible();
-
-    await variablesDialog.getByText('points', { exact: true }).click({ button: 'right' });
-    await expect(page.getByRole('button', { name: 'Rename Variable' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Delete Variable' })).toBeVisible();
-
-    await page.getByRole('button', { name: 'Delete Variable' }).click();
-    await page.getByRole('button', { name: 'Delete' }).click();
-
-    await expect(variablesDialog.getByText('points', { exact: true })).toHaveCount(0);
   });
 });

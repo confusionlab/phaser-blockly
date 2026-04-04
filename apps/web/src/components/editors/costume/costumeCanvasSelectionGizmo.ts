@@ -5,13 +5,18 @@ import {
   OBJECT_SELECTION_PADDING,
   VECTOR_SELECTION_BORDER_SCALE,
 } from './costumeCanvasShared';
-import { applyUnifiedObjectTransformGizmoAppearance } from './costumeCanvasObjectTransformGizmo';
+import {
+  applyUnifiedObjectTransformGizmoAppearance,
+  resolveTransformGizmoMetric,
+  type TransformGizmoRenderSpace,
+} from './costumeCanvasObjectTransformGizmo';
 
 interface SyncCanvasSelectionGizmoAppearanceOptions {
   fabricCanvas: FabricCanvas;
   getZoomInvariantMetric: (metric: number, zoom?: number) => number;
   pointEditingTarget: any | null;
   renderVectorPointEditingGuide: () => void;
+  renderSpace?: TransformGizmoRenderSpace;
   zoom: number;
 }
 
@@ -20,19 +25,40 @@ export function syncCanvasSelectionGizmoAppearance({
   getZoomInvariantMetric,
   pointEditingTarget,
   renderVectorPointEditingGuide,
+  renderSpace = 'external-scale',
   zoom,
 }: SyncCanvasSelectionGizmoAppearanceOptions) {
-  const selectionCornerSize = getZoomInvariantMetric(OBJECT_SELECTION_CORNER_SIZE, zoom);
-  const selectionBorderScale = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE, zoom);
-  const selectionPadding = getZoomInvariantMetric(OBJECT_SELECTION_PADDING, zoom);
+  const selectionCornerSize = resolveTransformGizmoMetric(
+    OBJECT_SELECTION_CORNER_SIZE,
+    getZoomInvariantMetric,
+    zoom,
+    renderSpace,
+  );
+  const selectionBorderScale = resolveTransformGizmoMetric(
+    VECTOR_SELECTION_BORDER_SCALE,
+    getZoomInvariantMetric,
+    zoom,
+    renderSpace,
+  );
+  const selectionPadding = resolveTransformGizmoMetric(
+    OBJECT_SELECTION_PADDING,
+    getZoomInvariantMetric,
+    zoom,
+    renderSpace,
+  );
 
   fabricCanvas.forEachObject((obj: any) => {
     if (obj === pointEditingTarget) {
       obj.borderScaleFactor = selectionBorderScale;
       obj.padding = 0;
-      obj.cornerSize = getZoomInvariantMetric(HANDLE_SIZE, zoom);
+      obj.cornerSize = resolveTransformGizmoMetric(
+        HANDLE_SIZE,
+        getZoomInvariantMetric,
+        zoom,
+        renderSpace,
+      );
     } else {
-      applyUnifiedObjectTransformGizmoAppearance(obj, getZoomInvariantMetric, zoom);
+      applyUnifiedObjectTransformGizmoAppearance(obj, getZoomInvariantMetric, zoom, renderSpace);
       obj.padding = selectionPadding;
       obj.cornerSize = selectionCornerSize;
     }
@@ -44,9 +70,14 @@ export function syncCanvasSelectionGizmoAppearance({
     if (activeObject === pointEditingTarget) {
       activeObject.borderScaleFactor = selectionBorderScale;
       activeObject.padding = 0;
-      activeObject.cornerSize = getZoomInvariantMetric(HANDLE_SIZE, zoom);
+      activeObject.cornerSize = resolveTransformGizmoMetric(
+        HANDLE_SIZE,
+        getZoomInvariantMetric,
+        zoom,
+        renderSpace,
+      );
     } else {
-      applyUnifiedObjectTransformGizmoAppearance(activeObject, getZoomInvariantMetric, zoom);
+      applyUnifiedObjectTransformGizmoAppearance(activeObject, getZoomInvariantMetric, zoom, renderSpace);
       activeObject.padding = selectionPadding;
       activeObject.cornerSize = selectionCornerSize;
     }

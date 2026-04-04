@@ -52,6 +52,8 @@ type FabricObjectWithTransformGizmo = {
   transparentCorners?: boolean;
 };
 
+export type TransformGizmoRenderSpace = 'external-scale' | 'fabric-viewport';
+
 type FabricScaleTransformStartState = {
   frame: NonNullable<ReturnType<typeof getObjectSceneTransformFrame>>;
   startDimensions: ReturnType<typeof getTransformStartDimensions>;
@@ -592,25 +594,57 @@ export function applyUnifiedFabricTransformCanvasOptions(fabricCanvas: FabricCan
   fabricCanvas.centeredKey = 'altKey';
 }
 
+export function resolveTransformGizmoMetric(
+  metric: number,
+  getZoomInvariantMetric: (metric: number, zoom?: number) => number,
+  zoom: number,
+  renderSpace: TransformGizmoRenderSpace,
+) {
+  return renderSpace === 'fabric-viewport'
+    ? metric
+    : getZoomInvariantMetric(metric, zoom);
+}
+
 export function applyUnifiedObjectTransformGizmoAppearance(
   object: FabricObjectWithTransformGizmo | null | undefined,
   getZoomInvariantMetric: (metric: number, zoom?: number) => number,
   zoom: number,
+  renderSpace: TransformGizmoRenderSpace = 'external-scale',
 ) {
   if (!object) {
     return;
   }
 
   object.borderColor = HIDDEN_SELECTION_COLOR;
-  object.borderScaleFactor = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE, zoom);
+  object.borderScaleFactor = resolveTransformGizmoMetric(
+    VECTOR_SELECTION_BORDER_SCALE,
+    getZoomInvariantMetric,
+    zoom,
+    renderSpace,
+  );
   object.borderOpacityWhenMoving = VECTOR_SELECTION_BORDER_OPACITY;
   object.cornerStyle = 'circle';
   object.cornerColor = HIDDEN_SELECTION_COLOR;
   object.cornerStrokeColor = HIDDEN_SELECTION_COLOR;
-  object.cornerSize = getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS * 2, zoom);
-  object.touchCornerSize = getZoomInvariantMetric((TRANSFORM_GIZMO_HANDLE_RADIUS + 16) * 2, zoom);
+  object.cornerSize = resolveTransformGizmoMetric(
+    TRANSFORM_GIZMO_HANDLE_RADIUS * 2,
+    getZoomInvariantMetric,
+    zoom,
+    renderSpace,
+  );
+  object.touchCornerSize = resolveTransformGizmoMetric(
+    (TRANSFORM_GIZMO_HANDLE_RADIUS + 16) * 2,
+    getZoomInvariantMetric,
+    zoom,
+    renderSpace,
+  );
   object.transparentCorners = false;
-  object.padding = getZoomInvariantMetric(OBJECT_SELECTION_PADDING, zoom);
+  object.padding = resolveTransformGizmoMetric(
+    OBJECT_SELECTION_PADDING,
+    getZoomInvariantMetric,
+    zoom,
+    renderSpace,
+  );
   object.selectionBackgroundColor = 'transparent';
   object.controls = createUnifiedObjectTransformControls();
   object.setCoords?.();

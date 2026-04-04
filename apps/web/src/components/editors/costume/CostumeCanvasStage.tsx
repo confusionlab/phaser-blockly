@@ -1,4 +1,4 @@
-import type { MutableRefObject, Ref, RefObject } from 'react';
+import type { MouseEventHandler, MutableRefObject, Ref, RefObject } from 'react';
 import { BitmapBrushCursorOverlay } from '@/components/editors/shared/BitmapBrushCursorOverlay';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import type { CostumeEditorMode, CostumeLayer } from '@/types';
@@ -30,6 +30,7 @@ interface CostumeCanvasStageProps {
   layerSurfaceRefs: MutableRefObject<Map<string, HTMLCanvasElement>>;
   maxZoom: number;
   minZoom: number;
+  onCanvasContextMenu?: MouseEventHandler<HTMLDivElement>;
   onRedo: () => void;
   onUndo: () => void;
   onZoomIn: () => void;
@@ -67,6 +68,7 @@ export function CostumeCanvasStage({
   layerSurfaceRefs,
   maxZoom,
   minZoom,
+  onCanvasContextMenu,
   onRedo,
   onUndo,
   onZoomIn,
@@ -138,6 +140,7 @@ export function CostumeCanvasStage({
         <div
           data-testid="costume-canvas-surface"
           className="border shadow-sm absolute top-0 left-0 overflow-hidden checkerboard-bg-soft"
+          onContextMenu={onCanvasContextMenu}
           style={{
             width: CANVAS_SIZE,
             height: CANVAS_SIZE,

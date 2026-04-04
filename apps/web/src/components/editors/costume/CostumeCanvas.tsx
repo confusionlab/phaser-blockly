@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useCallback, forwardRef, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback, forwardRef, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   Canvas as FabricCanvas,
   Control,
@@ -44,6 +44,7 @@ import {
   type PointSelectionTransformSession,
   type PointSelectionMarqueeSession,
   type PointSelectionTransformFrameState,
+  type ShapeDraftSession,
 } from './costumeCanvasShared';
 import { clearCanvasInCssPixels, syncCanvasViewportSize } from '@/lib/editor/canvasOverlay';
 import { useCostumeCanvasColliderController } from './useCostumeCanvasColliderController';
@@ -64,6 +65,8 @@ import { useCostumeCanvasVectorObjectController } from './useCostumeCanvasVector
 import { useCostumeCanvasVectorPathController } from './useCostumeCanvasVectorPathController';
 import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportController';
 import { syncCanvasSelectionGizmoAppearance } from './costumeCanvasSelectionGizmo';
+import { VectorSelectionContextMenu } from '@/components/editors/shared/VectorSelectionContextMenu';
+import { hasVectorClipboardContents } from '@/lib/editor/vectorClipboard';
 
 export { DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
 
@@ -89,7 +92,11 @@ export interface CostumeCanvasHandle {
   getLoadedSessionKey: () => string | null;
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
+  copySelection: () => Promise<boolean>;
+  cutSelection: () => Promise<boolean>;
+  pasteSelection: () => Promise<boolean>;
   moveSelectionOrder: (action: MoveOrderAction) => boolean;
+  nudgeSelection: (dx: number, dy: number) => boolean;
   flipSelection: (axis: SelectionFlipAxis) => boolean;
   rotateSelection: () => boolean;
   alignSelection: (action: AlignAction) => boolean;
@@ -221,7 +228,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const activeLayerLocked = hostedDocumentLayer?.locked ?? false;
   const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>(initialEditorMode);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
+  const [hasVectorSelection, setHasVectorSelection] = useState(false);
   const [canZoomToSelection, setCanZoomToSelection] = useState(false);
+  const [vectorContextMenuPosition, setVectorContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
   const editorModeRef = useRef<CostumeEditorMode>(initialEditorMode);
   const activeToolRef = useRef(activeTool);
@@ -294,17 +303,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const onTextSelectionChangeRef = useRef(onTextSelectionChange);
   onTextSelectionChangeRef.current = onTextSelectionChange;
   const onSelectionStateChangeRef = useRef(onSelectionStateChange);
-  onSelectionStateChangeRef.current = onSelectionStateChange;
+  onSelectionStateChangeRef.current = (state) => {
+    setHasVectorSelection(state.hasSelection);
+    onSelectionStateChange?.(state);
+  };
 
   const suppressHistoryRef = useRef(false);
   const bitmapRasterCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
 
-  const shapeDraftRef = useRef<{
-    type: 'rectangle' | 'circle' | 'triangle' | 'star' | 'line';
-    startX: number;
-    startY: number;
-    object: any;
-  } | null>(null);
+  const shapeDraftRef = useRef<ShapeDraftSession | null>(null);
 
   const bitmapFloatingObjectRef = useRef<any | null>(null);
   const bitmapSelectionStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -622,6 +629,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const {
     alignSelection,
     applyFill,
+    copySelection,
+    cutSelection,
     deleteSelection,
     duplicateSelection,
     exportCostumeState,
@@ -631,6 +640,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     isTextEditing,
     loadDocument,
     moveSelectionOrder,
+    nudgeSelection,
+    pasteSelection,
     rotateSelection,
     switchEditorMode,
     syncActiveVectorStyle,
@@ -1086,6 +1097,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     bitmapRasterCommitQueueRef,
     configureCanvasForTool,
     createSnapshot,
+    copySelection,
+    cutSelection,
     deleteSelection,
     duplicateSelection,
     exportCostumeState,
@@ -1100,6 +1113,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
     moveSelectionOrder,
+    nudgeSelection,
+    pasteSelection,
     persistedSnapshotRef,
     ref,
     rotateSelection,
@@ -1203,43 +1218,109 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     zoomToBounds(selectionSnapshot.bounds, 72);
   }, [getSelectionBoundsSnapshot, zoomToBounds]);
 
+  useEffect(() => {
+    if (editorModeState !== 'vector') {
+      setVectorContextMenuPosition(null);
+    }
+  }, [editorModeState]);
+
+  const closeVectorContextMenu = useCallback(() => {
+    setVectorContextMenuPosition(null);
+  }, []);
+
+  const handleVectorContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (editorModeState !== 'vector') {
+      return;
+    }
+
+    setVectorContextMenuPosition({
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }, [editorModeState]);
+
+  const handleVectorContextMenuCopy = useCallback(() => {
+    closeVectorContextMenu();
+    void copySelection().catch((error) => {
+      console.error('Failed to copy costume vector selection:', error);
+    });
+  }, [closeVectorContextMenu, copySelection]);
+
+  const handleVectorContextMenuCut = useCallback(() => {
+    closeVectorContextMenu();
+    void cutSelection().catch((error) => {
+      console.error('Failed to cut costume vector selection:', error);
+    });
+  }, [closeVectorContextMenu, cutSelection]);
+
+  const handleVectorContextMenuPaste = useCallback(() => {
+    closeVectorContextMenu();
+    void pasteSelection().catch((error) => {
+      console.error('Failed to paste costume vector selection:', error);
+    });
+  }, [closeVectorContextMenu, pasteSelection]);
+
+  const handleVectorContextMenuDuplicate = useCallback(() => {
+    closeVectorContextMenu();
+    void duplicateSelection().catch((error) => {
+      console.error('Failed to duplicate costume vector selection:', error);
+    });
+  }, [closeVectorContextMenu, duplicateSelection]);
+
   return (
-    <CostumeCanvasStage
-      activeLayerLocked={activeLayerLocked}
-      activeLayerOpacity={activeLayerOpacity}
-      activeLayerVisible={activeLayerVisible}
-      activeTool={activeTool}
-      bitmapSelectionCanvasRef={bitmapSelectionCanvasRef}
-      brushCursorOverlayRef={brushCursorOverlayRef}
-      cameraCenter={cameraCenter}
-      canRedo={canRedo}
-      canUndo={canUndo}
-      canZoomToSelection={canZoomToSelection}
-      colliderCanvasRef={colliderCanvasRef}
-      containerRef={containerRef}
-      documentLayers={documentLayers}
-      editorModeState={editorModeState}
-      fabricCanvasHostRef={setFabricCanvasHostNode}
-      hasBitmapFloatingSelection={hasBitmapFloatingSelection}
-      hostedLayerId={hostedDocumentLayer?.id ?? null}
-      hostedLayerReady={isHostedLayerReadyState}
-      isViewportPanning={isViewportPanning}
-      layerSurfaceRefs={layerSurfaceRefs}
-      maxZoom={MAX_ZOOM}
-      minZoom={MIN_ZOOM}
-      onRedo={onRedo}
-      onUndo={onUndo}
-      onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
-      onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
-      onZoomToActualSize={handleZoomToActualSize}
-      onZoomToFit={handleZoomToFit}
-      onZoomToSelection={handleZoomToSelection}
-      textEditingHostRef={textEditingHostRef}
-      vectorGuideCanvasRef={vectorGuideCanvasRef}
-      vectorStrokeCanvasRef={vectorStrokeCanvasRef}
-      viewportSize={viewportSize}
-      zoom={zoom}
-    />
+    <>
+      <CostumeCanvasStage
+        activeLayerLocked={activeLayerLocked}
+        activeLayerOpacity={activeLayerOpacity}
+        activeLayerVisible={activeLayerVisible}
+        activeTool={activeTool}
+        bitmapSelectionCanvasRef={bitmapSelectionCanvasRef}
+        brushCursorOverlayRef={brushCursorOverlayRef}
+        cameraCenter={cameraCenter}
+        canRedo={canRedo}
+        canUndo={canUndo}
+        canZoomToSelection={canZoomToSelection}
+        colliderCanvasRef={colliderCanvasRef}
+        containerRef={containerRef}
+        documentLayers={documentLayers}
+        editorModeState={editorModeState}
+        fabricCanvasHostRef={setFabricCanvasHostNode}
+        hasBitmapFloatingSelection={hasBitmapFloatingSelection}
+        hostedLayerId={hostedDocumentLayer?.id ?? null}
+        hostedLayerReady={isHostedLayerReadyState}
+        isViewportPanning={isViewportPanning}
+        layerSurfaceRefs={layerSurfaceRefs}
+        maxZoom={MAX_ZOOM}
+        minZoom={MIN_ZOOM}
+        onCanvasContextMenu={handleVectorContextMenu}
+        onRedo={onRedo}
+        onUndo={onUndo}
+        onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
+        onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
+        onZoomToActualSize={handleZoomToActualSize}
+        onZoomToFit={handleZoomToFit}
+        onZoomToSelection={handleZoomToSelection}
+        textEditingHostRef={textEditingHostRef}
+        vectorGuideCanvasRef={vectorGuideCanvasRef}
+        vectorStrokeCanvasRef={vectorStrokeCanvasRef}
+        viewportSize={viewportSize}
+        zoom={zoom}
+      />
+      {vectorContextMenuPosition ? (
+        <VectorSelectionContextMenu
+          canCopy={hasVectorSelection}
+          canPaste={hasVectorClipboardContents()}
+          onClose={closeVectorContextMenu}
+          onCopy={handleVectorContextMenuCopy}
+          onCut={handleVectorContextMenuCut}
+          onDuplicate={handleVectorContextMenuDuplicate}
+          onPaste={handleVectorContextMenuPaste}
+          position={vectorContextMenuPosition}
+        />
+      ) : null}
+    </>
   );
 });
 

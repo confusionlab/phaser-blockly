@@ -71,6 +71,31 @@ async function addVectorLayer(page: Page): Promise<void> {
   await page.getByRole('menuitem', { name: /^vector$/i }).click();
 }
 
+async function reopenCurrentProject(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const [{ loadProject, saveProject }, { useProjectStore }, { useEditorStore }] = await Promise.all([
+      import('/src/db/database.ts'),
+      import('/src/store/projectStore.ts'),
+      import('/src/store/editorStore.ts'),
+    ]);
+
+    const project = useProjectStore.getState().project;
+    if (!project) {
+      throw new Error('Missing project to reopen.');
+    }
+
+    await saveProject(project);
+    const reloadedProject = await loadProject(project.id);
+    if (!reloadedProject) {
+      throw new Error('Failed to reload saved project.');
+    }
+
+    useProjectStore.getState().openProject(reloadedProject);
+    const firstSceneId = reloadedProject.scenes[0]?.id ?? null;
+    useEditorStore.getState().selectScene(firstSceneId, { recordHistory: false });
+  });
+}
+
 test.describe('play mode background runtime', () => {
   test('bitmap backgrounds remain visible after entering play mode', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Play Background ${Date.now()}` });
@@ -85,6 +110,31 @@ test.describe('play mode background runtime', () => {
 
     await page.getByRole('button', { name: /done/i }).first().click();
     await expect(editor.root).toBeHidden();
+
+    await page.evaluate(async () => {
+      const { useEditorStore } = await import('/src/store/editorStore.ts');
+      useEditorStore.getState().startPlaying();
+    });
+
+    await expect(page.getByTestId('play-phaser-host')).toBeVisible();
+    await expect.poll(async () => readPlayCanvasDarkPixelCount(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('bitmap backgrounds remain visible in play mode after saving and reopening', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Play Background Reload ${Date.now()}` });
+    const editor = await openBackgroundEditor(page);
+
+    const startX = editor.box.x + editor.box.width * 0.44;
+    const startY = editor.box.y + editor.box.height * 0.44;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + editor.box.width * 0.08, startY + editor.box.height * 0.06, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await reopenCurrentProject(page);
 
     await page.evaluate(async () => {
       const { useEditorStore } = await import('/src/store/editorStore.ts');

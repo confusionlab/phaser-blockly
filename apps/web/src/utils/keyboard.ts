@@ -134,6 +134,18 @@ type FocusableElement = HTMLElement & {
   focus: (options?: FocusOptions) => void;
 };
 
+export type KeyboardSelectionNudgeDelta = {
+  x: number;
+  y: number;
+};
+
+const KEYBOARD_SELECTION_NUDGE_VECTORS: Record<string, KeyboardSelectionNudgeDelta> = {
+  ArrowUp: { x: 0, y: -1 },
+  ArrowDown: { x: 0, y: 1 },
+  ArrowLeft: { x: -1, y: 0 },
+  ArrowRight: { x: 1, y: 0 },
+};
+
 function asClosestCapableTarget(target: EventTarget | null): ClosestCapableTarget | null {
   if (!target || typeof target !== 'object') {
     return null;
@@ -229,6 +241,32 @@ export function shouldIgnoreGlobalKeyboardEvent(event: KeyboardEvent): boolean {
     || isTextEntryTarget(event.target)
     || isTextEntryTarget(getActiveElementTarget())
   );
+}
+
+export function getSelectionNudgeDelta(
+  event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey'>,
+  options: {
+    step?: number;
+    largeStep?: number;
+  } = {},
+): KeyboardSelectionNudgeDelta | null {
+  if (event.metaKey || event.ctrlKey || event.altKey) {
+    return null;
+  }
+
+  const direction = KEYBOARD_SELECTION_NUDGE_VECTORS[event.key];
+  if (!direction) {
+    return null;
+  }
+
+  const baseStep = Math.max(1, Math.round(options.step ?? 1));
+  const largeStep = Math.max(baseStep, Math.round(options.largeStep ?? 10));
+  const distance = event.shiftKey ? largeStep : baseStep;
+
+  return {
+    x: direction.x * distance,
+    y: direction.y * distance,
+  };
 }
 
 export function normalizeKeyboardCode(code: string): string {

@@ -10,9 +10,8 @@ import {
 import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { Card } from '@/components/ui/card';
-import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { IconButton } from '@/components/ui/icon-button';
-import { MenuItemButton } from '@/components/ui/menu-item-button';
+import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
 import { Plus, Upload, Loader2, Library, Copy, CopyPlus, Trash2, Clipboard, Scissors } from '@/components/ui/icons';
 import { processImage } from '@/utils/imageProcessor';
 import { calculateVisibleBounds } from '@/utils/imageBounds';
@@ -630,7 +629,7 @@ export const CostumeList = memo(({
             >
               Duplicate
             </MenuItemButton>
-            <DropdownMenuSeparator />
+            <MenuSeparator />
             <MenuItemButton
               icon={contextMenuCostume && savingToLibrary === contextMenuCostumeIndex ? (
                 <Loader2 className="size-4 animate-spin" />

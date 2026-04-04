@@ -47,17 +47,17 @@ import {
   isTextEditableObject,
 } from '@/components/editors/costume/costumeTextCommands';
 import {
-  applyVectorFillStyleToObject,
-  applyVectorStrokeStyleToObject,
+  applyVectorStyleUpdatesToSelection,
   VECTOR_JSON_EXTRA_PROPS,
+  cloneFabricObjectWithVectorStyle,
   getFabricFillValueForVectorTexture,
   getFabricStrokeValueForVectorBrush,
   getVectorStyleSelectionSnapshot,
   getVectorStyleCapabilitiesForSelection,
-  getVectorStyleTargets,
   isTextObject,
   normalizeVectorObjectRendering,
 } from '@/components/editors/costume/costumeCanvasVectorRuntime';
+import { useFabricVectorClipboardCommands } from '@/components/editors/shared/useFabricVectorClipboardCommands';
 import { renderVectorTextureOverlayForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
 import { useCostumeCanvasPenController } from '@/components/editors/costume/useCostumeCanvasPenController';
 import { useCostumeCanvasPenHotkeys } from '@/components/editors/costume/useCostumeCanvasPenHotkeys';
@@ -130,7 +130,12 @@ export interface BackgroundVectorCanvasHandle {
   canRedo: () => boolean;
   serialize: () => BackgroundVectorDocument | null;
   deleteSelection: () => boolean;
+  duplicateSelection: () => Promise<boolean>;
+  copySelection: () => Promise<boolean>;
+  cutSelection: () => Promise<boolean>;
+  pasteSelection: () => Promise<boolean>;
   moveSelectionOrder: (action: MoveOrderAction) => void;
+  nudgeSelection: (dx: number, dy: number) => boolean;
   flipSelection: (axis: SelectionFlipAxis) => void;
   rotateSelection: () => void;
   alignSelection: (action: AlignAction) => boolean;
@@ -836,6 +841,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     alignSelection: alignCanvasSelection,
     deleteSelection: deleteCanvasSelection,
     moveSelectionOrder: moveCanvasSelectionOrder,
+    nudgeSelection: nudgeCanvasSelection,
     flipSelection: flipCanvasSelection,
     rotateSelection: rotateCanvasSelection,
   } = useCostumeCanvasSelectionTransformCommands({
@@ -895,6 +901,23 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     }
     return didChange;
   }, [drawPenOverlay, syncPenPlacementToAltModifier]);
+
+  const {
+    duplicateSelection,
+    copySelection,
+    cutSelection,
+    pasteSelection,
+  } = useFabricVectorClipboardCommands({
+    beforeDuplicate: ignoreCanvasHistoryEventsTemporarily,
+    beforePaste: ignoreCanvasHistoryEventsTemporarily,
+    cloneObject: cloneFabricObjectWithVectorStyle,
+    deleteSelection: deleteCanvasSelection,
+    fabricCanvasRef,
+    normalizeCanvasVectorStrokeUniform,
+    pasteTargetCenter: worldPointToScenePoint(camera),
+    saveHistory: recordHistorySnapshot,
+    syncSelectionState,
+  });
   clearHistoryEffectRef.current = clearHistory;
   renderVectorPointEditingGuideEffectRef.current = renderVectorPointEditingGuide;
   restoreAllOriginalControlsEffectRef.current = restoreAllOriginalControls;
@@ -1105,6 +1128,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       getZoomInvariantMetric,
       pointEditingTarget: vectorPointEditingTargetRef.current,
       renderVectorPointEditingGuide,
+      renderSpace: 'fabric-viewport',
       zoom,
     });
     drawVectorTextureOverlay();
@@ -1531,10 +1555,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     };
 
     const handleObjectAdded = (event: { target?: any }) => {
+      bindTextObjectEvents(event.target);
       if (ignoreCanvasHistoryEventsRef.current) {
         return;
       }
-      bindTextObjectEvents(event.target);
       if (shapeDraftRef.current?.object === event.target) {
         return;
       }
@@ -1840,6 +1864,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         draft.object.set({
           points: createPolygonShapePoints(draft.tool, draft.start, currentScene),
         });
+        draft.object.setDimensions?.();
       }
       draft.object.setCoords?.();
       fabricCanvas.requestRenderAll();
@@ -2013,8 +2038,15 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     deleteSelection() {
       return deleteCanvasSelection();
     },
+    duplicateSelection,
+    copySelection,
+    cutSelection,
+    pasteSelection,
     moveSelectionOrder(action) {
       moveCanvasSelectionOrder(action);
+    },
+    nudgeSelection(dx, dy) {
+      return nudgeCanvasSelection(dx, dy);
     },
     flipSelection(axis) {
       flipCanvasSelection(axis);
@@ -2035,7 +2067,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     applyPointSelectionMarqueeSession,
     commitCurrentPenPlacement,
     configureCanvasForTool,
+    copySelection,
+    cutSelection,
     deleteCanvasSelection,
+    duplicateSelection,
     drawPenOverlay,
     emitHistoryState,
     finalizePenDraft,
@@ -2043,11 +2078,13 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     ignoreCanvasHistoryEventsTemporarily,
     interactive,
     moveCanvasSelectionOrder,
+    nudgeCanvasSelection,
     getSelectionBoundsSnapshot,
     layer,
     loadSerializedDocument,
     penAnchorPlacementSessionRef,
     penDraftRef,
+    pasteSelection,
     recordHistorySnapshot,
     renderVectorPointEditingGuide,
     rotateCanvasSelection,
@@ -2113,12 +2150,11 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         activeObject.setCoords?.();
       }
     } else {
-      const targets = getVectorStyleTargets(activeObject);
-      for (const target of targets) {
-        didChange = applyVectorStrokeStyleToObject(target, vectorStyle) || didChange;
-        didChange = applyVectorFillStyleToObject(target, vectorStyle) || didChange;
-        didChange = normalizeVectorObjectRendering(target) || didChange;
-      }
+      didChange = applyVectorStyleUpdatesToSelection(activeObject, {
+        fillStyle: vectorStyle,
+        normalizeRendering: true,
+        strokeStyle: vectorStyle,
+      }) || didChange;
     }
 
     if (didChange) {

@@ -190,6 +190,34 @@ test.describe('project store costume editor boundary', () => {
     expect(nextProject?.scenes[0]?.objects[1]?.costumes[0]?.assetId).toBe('data:image/png;base64,BBB');
   });
 
+  test('duplicateObject gives the copy independent nested costume and physics state', async () => {
+    const project = createDefaultProject('Duplicate object deep clone test');
+    const scene = project.scenes[0];
+    const original = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
+    original.sounds = [{ id: 'sound-a', name: 'Boop', assetId: 'sound-asset-a', trimStart: 0, trimEnd: 1, duration: 1 }];
+    original.physics = createDefaultPhysicsConfig();
+    original.collider = createDefaultColliderConfig('rect');
+    scene.objects = [original];
+
+    const useProjectStore = await openProject(project);
+    const duplicate = useProjectStore.getState().duplicateObject(scene.id, original.id);
+
+    expect(duplicate).toBeTruthy();
+
+    const nextProject = useProjectStore.getState().project;
+    const nextOriginal = nextProject?.scenes[0]?.objects.find((object) => object.id === original.id);
+    const nextDuplicate = nextProject?.scenes[0]?.objects.find((object) => object.id === duplicate?.id);
+
+    expect(nextOriginal).toBeTruthy();
+    expect(nextDuplicate).toBeTruthy();
+    expect(nextDuplicate?.costumes).not.toBe(nextOriginal?.costumes);
+    expect(nextDuplicate?.costumes[0]).not.toBe(nextOriginal?.costumes[0]);
+    expect(nextDuplicate?.costumes[0]?.document).not.toBe(nextOriginal?.costumes[0]?.document);
+    expect(nextDuplicate?.sounds).not.toBe(nextOriginal?.sounds);
+    expect(nextDuplicate?.physics).not.toBe(nextOriginal?.physics);
+    expect(nextDuplicate?.collider).not.toBe(nextOriginal?.collider);
+  });
+
   test('updates shared component costumes through the same validated target API', async () => {
     const project = createDefaultProject('Component costume test');
     const scene = project.scenes[0];

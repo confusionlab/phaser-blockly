@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Card } from '@/components/ui/card';
 import { IconButton } from '@/components/ui/icon-button';
-import { MenuItemButton } from '@/components/ui/menu-item-button';
+import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
 import {
   Dialog,
   DialogContent,
@@ -23,7 +23,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -1508,7 +1507,7 @@ export function SpriteShelf({
                 <MenuItemButton icon={<CopyPlus className="size-4" />} onClick={handleDuplicate}>
                   Duplicate
                 </MenuItemButton>
-                <DropdownMenuSeparator />
+                <MenuSeparator />
                 <MenuItemButton
                   icon={<Pencil className="size-4" />}
                   onClick={() => {

@@ -10,6 +10,8 @@ interface UseCostumeCanvasImperativeHandleOptions {
   bitmapRasterCommitQueueRef: MutableRefObject<Promise<void>>;
   configureCanvasForTool: () => void;
   createSnapshot: () => any;
+  copySelection: () => Promise<boolean>;
+  cutSelection: () => Promise<boolean>;
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
@@ -29,6 +31,8 @@ interface UseCostumeCanvasImperativeHandleOptions {
   markActiveLayerCanvasStatePersisted: (state: ActiveLayerCanvasState | null | undefined, sessionKey?: string | null) => void;
   markCurrentSnapshotPersisted: (sessionKey?: string | null) => void;
   moveSelectionOrder: (action: any) => boolean;
+  nudgeSelection: (dx: number, dy: number) => boolean;
+  pasteSelection: () => Promise<boolean>;
   persistedSnapshotRef: MutableRefObject<any>;
   ref: ForwardedRef<CostumeCanvasHandle>;
   rotateSelection: () => boolean;
@@ -57,6 +61,10 @@ export function useCostumeCanvasImperativeHandle({
   markActiveLayerCanvasStatePersisted,
   markCurrentSnapshotPersisted,
   moveSelectionOrder,
+  nudgeSelection,
+  copySelection,
+  cutSelection,
+  pasteSelection,
   persistedSnapshotRef,
   ref,
   rotateSelection,
@@ -127,7 +135,15 @@ export function useCostumeCanvasImperativeHandle({
 
     duplicateSelection,
 
+    copySelection,
+
+    cutSelection,
+
+    pasteSelection,
+
     moveSelectionOrder,
+
+    nudgeSelection,
 
     flipSelection,
 
@@ -161,6 +177,8 @@ export function useCostumeCanvasImperativeHandle({
     bitmapRasterCommitQueueRef,
     configureCanvasForTool,
     createSnapshot,
+    copySelection,
+    cutSelection,
     deleteSelection,
     duplicateSelection,
     exportCostumeState,
@@ -175,6 +193,8 @@ export function useCostumeCanvasImperativeHandle({
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
     moveSelectionOrder,
+    nudgeSelection,
+    pasteSelection,
     persistedSnapshotRef,
     ref,
     rotateSelection,

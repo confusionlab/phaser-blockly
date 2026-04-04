@@ -576,17 +576,26 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
             });
             duplicateBlocklyXml = remapVariableIdsInBlocklyXml(original.blocklyXml || '', variableIdMap);
           }
+          duplicateBlocklyXml = normalizeBlocklyXml(duplicateBlocklyXml);
+          const normalizedPhysicsCollider = normalizePhysicsCollider({
+            physics: cloneProject(original.physics),
+            collider: cloneProject(original.collider),
+          });
 
-          const duplicate: GameObject = {
+          const duplicate: GameObject = normalizePhysicsCollider({
             ...original,
             id: duplicateId,
             name: original.componentId ? original.name : `${original.name} Copy`,
             x: original.x + 50,
             y: original.y + 50,
             order: original.order + 1,
+            costumes: cloneProject(original.costumes || []),
+            sounds: cloneProject(original.sounds || []),
+            physics: normalizedPhysicsCollider.physics,
+            collider: normalizedPhysicsCollider.collider,
             blocklyXml: duplicateBlocklyXml,
             localVariables: duplicateLocalVariables,
-          };
+          });
 
           return normalizeSceneLayering({
             ...scene,

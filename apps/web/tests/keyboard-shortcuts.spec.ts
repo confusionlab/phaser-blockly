@@ -1,6 +1,32 @@
 import { expect, test, type Page } from '@playwright/test';
 import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
+async function readSelectedObjectPosition(page: Page): Promise<{ x: number | null; y: number | null } | null> {
+  return await page.evaluate(async () => {
+    const [{ useProjectStore }, { useEditorStore }] = await Promise.all([
+      import('/src/store/projectStore.ts'),
+      import('/src/store/editorStore.ts'),
+    ]);
+
+    const { project } = useProjectStore.getState();
+    const { selectedSceneId, selectedObjectId } = useEditorStore.getState();
+    if (!project || !selectedSceneId || !selectedObjectId) {
+      return null;
+    }
+
+    const scene = project.scenes.find((candidate) => candidate.id === selectedSceneId);
+    const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
+    if (!object) {
+      return null;
+    }
+
+    return {
+      x: typeof object.x === 'number' ? object.x : null,
+      y: typeof object.y === 'number' ? object.y : null,
+    };
+  });
+}
+
 async function addSoundToSelectedObject(page: Page, name: string): Promise<void> {
   await page.evaluate(({ soundName }) => {
     const createSilentWavDataUrl = () => {
@@ -142,6 +168,34 @@ test.describe('Keyboard shortcuts', () => {
     await page.keyboard.press('ControlOrMeta+D');
 
     await expect(page.getByText(/^Object 1 Copy$/)).toBeVisible();
+  });
+
+  test('the stage keyboard surface nudges selected scene objects with arrow keys', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Arrow Shortcut ${Date.now()}`,
+      addObject: true,
+    });
+
+    const stageShortcutSurface = page.locator('[data-editor-panel="stage"] [data-editor-shortcut-surface="scene-objects"]').first();
+    await expect(stageShortcutSurface).toBeVisible();
+    await stageShortcutSurface.focus();
+
+    const before = await readSelectedObjectPosition(page);
+    expect(before).not.toBeNull();
+
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Shift+ArrowUp');
+
+    await expect.poll(async () => {
+      const after = await readSelectedObjectPosition(page);
+      if (!before || !after) {
+        return null;
+      }
+      return {
+        dx: (after.x ?? 0) - (before.x ?? 0),
+        dy: (after.y ?? 0) - (before.y ?? 0),
+      };
+    }).toEqual({ dx: 1, dy: 10 });
   });
 
   test('clicking the object shelf restores copy, paste, and cut shortcuts', async ({ page }) => {

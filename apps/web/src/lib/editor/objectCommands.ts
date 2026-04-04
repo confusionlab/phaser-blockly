@@ -299,6 +299,16 @@ type CutSceneObjectsWithHistoryArgs = DeleteSceneObjectsWithHistoryArgs & {
   project: Project;
 };
 
+type NudgeSceneObjectsWithHistoryArgs = {
+  source: string;
+  project: Project;
+  sceneId: string;
+  objectIds: string[];
+  dx: number;
+  dy: number;
+  updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
+};
+
 export function cutSceneObjectsWithHistory({
   source,
   project,
@@ -339,6 +349,47 @@ export function cutSceneObjectsWithHistory({
     const remainingSceneIds = orderedSceneObjectIds.filter((objectId) => !deleteSet.has(objectId));
     selectObject(remainingSceneIds[0] ?? null);
   });
+}
+
+export function nudgeSceneObjectsWithHistory({
+  source,
+  project,
+  sceneId,
+  objectIds,
+  dx,
+  dy,
+  updateObject,
+}: NudgeSceneObjectsWithHistoryArgs): boolean {
+  if (dx === 0 && dy === 0) {
+    return false;
+  }
+
+  const scene = project.scenes.find((candidate) => candidate.id === sceneId);
+  if (!scene) {
+    return false;
+  }
+
+  const requestedIds = new Set(objectIds);
+  if (requestedIds.size === 0) {
+    return false;
+  }
+
+  const objectsToMove = getSceneObjectsInLayerOrder(scene)
+    .filter((object) => requestedIds.has(object.id));
+  if (objectsToMove.length === 0) {
+    return false;
+  }
+
+  runInHistoryTransaction(source, () => {
+    objectsToMove.forEach((object) => {
+      updateObject(sceneId, object.id, {
+        x: object.x + dx,
+        y: object.y + dy,
+      });
+    });
+  });
+
+  return true;
 }
 
 type AddComponentInstanceWithHistoryArgs = {

@@ -41,6 +41,7 @@ export const PEN_TOOL_DRAG_THRESHOLD_PX = 4;
 export const OBJECT_SELECTION_CORNER_SIZE = 12;
 export const OBJECT_SELECTION_PADDING = 2;
 export const DEFAULT_COSTUME_PREVIEW_SCALE = BASE_VIEW_SCALE;
+export const SHAPE_LINE_SNAP_INCREMENT_RADIANS = Math.PI / 4;
 export const VECTOR_TOOL_STYLE_KEYS: Array<keyof VectorToolStyle> = [
   'fillColor',
   'fillTextureId',
@@ -377,7 +378,132 @@ export function buildStarPoints(
   return points;
 }
 
-export function buildCenteredPolygonShapeDraft(
+export type ShapeDraftType = 'rectangle' | 'circle' | 'triangle' | 'star' | 'line';
+
+export interface ShapeDraftPointer {
+  x: number;
+  y: number;
+}
+
+export interface ShapeDraftResolution {
+  start: ShapeDraftPointer;
+  end: ShapeDraftPointer;
+}
+
+export interface ShapeDraftMoveSession {
+  originPointer: ShapeDraftPointer;
+  originAnchor: ShapeDraftPointer;
+  originResolution: ShapeDraftResolution;
+}
+
+export interface ShapeDraftSession {
+  type: ShapeDraftType;
+  anchor: ShapeDraftPointer;
+  currentPointer: ShapeDraftPointer;
+  moveSession: ShapeDraftMoveSession | null;
+  object: any;
+}
+
+function resolveConstraintSign(primaryDelta: number, secondaryDelta: number) {
+  if (primaryDelta > 0) return 1;
+  if (primaryDelta < 0) return -1;
+  if (secondaryDelta > 0) return 1;
+  if (secondaryDelta < 0) return -1;
+  return 1;
+}
+
+export function getConstrainedShapeDelta(
+  type: ShapeDraftType,
+  deltaX: number,
+  deltaY: number,
+  options: { proportional?: boolean } = {},
+) {
+  if (type === 'line' && options.proportional) {
+    const length = Math.hypot(deltaX, deltaY);
+    if (length <= 0.0001) {
+      return { deltaX: 0, deltaY: 0 };
+    }
+
+    const snappedAngle = Math.round(Math.atan2(deltaY, deltaX) / SHAPE_LINE_SNAP_INCREMENT_RADIANS)
+      * SHAPE_LINE_SNAP_INCREMENT_RADIANS;
+    return {
+      deltaX: Math.cos(snappedAngle) * length,
+      deltaY: Math.sin(snappedAngle) * length,
+    };
+  }
+
+  if (!options.proportional || type === 'line') {
+    return { deltaX, deltaY };
+  }
+
+  const size = Math.max(Math.abs(deltaX), Math.abs(deltaY));
+  return {
+    deltaX: resolveConstraintSign(deltaX, deltaY) * size,
+    deltaY: resolveConstraintSign(deltaY, deltaX) * size,
+  };
+}
+
+export function resolveShapeDraft(
+  type: ShapeDraftType,
+  anchor: ShapeDraftPointer,
+  current: ShapeDraftPointer,
+  options: { centered?: boolean; proportional?: boolean } = {},
+): ShapeDraftResolution {
+  const constrainedDelta = getConstrainedShapeDelta(
+    type,
+    current.x - anchor.x,
+    current.y - anchor.y,
+    { proportional: options.proportional },
+  );
+
+  if (options.centered) {
+    return {
+      start: {
+        x: anchor.x - constrainedDelta.deltaX,
+        y: anchor.y - constrainedDelta.deltaY,
+      },
+      end: {
+        x: anchor.x + constrainedDelta.deltaX,
+        y: anchor.y + constrainedDelta.deltaY,
+      },
+    };
+  }
+
+  return {
+    start: { x: anchor.x, y: anchor.y },
+    end: {
+      x: anchor.x + constrainedDelta.deltaX,
+      y: anchor.y + constrainedDelta.deltaY,
+    },
+  };
+}
+
+export function translateShapeDraftResolution(
+  resolution: ShapeDraftResolution,
+  delta: ShapeDraftPointer,
+): ShapeDraftResolution {
+  return {
+    start: {
+      x: resolution.start.x + delta.x,
+      y: resolution.start.y + delta.y,
+    },
+    end: {
+      x: resolution.end.x + delta.x,
+      y: resolution.end.y + delta.y,
+    },
+  };
+}
+
+export function isSpaceKeyEvent(event: { key?: string; code?: string }) {
+  return (
+    event.key === ' ' ||
+    event.key === 'Space' ||
+    event.key === 'Spacebar' ||
+    event.code === 'Space'
+  );
+}
+
+export function buildPolygonShapeDraft(
   kind: 'triangle' | 'star',
   start: { x: number; y: number },
   current: { x: number; y: number },

@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { EDITOR_CHROME_Z_INDEX } from './editorChromeZIndices';
 
 interface CanvasViewportOverlayProps {
   canUndo: boolean;
@@ -52,7 +53,10 @@ export function CanvasViewportOverlay({
   const showSelectionZoomAction = typeof onZoomToSelection === 'function';
 
   return (
-    <div className={cn('pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-3 py-3', className)}>
+    <div
+      className={cn('pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between px-3 py-3', className)}
+      style={{ zIndex: EDITOR_CHROME_Z_INDEX }}
+    >
       <div className="pointer-events-auto flex items-center gap-1">
         <IconButton
           className={overlayButtonClassName}

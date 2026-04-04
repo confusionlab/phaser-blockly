@@ -40,3 +40,13 @@ export const MenuItemButton = React.forwardRef<HTMLButtonElement, MenuItemButton
     </Button>
   )
 })
+
+export function MenuSeparator({ className }: { className?: string }) {
+  return (
+    <div
+      aria-hidden="true"
+      className={cn("mx-3 my-1 h-px shrink-0 bg-border", className)}
+      data-slot="menu-separator"
+    />
+  )
+}

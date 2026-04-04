@@ -14,15 +14,15 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { IconButton } from '@/components/ui/icon-button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
-import { MenuItemButton } from '@/components/ui/menu-item-button';
+import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
 import { Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Plus, Shapes, Trash2 } from '@/components/ui/icons';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
+import { EDITOR_CHROME_Z_INDEX, EDITOR_POPOVER_Z_INDEX } from './editorChromeZIndices';
 
 const DEFAULT_LAYER_THUMBNAIL_SIZE = 44;
 const MAX_CONTEXT_MENU_MARGIN = 12;
@@ -476,7 +476,10 @@ export const LayerPanel = memo(({
 
   return (
     <>
-      <div className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2">
+      <div
+        className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2"
+        style={{ zIndex: EDITOR_CHROME_Z_INDEX }}
+      >
         <div
           data-testid="layer-panel"
           onPointerEnter={() => setIsPanelHovered(true)}
@@ -672,13 +675,18 @@ export const LayerPanel = memo(({
 
       {contextMenuLayer ? (
         <>
-          <div className="fixed inset-0 z-40" onClick={closeContextMenu} />
+          <div
+            className="fixed inset-0"
+            style={{ zIndex: EDITOR_POPOVER_Z_INDEX - 1 }}
+            onClick={closeContextMenu}
+          />
           <Card
             ref={contextMenuRef}
-            className="fixed z-50 min-w-56 gap-0 rounded-2xl border-border/80 bg-surface-floating px-0 py-1.5 shadow-[0_28px_80px_-34px_rgba(2,6,23,0.78)]"
+            className="fixed min-w-56 gap-0 rounded-2xl border-border/80 bg-surface-floating px-0 py-1.5 shadow-[0_28px_80px_-34px_rgba(2,6,23,0.78)]"
             style={{
               left: contextMenuPosition?.left ?? contextMenu?.x ?? 0,
               top: contextMenuPosition?.top ?? contextMenu?.y ?? 0,
+              zIndex: EDITOR_POPOVER_Z_INDEX,
             }}
           >
             <div className="px-3 py-2">
@@ -701,7 +709,7 @@ export const LayerPanel = memo(({
               />
             </div>
 
-            <DropdownMenuSeparator />
+            <MenuSeparator />
 
             <MenuItemButton
               icon={<Copy className="size-4" />}

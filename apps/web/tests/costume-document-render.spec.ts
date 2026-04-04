@@ -3,6 +3,134 @@ import { expect, test } from '@playwright/test';
 const APP_URL = process.env.POCHA_E2E_BASE_URL ?? '/';
 
 test.describe('costume document textured vector rendering', () => {
+  test('keeps solid strokes above textured fills', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const [{ createVectorLayer }, { renderCostumeLayerToCanvas }] = await Promise.all([
+        import('/src/lib/costume/costumeDocument.ts'),
+        import('/src/lib/costume/costumeDocumentRender.ts'),
+      ]);
+
+      const layer = createVectorLayer({
+        name: 'Textured Fill With Solid Stroke',
+        fabricJson: JSON.stringify({
+          version: '7.0.0',
+          objects: [{
+            type: 'rect',
+            version: '7.0.0',
+            originX: 'center',
+            originY: 'center',
+            left: 512,
+            top: 512,
+            width: 260,
+            height: 220,
+            fill: 'rgba(239, 68, 68, 0)',
+            stroke: '#2563eb',
+            strokeWidth: 40,
+            strokeUniform: true,
+            noScaleCache: false,
+            vectorFillTextureId: 'grain',
+            vectorFillColor: '#ef4444',
+            vectorFillOpacity: 1,
+            vectorStrokeBrushId: 'solid',
+            vectorStrokeColor: '#2563eb',
+            vectorStrokeOpacity: 1,
+          }],
+        }),
+      });
+
+      const canvas = await renderCostumeLayerToCanvas(layer);
+      if (!canvas) {
+        throw new Error('Expected textured vector layer to render.');
+      }
+
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        throw new Error('Failed to acquire rendered layer context.');
+      }
+
+      let firstOpaqueX = -1;
+      for (let x = 0; x < canvas.width; x += 1) {
+        const alpha = ctx.getImageData(x, 512, 1, 1).data[3] ?? 0;
+        if (alpha > 0) {
+          firstOpaqueX = x;
+          break;
+        }
+      }
+      if (firstOpaqueX < 0) {
+        throw new Error('Expected to find opaque pixels on the center scanline.');
+      }
+
+      let strokeSampleX = -1;
+      for (let x = firstOpaqueX; x < Math.min(canvas.width, firstOpaqueX + 80); x += 1) {
+        const pixel = ctx.getImageData(x, 512, 1, 1).data;
+        const red = pixel[0] ?? 0;
+        const blue = pixel[2] ?? 0;
+        if ((pixel[3] ?? 0) > 0 && blue > red) {
+          strokeSampleX = x;
+          break;
+        }
+      }
+      if (strokeSampleX < 0) {
+        throw new Error('Expected to find a blue-dominant solid stroke pixel on the center scanline.');
+      }
+
+      const strokePixel = ctx.getImageData(strokeSampleX, 512, 1, 1).data;
+      const innerStrokePixel = ctx.getImageData(strokeSampleX + 10, 512, 1, 1).data;
+      let fillSampleX = -1;
+      let fillPixel: Uint8ClampedArray | null = null;
+      for (let x = strokeSampleX + 30; x < Math.min(canvas.width, strokeSampleX + 180); x += 1) {
+        const pixel = ctx.getImageData(x, 512, 1, 1).data;
+        const red = pixel[0] ?? 0;
+        const blue = pixel[2] ?? 0;
+        if ((pixel[3] ?? 0) > 0 && red > blue) {
+          fillSampleX = x;
+          fillPixel = pixel;
+          break;
+        }
+      }
+      if (!fillPixel || fillSampleX < 0) {
+        throw new Error('Expected to find a red-dominant textured fill pixel on the center scanline.');
+      }
+
+      return {
+        firstOpaqueX,
+        fillSampleX,
+        strokeSampleX,
+        stroke: {
+          red: strokePixel[0] ?? 0,
+          green: strokePixel[1] ?? 0,
+          blue: strokePixel[2] ?? 0,
+          alpha: strokePixel[3] ?? 0,
+        },
+        innerStroke: {
+          red: innerStrokePixel[0] ?? 0,
+          green: innerStrokePixel[1] ?? 0,
+          blue: innerStrokePixel[2] ?? 0,
+          alpha: innerStrokePixel[3] ?? 0,
+        },
+        fill: {
+          red: fillPixel[0] ?? 0,
+          green: fillPixel[1] ?? 0,
+          blue: fillPixel[2] ?? 0,
+          alpha: fillPixel[3] ?? 0,
+        },
+      };
+    });
+
+    expect(result.stroke.alpha).toBeGreaterThan(0);
+    expect(result.stroke.blue).toBeGreaterThan(result.stroke.red);
+    expect(result.innerStroke.alpha).toBeGreaterThan(0);
+    expect(result.innerStroke.blue).toBeGreaterThan(result.innerStroke.red);
+    expect(result.firstOpaqueX).toBeGreaterThan(0);
+    expect(result.fillSampleX).toBeGreaterThan(result.strokeSampleX);
+    expect(result.strokeSampleX).toBeGreaterThan(0);
+    expect(result.fill.alpha).toBeGreaterThan(0);
+    expect(result.fill.red).toBeGreaterThan(result.fill.blue);
+  });
+
   test('renders textured vector layers for inactive surfaces, previews, and runtime assets', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');

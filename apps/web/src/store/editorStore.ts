@@ -38,6 +38,10 @@ export type UndoRedoHandler = {
   prepareForPlay?: () => void | Promise<void>;
   deleteSelection?: () => boolean;
   duplicateSelection?: () => boolean | Promise<boolean>;
+  copySelection?: () => boolean | Promise<boolean>;
+  cutSelection?: () => boolean | Promise<boolean>;
+  pasteSelection?: () => boolean | Promise<boolean>;
+  nudgeSelection?: (dx: number, dy: number) => boolean;
   isTextEditing?: () => boolean;
 };
 

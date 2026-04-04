@@ -10,9 +10,8 @@ import {
 import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { Card } from '@/components/ui/card';
-import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { IconButton } from '@/components/ui/icon-button';
-import { MenuItemButton } from '@/components/ui/menu-item-button';
+import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
 import { SoundLibraryBrowser } from '@/components/dialogs/SoundLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
@@ -475,7 +474,7 @@ export const SoundList = memo(({
             >
               Duplicate
             </MenuItemButton>
-            <DropdownMenuSeparator />
+            <MenuSeparator />
             <MenuItemButton
               icon={contextMenuSound && savingToLibrary === contextMenuSoundIndex ? (
                 <Loader2 className="size-4 animate-spin" />

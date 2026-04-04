@@ -66,6 +66,7 @@ import {
   getCachedCostumeDocumentPreview,
   renderCostumeDocumentPreview,
 } from '@/lib/costume/costumeDocumentRender';
+import { resolveBackgroundRuntimeChunkData } from '@/lib/background/backgroundDocumentRender';
 import { invalidateImageSource } from '@/lib/assets/imageSourceCache';
 import {
   canonicalizePersistedComponentDefinition,
@@ -1189,6 +1190,7 @@ async function normalizeProjectAssetsForStorage(
 
     background.document = document;
     delete (background as { chunks?: Record<string, string> }).chunks;
+    await resolveBackgroundRuntimeChunkData(background);
   };
 
   for (const scene of nextProject.scenes || []) {
@@ -1269,6 +1271,7 @@ export async function prepareSceneTemplateForStorage(
 
     background.document = document;
     delete (background as { chunks?: Record<string, string> }).chunks;
+    await resolveBackgroundRuntimeChunkData(background);
   };
 
   await normalizeBackground(nextScene.background);
@@ -1354,6 +1357,7 @@ async function hydrateProjectAssetsFromStorage(
 
     background.document = document;
     delete (background as { chunks?: Record<string, string> }).chunks;
+    await resolveBackgroundRuntimeChunkData(background);
   };
 
   for (const scene of nextProject.scenes || []) {
@@ -1455,12 +1459,8 @@ export async function hydrateSceneTemplateFromStorage(
     }
 
     background.document = document;
-    background.chunks = document.layers.reduce<Record<string, string>>((chunks, layer) => {
-      if (!isBitmapBackgroundLayer(layer)) {
-        return chunks;
-      }
-      return { ...chunks, ...layer.bitmap.chunks };
-    }, {});
+    delete (background as { chunks?: Record<string, string> }).chunks;
+    await resolveBackgroundRuntimeChunkData(background);
   };
 
   await hydrateBackground(nextScene.background);

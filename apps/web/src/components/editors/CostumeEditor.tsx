@@ -954,8 +954,12 @@ export function CostumeEditor() {
       prepareForPlay: async () => {
         await prepareCostumeStateForPlay();
       },
+      copySelection: () => canvasRef.current?.copySelection() ?? false,
+      cutSelection: () => canvasRef.current?.cutSelection() ?? false,
       deleteSelection: () => canvasRef.current?.deleteSelection() ?? false,
       duplicateSelection: () => canvasRef.current?.duplicateSelection() ?? false,
+      pasteSelection: () => canvasRef.current?.pasteSelection() ?? false,
+      nudgeSelection: (dx, dy) => canvasRef.current?.nudgeSelection(dx, dy) ?? false,
       isTextEditing: () => canvasRef.current?.isTextEditing() ?? false,
     };
     registerCostumeUndo(handler);

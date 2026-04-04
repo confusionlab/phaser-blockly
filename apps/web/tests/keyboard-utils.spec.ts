@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   acquireGlobalKeyboardCapture,
+  getSelectionNudgeDelta,
   isBlocklyShortcutTarget,
   isTextEntryTarget,
   shouldIgnoreGlobalKeyboardEvent,
@@ -83,5 +84,51 @@ test.describe('keyboard target guards', () => {
       isComposing: false,
       target: createTarget(),
     } as KeyboardEvent)).toBe(false);
+  });
+
+  test('resolves arrow keys into 1px nudges by default', () => {
+    expect(getSelectionNudgeDelta({
+      key: 'ArrowLeft',
+      shiftKey: false,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+    } as KeyboardEvent)).toEqual({ x: -1, y: 0 });
+
+    expect(getSelectionNudgeDelta({
+      key: 'ArrowUp',
+      shiftKey: false,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+    } as KeyboardEvent)).toEqual({ x: 0, y: -1 });
+  });
+
+  test('resolves shift+arrow keys into larger nudges', () => {
+    expect(getSelectionNudgeDelta({
+      key: 'ArrowRight',
+      shiftKey: true,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+    } as KeyboardEvent)).toEqual({ x: 10, y: 0 });
+  });
+
+  test('ignores non-arrow or modified selection nudge keys', () => {
+    expect(getSelectionNudgeDelta({
+      key: 'a',
+      shiftKey: false,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+    } as KeyboardEvent)).toBeNull();
+
+    expect(getSelectionNudgeDelta({
+      key: 'ArrowDown',
+      shiftKey: false,
+      metaKey: false,
+      ctrlKey: true,
+      altKey: false,
+    } as KeyboardEvent)).toBeNull();
   });
 });

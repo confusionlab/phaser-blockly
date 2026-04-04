@@ -174,6 +174,56 @@ async function readSavedBackgroundVectorObjectCount(page: Page): Promise<number>
   });
 }
 
+async function readSavedBackgroundVectorObjectPosition(
+  page: Page,
+): Promise<{ left: number | null; top: number | null } | null> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const vectorLayer = project?.scenes[0]?.background?.document?.layers?.find(
+      (layer: { kind: string }) => layer.kind === 'vector',
+    ) as { vector?: { fabricJson?: string } } | undefined;
+    if (!vectorLayer?.vector?.fabricJson) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{ left?: unknown; top?: unknown }>;
+      };
+      const entry = Array.isArray(parsed.objects) ? parsed.objects[0] : null;
+      if (!entry) {
+        return null;
+      }
+      return {
+        left: typeof entry.left === 'number' ? entry.left : null,
+        top: typeof entry.top === 'number' ? entry.top : null,
+      };
+    } catch {
+      return null;
+    }
+  });
+}
+
+async function readObjectCurrentCostumeVectorObjectCount(page: Page, objectName: string): Promise<number> {
+  return await page.evaluate(async ({ objectName }) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const object = project?.scenes?.[0]?.objects?.find((candidate) => candidate.name === objectName);
+    const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+    const vectorLayers = costume?.document?.layers?.filter((layer) => layer.kind === 'vector') ?? [];
+
+    return vectorLayers.reduce((count, layer) => {
+      try {
+        const parsed = JSON.parse(layer.vector.fabricJson) as { objects?: unknown[] };
+        return count + (Array.isArray(parsed.objects) ? parsed.objects.length : 0);
+      } catch {
+        return count;
+      }
+    }, 0);
+  }, { objectName });
+}
+
 async function readSavedBackgroundVectorObjectStyle(page: Page): Promise<{
   fillOpacity: number | null;
   strokeOpacity: number | null;
@@ -425,6 +475,27 @@ async function openBackgroundEditor(page: Page) {
     throw new Error('Background editor canvas is missing a bounding box.');
   }
   return { root, canvas, box };
+}
+
+async function openBackgroundVectorContextMenu(
+  page: Page,
+  editor: { box: { width: number; height: number } },
+  xFactor: number,
+  yFactor: number,
+): Promise<void> {
+  await page.getByTestId('background-vector-layer-canvas').click({
+    button: 'right',
+    position: {
+      x: Math.round(editor.box.width * xFactor),
+      y: Math.round(editor.box.height * yFactor),
+    },
+  });
+  await expect(page.getByTestId('vector-selection-context-menu')).toBeVisible();
+}
+
+async function expectVectorContextMenuOrder(page: Page): Promise<void> {
+  const labels = await page.getByTestId('vector-selection-context-menu').getByRole('button').allTextContents();
+  expect(labels.map((label) => label.trim())).toEqual(['Copy', 'Cut', 'Paste', 'Duplicate']);
 }
 
 async function cancelBackgroundEditor(page: Page): Promise<void> {
@@ -743,6 +814,45 @@ test.describe('Background editor', () => {
     }).toBe(true);
   });
 
+  test('open background pen paths render textured fills', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+    await expect(vectorCanvas).toBeVisible();
+
+    const pointA = { x: Math.round(editor.box.width * 0.42), y: Math.round(editor.box.height * 0.34) };
+    const pointB = { x: Math.round(editor.box.width * 0.58), y: Math.round(editor.box.height * 0.42) };
+    const pointC = { x: Math.round(editor.box.width * 0.49), y: Math.round(editor.box.height * 0.62) };
+    const insideSample = { x: Math.round(editor.box.width * 0.5), y: Math.round(editor.box.height * 0.47) };
+    const outsideSample = { x: Math.round(editor.box.width * 0.16), y: Math.round(editor.box.height * 0.14) };
+
+    await page.getByRole('button', { name: /^pen$/i }).click();
+    await vectorCanvas.click({ position: pointA });
+    await vectorCanvas.click({ position: pointB });
+    await vectorCanvas.click({ position: pointC });
+    await page.keyboard.press('Enter');
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({ position: pointB });
+
+    await setToolbarColorOpacity(page, 'Stroke', 0);
+    await setToolbarColorOpacity(page, 'Fill', 100);
+    await setToolbarHexColor(page, 'Fill', '#22C55E');
+    await page.getByRole('button', { name: /^solid$/i }).last().click();
+    await page.getByRole('menuitemradio', { name: /^linen$/i }).click();
+
+    await expect.poll(async () => {
+      const inside = await readBackgroundEditorCompositePixel(page, insideSample);
+      const outside = await readBackgroundEditorCompositePixel(page, outsideSample);
+      if (!inside || !outside) {
+        return false;
+      }
+      return JSON.stringify(inside) !== JSON.stringify(outside);
+    }).toBe(true);
+  });
+
   test('vector point editing uses the shared costume handle controls', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 
@@ -817,6 +927,213 @@ test.describe('Background editor', () => {
     await expect(zoomToSelection).toBeEnabled();
     await zoomToSelection.click();
     await expect(zoomButton).not.toContainText(initialZoomText);
+  });
+
+  test('vector selections duplicate with ControlOrMeta+D inside the background editor', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const startX = editor.box.x + editor.box.width * 0.42;
+    const startY = editor.box.y + editor.box.height * 0.4;
+    const endX = editor.box.x + editor.box.width * 0.58;
+    const endY = editor.box.y + editor.box.height * 0.56;
+    const centerX = (startX + endX) / 2;
+    const centerY = (startY + endY) / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({
+      position: {
+        x: Math.round(centerX - editor.box.x),
+        y: Math.round(centerY - editor.box.y),
+      },
+    });
+
+    await page.keyboard.press('ControlOrMeta+D');
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectCount(page), { timeout: 10000 }).toBe(2);
+  });
+
+  test('vector selections move with arrow keys inside the background editor', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    let editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const startX = editor.box.x + editor.box.width * 0.42;
+    const startY = editor.box.y + editor.box.height * 0.4;
+    const endX = editor.box.x + editor.box.width * 0.58;
+    const endY = editor.box.y + editor.box.height * 0.56;
+    const centerX = (startX + endX) / 2;
+    const centerY = (startY + endY) / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({
+      position: {
+        x: Math.round(centerX - editor.box.x),
+        y: Math.round(centerY - editor.box.y),
+      },
+    });
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    const beforePosition = await readSavedBackgroundVectorObjectPosition(page);
+    expect(beforePosition).not.toBeNull();
+
+    editor = await openBackgroundEditor(page);
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({
+      position: {
+        x: Math.round(centerX - editor.box.x),
+        y: Math.round(centerY - editor.box.y),
+      },
+    });
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('Shift+ArrowUp');
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => {
+      const afterPosition = await readSavedBackgroundVectorObjectPosition(page);
+      if (!beforePosition || !afterPosition) {
+        return null;
+      }
+      return {
+        dx: (afterPosition.left ?? 0) - (beforePosition.left ?? 0),
+        dy: (afterPosition.top ?? 0) - (beforePosition.top ?? 0),
+      };
+    }, { timeout: 10000 }).toEqual({ dx: -1, dy: -10 });
+  });
+
+  test('vector copy and paste works between the background editor and costume editor', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    await page.evaluate(async () => {
+      const [{ useProjectStore }, { useEditorStore }] = await Promise.all([
+        import('/src/store/projectStore.ts'),
+        import('/src/store/editorStore.ts'),
+      ]);
+      const projectState = useProjectStore.getState();
+      const sceneId = useEditorStore.getState().selectedSceneId ?? projectState.project?.scenes[0]?.id ?? null;
+      if (!sceneId) {
+        throw new Error('Missing scene for vector clipboard test.');
+      }
+      projectState.addObject(sceneId, 'Object 1');
+    });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const startX = editor.box.x + editor.box.width * 0.42;
+    const startY = editor.box.y + editor.box.height * 0.4;
+    const endX = editor.box.x + editor.box.width * 0.58;
+    const endY = editor.box.y + editor.box.height * 0.56;
+    const centerX = (startX + endX) / 2;
+    const centerY = (startY + endY) / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({
+      position: {
+        x: Math.round(centerX - editor.box.x),
+        y: Math.round(centerY - editor.box.y),
+      },
+    });
+    await page.keyboard.press('ControlOrMeta+C');
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await page.evaluate(async () => {
+      const [{ useProjectStore }, { useEditorStore }] = await Promise.all([
+        import('/src/store/projectStore.ts'),
+        import('/src/store/editorStore.ts'),
+      ]);
+      const project = useProjectStore.getState().project;
+      const sceneId = useEditorStore.getState().selectedSceneId ?? project?.scenes[0]?.id ?? null;
+      const objectId = project?.scenes[0]?.objects?.find((candidate) => candidate.name === 'Object 1')?.id ?? null;
+      if (!sceneId || !objectId) {
+        throw new Error('Missing object for costume vector paste verification.');
+      }
+      useEditorStore.getState().selectScene(sceneId, { recordHistory: false });
+      useEditorStore.getState().selectObject(objectId, { recordHistory: false });
+      useEditorStore.getState().setActiveObjectTab('costumes');
+    });
+
+    await page.getByRole('radio', { name: /^costumes?$/i }).click();
+    await page.getByTestId('layer-add-button').click();
+    await page.getByRole('menuitem', { name: /^vector$/i }).click();
+
+    await page.keyboard.press('ControlOrMeta+V');
+
+    await expect.poll(async () => readObjectCurrentCostumeVectorObjectCount(page, 'Object 1'), { timeout: 10000 }).toBe(1);
+  });
+
+  test('vector context menu shows Copy, Cut, Paste, Duplicate and supports cut then paste', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const startX = editor.box.x + editor.box.width * 0.42;
+    const startY = editor.box.y + editor.box.height * 0.4;
+    const endX = editor.box.x + editor.box.width * 0.58;
+    const endY = editor.box.y + editor.box.height * 0.56;
+    const centerX = (startX + endX) / 2;
+    const centerY = (startY + endY) / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({
+      position: {
+        x: Math.round(centerX - editor.box.x),
+        y: Math.round(centerY - editor.box.y),
+      },
+    });
+
+    await openBackgroundVectorContextMenu(
+      page,
+      editor,
+      (centerX - editor.box.x) / editor.box.width,
+      (centerY - editor.box.y) / editor.box.height,
+    );
+    await expectVectorContextMenuOrder(page);
+    await page.getByTestId('vector-selection-context-menu').getByRole('button', { name: /^cut$/i }).click();
+
+    await expect(page.getByRole('button', { name: /^align$/i })).toBeDisabled();
+
+    await openBackgroundVectorContextMenu(page, editor, 0.5, 0.5);
+    await expectVectorContextMenuOrder(page);
+    await page.getByTestId('vector-selection-context-menu').getByRole('button', { name: /^paste$/i }).click();
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+    await expect.poll(async () => readSavedBackgroundVectorObjectCount(page), { timeout: 10000 }).toBe(1);
   });
 
   test('selected vector shapes keep fill and stroke opacity independent', async ({ page }) => {

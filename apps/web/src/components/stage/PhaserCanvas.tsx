@@ -44,6 +44,7 @@ import {
   TiledBackgroundCanvasCompositor,
   type UserSpaceViewport,
 } from '@/lib/background/compositor';
+import { resolveBackgroundRuntimeChunkData } from '@/lib/background/backgroundDocumentRender';
 import {
   areCostumeAssetFramesEqual,
   getCostumeAssetCenterOffset,
@@ -583,13 +584,11 @@ function createTiledBackgroundLayerState(
   canvasHeight: number,
 ): TiledBackgroundLayerState {
   const textureKey = `tiled_background_${scene.sys.settings.key}_${Math.random().toString(36).slice(2)}`;
-  const canvas = document.createElement('canvas');
-  canvas.width = 1;
-  canvas.height = 1;
-  const texture = scene.textures.addCanvas(textureKey, canvas);
+  const texture = scene.textures.createCanvas(textureKey, 1, 1);
   if (!texture) {
     throw new Error('Failed to create tiled background canvas texture.');
   }
+  const canvas = texture.canvas;
   const image = scene.add.image(0, 0, textureKey);
   image.setOrigin(0, 0);
   image.setDepth(TILED_BACKGROUND_LAYER_DEPTH);
@@ -724,6 +723,9 @@ function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundL
   const nextSnapshot = getTiledBackgroundRenderSnapshot(scene, layer, camera);
 
   if (layer.needsRedraw || hasTiledBackgroundSnapshotChanged(layer.lastRenderSnapshot, nextSnapshot)) {
+    if (layer.canvas.width !== nextSnapshot.pixelWidth || layer.canvas.height !== nextSnapshot.pixelHeight) {
+      layer.texture.setSize(nextSnapshot.pixelWidth, nextSnapshot.pixelHeight);
+    }
     const renderWorldView = new Phaser.Geom.Rectangle(
       nextSnapshot.worldLeft,
       nextSnapshot.worldTop,
@@ -755,6 +757,20 @@ function refreshTiledBackgroundLayer(scene: Phaser.Scene): void {
   if (!tiledBackgroundLayer) return;
   tiledBackgroundLayer.needsRedraw = true;
   updateTiledBackgroundLayer(scene, tiledBackgroundLayer);
+}
+
+async function primePlayModeBackgrounds(scenes: SceneData[]): Promise<void> {
+  await Promise.all(scenes.map(async (scene) => {
+    if (!scene.background || scene.background.type !== 'tiled') {
+      return;
+    }
+
+    try {
+      await resolveBackgroundRuntimeChunkData(scene.background);
+    } catch (error) {
+      console.error(`[PhaserCanvas] Failed to prime background runtime chunks for scene ${scene.id}`, error);
+    }
+  }));
 }
 
 function destroyEditorContainer(scene: Phaser.Scene, container: Phaser.GameObjects.Container): void {
@@ -1805,7 +1821,10 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
       // Use requestAnimationFrame to wait for CSS layout
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          createGame();
+          void (async () => {
+            await primePlayModeBackgrounds(project.scenes);
+            createGame();
+          })();
         });
       });
     } else {

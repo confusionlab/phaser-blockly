@@ -10,7 +10,10 @@ test.describe('background persistence', () => {
     const result = await page.evaluate(async () => {
       const [
         { createBitmapBackgroundLayer },
-        { buildBackgroundConfigFromDocument, resolveBackgroundRuntimeChunkData },
+        {
+          buildBackgroundConfigFromDocument,
+          resolveBackgroundRuntimeChunkData,
+        },
         { createDefaultProject },
         { createProjectSyncPayload, db, loadProject, saveProject },
       ] = await Promise.all([
@@ -69,7 +72,8 @@ test.describe('background persistence', () => {
         throw new Error('Expected loaded layered background.');
       }
 
-      const runtimeChunks = await resolveBackgroundRuntimeChunkData(loadedProject.scenes[0].background);
+      const loadedBackground = loadedProject.scenes[0].background;
+      const runtimeChunks = await resolveBackgroundRuntimeChunkData(loadedBackground);
       const transientProject = structuredClone(loadedProject);
       transientProject.updatedAt = new Date(savedProject.updatedAt.getTime() + 1_000);
       if (!transientProject.scenes[0]?.background) {
@@ -91,12 +95,14 @@ test.describe('background persistence', () => {
         initialSerializedData: initialPayload.data,
         resavedSerializedData: resavedPayload.data,
         storedHasChunks: Object.prototype.hasOwnProperty.call(storedBackground, 'chunks'),
+        loadedHasChunks: Object.prototype.hasOwnProperty.call(loadedBackground, 'chunks'),
         resavedHasChunks: Object.prototype.hasOwnProperty.call(resavedStoredBackground, 'chunks'),
         runtimeChunkCount: Object.keys(runtimeChunks).length,
       };
     });
 
     expect(result.storedHasChunks).toBe(false);
+    expect(result.loadedHasChunks).toBe(false);
     expect(result.resavedHasChunks).toBe(false);
     expect(result.runtimeChunkCount).toBeGreaterThan(0);
     expect(result.resavedAssetIds).toEqual(result.initialAssetIds);

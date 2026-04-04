@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { Check, X } from '@/components/ui/icons';
 import { BitmapBrushCursorOverlay } from '@/components/editors/shared/BitmapBrushCursorOverlay';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
+import { VectorSelectionContextMenu } from '@/components/editors/shared/VectorSelectionContextMenu';
 import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useModal } from '@/components/ui/modal-provider';
+import { hasVectorClipboardContents } from '@/lib/editor/vectorClipboard';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import type {
@@ -116,6 +118,7 @@ import {
 } from '@/lib/viewportNavigation';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import { calculateBoundsFromImageData } from '@/utils/imageBounds';
+import { getSelectionNudgeDelta } from '@/utils/keyboard';
 import {
   TRANSFORM_GIZMO_BORDER_COLOR,
   TRANSFORM_GIZMO_FILL_COLOR,
@@ -628,6 +631,7 @@ export function BackgroundCanvasEditor() {
   const [backgroundDocument, setBackgroundDocumentState] = useState<BackgroundDocument | null>(null);
   const [renderedLayerChunks, setRenderedLayerChunks] = useState<Record<string, ChunkDataMap>>({});
   const [hasVectorSelection, setHasVectorSelection] = useState(false);
+  const [vectorContextMenuPosition, setVectorContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [canZoomToVectorSelection, setCanZoomToVectorSelection] = useState(false);
   const [hasVectorTextSelection, setHasVectorTextSelection] = useState(false);
   const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
@@ -2483,6 +2487,21 @@ export function BackgroundCanvasEditor() {
     return true;
   }, [commitMutationSession]);
 
+  const nudgeFloatingSelection = useCallback((dx: number, dy: number) => {
+    const selection = floatingSelectionRef.current;
+    if (!selection || floatingSelectionBusyRef.current) {
+      return false;
+    }
+
+    selection.centerWorld = {
+      x: selection.centerWorld.x + dx,
+      y: selection.centerWorld.y - dy,
+    };
+    floatingSelectionTransformRef.current = null;
+    setRevision((value) => value + 1);
+    return true;
+  }, []);
+
   const extractFloatingSelection = useCallback(async (expectedEpoch: number, bounds: WorldRect) => {
     if (expectedEpoch !== bitmapStateEpochRef.current) {
       return false;
@@ -2914,11 +2933,62 @@ export function BackgroundCanvasEditor() {
         return true;
       }
 
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd' && !event.altKey) {
+        if (editorMode === 'vector') {
+          event.preventDefault();
+          void vectorCanvasRef.current?.duplicateSelection().catch((error) => {
+            console.error('Failed to duplicate background vector selection:', error);
+          });
+          return true;
+        }
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c' && !event.altKey) {
+        if (editorMode === 'vector') {
+          event.preventDefault();
+          void vectorCanvasRef.current?.copySelection().catch((error) => {
+            console.error('Failed to copy background vector selection:', error);
+          });
+          return true;
+        }
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v' && !event.altKey) {
+        if (editorMode === 'vector') {
+          event.preventDefault();
+          void vectorCanvasRef.current?.pasteSelection().catch((error) => {
+            console.error('Failed to paste background vector selection:', error);
+          });
+          return true;
+        }
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'x' && !event.altKey) {
+        if (editorMode === 'vector') {
+          event.preventDefault();
+          void vectorCanvasRef.current?.cutSelection().catch((error) => {
+            console.error('Failed to cut background vector selection:', error);
+          });
+          return true;
+        }
+      }
+
       if (!event.metaKey && !event.ctrlKey && !event.altKey) {
         const shortcutTool = resolveCostumeToolShortcut(event.key, editorMode);
         if (shortcutTool && isBackgroundToolbarTool(shortcutTool)) {
           event.preventDefault();
           setTool(ensureToolForBackgroundMode(editorMode, shortcutTool));
+          return true;
+        }
+      }
+
+      const nudgeDelta = getSelectionNudgeDelta(event);
+      if (nudgeDelta) {
+        const didNudge = editorMode === 'vector'
+          ? (vectorCanvasRef.current?.nudgeSelection(nudgeDelta.x, nudgeDelta.y) ?? false)
+          : nudgeFloatingSelection(nudgeDelta.x, nudgeDelta.y);
+        if (didNudge) {
+          event.preventDefault();
           return true;
         }
       }
@@ -2987,7 +3057,7 @@ export function BackgroundCanvasEditor() {
 
     registerBackgroundShortcutHandler(shortcutHandler);
     return () => registerBackgroundShortcutHandler(null);
-  }, [commitFloatingSelection, deleteFloatingSelection, editorMode, handleCancel, handleDone, isDrawing, redo, registerBackgroundShortcutHandler, tool, undo]);
+  }, [commitFloatingSelection, deleteFloatingSelection, editorMode, handleCancel, handleDone, isDrawing, nudgeFloatingSelection, redo, registerBackgroundShortcutHandler, tool, undo]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -2998,6 +3068,56 @@ export function BackgroundCanvasEditor() {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [hasUnsavedBackgroundChanges]);
+
+  useEffect(() => {
+    if (editorMode !== 'vector') {
+      setVectorContextMenuPosition(null);
+    }
+  }, [editorMode]);
+
+  const closeVectorContextMenu = useCallback(() => {
+    setVectorContextMenuPosition(null);
+  }, []);
+
+  const handleBackgroundVectorContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (editorMode !== 'vector') {
+      return;
+    }
+
+    setVectorContextMenuPosition({
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }, [editorMode]);
+
+  const handleVectorContextMenuCopy = useCallback(() => {
+    closeVectorContextMenu();
+    void vectorCanvasRef.current?.copySelection().catch((error) => {
+      console.error('Failed to copy background vector selection:', error);
+    });
+  }, [closeVectorContextMenu]);
+
+  const handleVectorContextMenuCut = useCallback(() => {
+    closeVectorContextMenu();
+    void vectorCanvasRef.current?.cutSelection().catch((error) => {
+      console.error('Failed to cut background vector selection:', error);
+    });
+  }, [closeVectorContextMenu]);
+
+  const handleVectorContextMenuPaste = useCallback(() => {
+    closeVectorContextMenu();
+    void vectorCanvasRef.current?.pasteSelection().catch((error) => {
+      console.error('Failed to paste background vector selection:', error);
+    });
+  }, [closeVectorContextMenu]);
+
+  const handleVectorContextMenuDuplicate = useCallback(() => {
+    closeVectorContextMenu();
+    void vectorCanvasRef.current?.duplicateSelection().catch((error) => {
+      console.error('Failed to duplicate background vector selection:', error);
+    });
+  }, [closeVectorContextMenu]);
 
   useEffect(() => {
     if (editorMode === 'vector') {
@@ -3600,7 +3720,7 @@ export function BackgroundCanvasEditor() {
           ref={hostRef}
           className="relative flex-1 min-h-0 overflow-hidden bg-[#060a14]"
           onWheel={onWheel}
-          onContextMenu={(event) => event.preventDefault()}
+          onContextMenu={handleBackgroundVectorContextMenu}
         >
           <CanvasViewportOverlay
             canUndo={canUndo}
@@ -3749,6 +3869,18 @@ export function BackgroundCanvasEditor() {
           ) : null}
         </div>
       </div>
+      {vectorContextMenuPosition ? (
+        <VectorSelectionContextMenu
+          canCopy={hasVectorSelection}
+          canPaste={hasVectorClipboardContents()}
+          onClose={closeVectorContextMenu}
+          onCopy={handleVectorContextMenuCopy}
+          onCut={handleVectorContextMenuCut}
+          onDuplicate={handleVectorContextMenuDuplicate}
+          onPaste={handleVectorContextMenuPaste}
+          position={vectorContextMenuPosition}
+        />
+      ) : null}
     </div>
   );
 }

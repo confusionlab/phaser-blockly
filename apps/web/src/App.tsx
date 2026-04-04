@@ -78,6 +78,21 @@ function AppShell({
   const userSettings = useQuery(api.userSettings.getMySettings, isAuthenticated && user ? {} : 'skip');
 
   useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const preventNativeContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+
+    document.addEventListener('contextmenu', preventNativeContextMenu, { capture: true });
+    return () => {
+      document.removeEventListener('contextmenu', preventNativeContextMenu, { capture: true });
+    };
+  }, []);
+
+  useEffect(() => {
     const nextUserId = user?.id ?? null;
     const previousUserId = previousUserIdRef.current;
     if (previousUserId && nextUserId && previousUserId !== nextUserId) {

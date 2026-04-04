@@ -1,11 +1,11 @@
+import { createPortal } from 'react-dom';
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { WindowDialogChrome } from '@/components/shared/WindowDialogChrome';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { IconButton } from '@/components/ui/icon-button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
-import { MenuItemButton } from '@/components/ui/menu-item-button';
-import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
 import { Pencil, Plus, Trash2 } from '@/components/ui/icons';
 
 interface ProjectPropertyManagerDialogProps {
@@ -110,6 +110,7 @@ export function ProjectPropertyManagerRow({
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const cancelRenameOnBlurRef = useRef(false);
   const hasContextMenuActions = Boolean(onEdit || onDelete);
+  const rowNameClassName = 'truncate text-sm font-medium leading-5';
 
   useLayoutEffect(() => {
     if (!contextMenuPosition || !contextMenuRef.current) {
@@ -154,6 +155,23 @@ export function ProjectPropertyManagerRow({
     };
   }, [contextMenuPosition]);
 
+  useEffect(() => {
+    if (!contextMenuPosition || typeof window === 'undefined') {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setContextMenuPosition(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [contextMenuPosition]);
+
   const closeContextMenu = () => {
     setContextMenuPosition(null);
   };
@@ -189,6 +207,7 @@ export function ProjectPropertyManagerRow({
   return (
     <>
       <div
+        data-property-manager-row="true"
         className="group flex items-center justify-between rounded-lg px-3 py-2 select-none hover:bg-accent"
         onContextMenu={handleContextMenu}
         onDoubleClick={(event) => {
@@ -214,7 +233,7 @@ export function ProjectPropertyManagerRow({
                 onChange={(event) => onEditValueChange?.(event.target.value)}
                 autoFocus
                 className="flex-1"
-                textClassName="text-sm leading-5"
+                inputClassName={rowNameClassName}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.preventDefault();
@@ -230,7 +249,7 @@ export function ProjectPropertyManagerRow({
           ) : (
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
-                <div className="truncate font-medium">{name}</div>
+                <div className={rowNameClassName}>{name}</div>
                 {nameMeta ? (
                   <div className="shrink-0 text-xs text-muted-foreground/80">
                     {nameMeta}
@@ -264,13 +283,14 @@ export function ProjectPropertyManagerRow({
         ) : null}
       </div>
 
-      {contextMenuPosition && hasContextMenuActions ? (
+      {contextMenuPosition && hasContextMenuActions && typeof document !== 'undefined' ? createPortal(
         <Card
           ref={contextMenuRef}
-          className="fixed z-50 min-w-40 gap-0 py-1"
+          className="fixed min-w-40 gap-0 overflow-hidden py-1"
           style={{
             left: contextMenuPosition.left,
             top: contextMenuPosition.top,
+            zIndex: 'calc(var(--z-editor-popup) + 1)',
           }}
         >
           {onEdit ? (
@@ -281,7 +301,7 @@ export function ProjectPropertyManagerRow({
               {renameLabel}
             </MenuItemButton>
           ) : null}
-          {onEdit && onDelete ? <DropdownMenuSeparator /> : null}
+          {onEdit && onDelete ? <MenuSeparator /> : null}
           {onDelete ? (
             <MenuItemButton
               icon={<Trash2 className="size-4" />}
@@ -294,7 +314,8 @@ export function ProjectPropertyManagerRow({
               {deleteLabel}
             </MenuItemButton>
           ) : null}
-        </Card>
+        </Card>,
+        document.body,
       ) : null}
     </>
   );

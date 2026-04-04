@@ -1,8 +1,11 @@
 import { useCallback, type MutableRefObject } from 'react';
 import { Point, util, type Canvas as FabricCanvas } from 'fabric';
+import {
+  deleteActiveCanvasSelection,
+  nudgeActiveCanvasSelection,
+} from '@/components/editors/shared/fabricSelectionCommands';
 import type { AlignAction, MoveOrderAction, SelectionFlipAxis } from './CostumeToolbar';
 import { normalizeDegrees, type CanvasSelectionBoundsSnapshot } from './costumeCanvasShared';
-import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import { isActiveSelectionObject, isTextObject } from './costumeCanvasVectorRuntime';
 
 interface UseCostumeCanvasSelectionTransformCommandsOptions {
@@ -120,6 +123,18 @@ export function useCostumeCanvasSelectionTransformCommands({
     saveHistory();
     return true;
   }, [fabricCanvasRef, saveHistory]);
+
+  const nudgeSelection = useCallback((dx: number, dy: number): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+
+    const changed = nudgeActiveCanvasSelection(fabricCanvas, { x: dx, y: dy });
+    if (!changed) return false;
+
+    syncSelectionState();
+    saveHistory();
+    return true;
+  }, [fabricCanvasRef, saveHistory, syncSelectionState]);
 
   const flipSelection = useCallback((axis: SelectionFlipAxis): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -261,6 +276,7 @@ export function useCostumeCanvasSelectionTransformCommands({
     alignSelection,
     deleteSelection,
     moveSelectionOrder,
+    nudgeSelection,
     flipSelection,
     rotateSelection,
   };

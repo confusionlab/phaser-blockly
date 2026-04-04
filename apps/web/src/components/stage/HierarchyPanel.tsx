@@ -7,9 +7,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Card } from '@/components/ui/card';
-import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { IconButton } from '@/components/ui/icon-button';
-import { MenuItemButton } from '@/components/ui/menu-item-button';
+import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
 import {
   Dialog,
   DialogContent,
@@ -848,7 +847,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
                     >
                       Duplicate
                     </MenuItemButton>
-                    <DropdownMenuSeparator />
+                    <MenuSeparator />
                   </>
                 ) : null}
                 <MenuItemButton
@@ -885,7 +884,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
                     >
                       Paste
                     </MenuItemButton>
-                    <DropdownMenuSeparator />
+                    <MenuSeparator />
                   </>
                 ) : null}
                 <MenuItemButton
@@ -920,7 +919,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
                     >
                       Paste
                     </MenuItemButton>
-                    <DropdownMenuSeparator />
+                    <MenuSeparator />
                   </>
                 ) : null}
                 <MenuItemButton

@@ -18,6 +18,7 @@ import {
   type AssistantLogicProgram,
 } from '../../../packages/ui-shared/src/assistantLogic';
 import { applyAssistantChangeSetToProject, createAssistantProjectSnapshot } from '../src/lib/assistant/projectState';
+import { createBitmapCostumeDocument } from '../src/lib/costume/costumeDocument';
 import {
   createDefaultColliderConfig,
   createDefaultGameObject,
@@ -86,6 +87,16 @@ function buildProjectFixture(): {
       </block>
     </xml>
   `.trim();
+  hero.costumes[0] = {
+    ...hero.costumes[0],
+    id: 'costume_hero',
+    name: 'Hero Costume',
+    assetId: 'data:image/png;base64,HERO',
+    document: createBitmapCostumeDocument('data:image/png;base64,HERO', 'Hero Costume'),
+  };
+  hero.sounds = [{ id: 'sound_hero', name: 'Hero Sound', assetId: 'sound_hero_asset', trimStart: 0, trimEnd: 1, duration: 1 }];
+  hero.physics = createDefaultPhysicsConfig();
+  hero.collider = createDefaultColliderConfig('rect');
 
   const enemy = createDefaultGameObject('Enemy');
   enemy.id = enemyId;
@@ -215,6 +226,11 @@ test.describe('Assistant tool curation primitives', () => {
     expect(duplicate?.localVariables[0]?.id).not.toBe(fixture.heroVariableId);
     expect(duplicate?.blocklyXml).toContain(duplicate?.localVariables[0]?.id ?? '');
     expect(duplicate?.blocklyXml).not.toContain(`>${fixture.heroVariableId}<`);
+    expect(duplicate?.costumes).not.toBe(original?.costumes);
+    expect(duplicate?.costumes[0]).not.toBe(original?.costumes[0]);
+    expect(duplicate?.sounds).not.toBe(original?.sounds);
+    expect(duplicate?.physics).not.toBe(original?.physics);
+    expect(duplicate?.collider).not.toBe(original?.collider);
   });
 
   test('materializeAssistantOperationIds assigns stable ids for chained writes', () => {
@@ -537,10 +553,18 @@ test.describe('Assistant tool curation primitives', () => {
     const nextProject = applyAssistantChangeSetToProject(fixture.project, changeSet);
     const nextScene = nextProject.scenes.find((scene) => scene.id === fixture.sceneId);
     const duplicates = nextScene?.objects.filter((object) => object.name === 'Hero Copy') ?? [];
+    const duplicate = duplicates[0];
+    const original = nextScene?.objects.find((object) => object.id === fixture.heroId);
 
     expect(duplicates).toHaveLength(1);
     expect(duplicates[0]?.localVariables[0]?.id).not.toBe(fixture.heroVariableId);
     expect(duplicates[0]?.blocklyXml).toContain(duplicates[0]?.localVariables[0]?.id ?? '');
+    expect(duplicate?.costumes).not.toBe(original?.costumes);
+    expect(duplicate?.costumes[0]).not.toBe(original?.costumes[0]);
+    expect(duplicate?.costumes[0]?.document).not.toBe(original?.costumes[0]?.document);
+    expect(duplicate?.sounds).not.toBe(original?.sounds);
+    expect(duplicate?.physics).not.toBe(original?.physics);
+    expect(duplicate?.collider).not.toBe(original?.collider);
   });
 
   test('applyAssistantChangeSetToProject preserves chained ids across scene, folder, and object creation', () => {

@@ -212,7 +212,9 @@ function vectorObjectSupportsFill(obj: unknown): boolean {
     return false;
   }
   if (type === 'path') {
-    return pathCommandsDescribeClosedShape((obj as { path?: unknown }).path);
+    // Match the editor runtime: Fabric will still fill open path geometry, so the
+    // textured overlay pipeline needs to treat those objects as fill-capable too.
+    return true;
   }
 
   return true;
@@ -798,7 +800,7 @@ function traceVectorObjectLocalPath(ctx: CanvasRenderingContext2D, obj: any): bo
     return true;
   }
 
-  if (objectType === 'path' && Array.isArray(obj.path) && pathCommandsDescribeClosedShape(obj.path)) {
+  if (objectType === 'path' && Array.isArray(obj.path) && obj.path.length > 0) {
     const pathOffset = obj.pathOffset instanceof Point ? obj.pathOffset : new Point(obj.pathOffset?.x ?? 0, obj.pathOffset?.y ?? 0);
     ctx.beginPath();
     for (const command of obj.path as any[]) {
@@ -835,10 +837,64 @@ function traceVectorObjectLocalPath(ctx: CanvasRenderingContext2D, obj: any): bo
           break;
       }
     }
+    // Canvas fill/clip semantics implicitly close open subpaths, which matches
+    // how Fabric renders fills for open path objects.
     return true;
   }
 
   return false;
+}
+
+function traceScenePolylinePath(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  closed: boolean,
+): boolean {
+  if (points.length < 2) {
+    return false;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let index = 1; index < points.length; index += 1) {
+    ctx.lineTo(points[index].x, points[index].y);
+  }
+  if (closed) {
+    ctx.closePath();
+  }
+  return true;
+}
+
+function cutOutSolidStrokeFromTexturedFill(ctx: CanvasRenderingContext2D, obj: any): void {
+  const brushId = getVectorObjectStrokeBrushId(obj);
+  const strokeWidth = typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 0;
+  if (brushId !== DEFAULT_VECTOR_STROKE_BRUSH_ID || strokeWidth <= 0) {
+    return;
+  }
+
+  const contourPaths = getVectorObjectContourPaths(obj);
+  if (contourPaths.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.lineWidth = strokeWidth;
+  ctx.lineCap = obj.strokeLineCap ?? 'round';
+  ctx.lineJoin = obj.strokeLineJoin ?? 'round';
+  ctx.miterLimit = typeof obj.strokeMiterLimit === 'number' ? obj.strokeMiterLimit : 4;
+  ctx.setLineDash(Array.isArray(obj.strokeDashArray) ? obj.strokeDashArray : []);
+  ctx.lineDashOffset = typeof obj.strokeDashOffset === 'number' ? obj.strokeDashOffset : 0;
+  ctx.strokeStyle = '#000000';
+
+  for (const contour of contourPaths) {
+    if (!traceScenePolylinePath(ctx, contour.points, contour.closed)) {
+      continue;
+    }
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }
 
 export function renderVectorTextureOverlayForObjects(
@@ -849,6 +905,7 @@ export function renderVectorTextureOverlayForObjects(
     canvasWidth?: number;
     canvasHeight?: number;
     clear?: boolean;
+    contextTransform?: number[] | null;
     onTextureSourceReady?: (() => void) | null;
   } = {},
 ) {
@@ -858,10 +915,29 @@ export function renderVectorTextureOverlayForObjects(
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   }
 
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.setLineDash([]);
+  const overlayCanvas = document.createElement('canvas');
+  overlayCanvas.width = Math.max(1, Math.round(canvasWidth));
+  overlayCanvas.height = Math.max(1, Math.round(canvasHeight));
+  const overlayCtx = getCanvas2dContext(overlayCanvas, 'readback');
+  if (!overlayCtx) {
+    return;
+  }
+
+  overlayCtx.save();
+  const contextTransform = options.contextTransform;
+  if (contextTransform) {
+    overlayCtx.transform(
+      contextTransform[0] ?? 1,
+      contextTransform[1] ?? 0,
+      contextTransform[2] ?? 0,
+      contextTransform[3] ?? 1,
+      contextTransform[4] ?? 0,
+      contextTransform[5] ?? 0,
+    );
+  }
+  overlayCtx.lineCap = 'round';
+  overlayCtx.lineJoin = 'round';
+  overlayCtx.setLineDash([]);
 
   for (const obj of objects) {
     if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
@@ -877,19 +953,22 @@ export function renderVectorTextureOverlayForObjects(
         resolveVectorFillTextureSource(fillTextureId, options.onTextureSourceReady),
       );
       if (textureTile && typeof obj.calcTransformMatrix === 'function') {
-        ctx.save();
+        overlayCtx.save();
         const transform = obj.calcTransformMatrix();
-        ctx.transform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
-        if (traceVectorObjectLocalPath(ctx, obj)) {
-          const pattern = ctx.createPattern(textureTile, 'repeat');
+        overlayCtx.transform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
+        if (traceVectorObjectLocalPath(overlayCtx, obj)) {
+          const pattern = overlayCtx.createPattern(textureTile, 'repeat');
           if (pattern) {
-            ctx.fillStyle = pattern;
-            ctx.globalAlpha = getVectorObjectFillOpacity(obj) ?? 1;
-            ctx.clip();
-            ctx.fillRect(-canvasWidth, -canvasHeight, canvasWidth * 3, canvasHeight * 3);
+            overlayCtx.fillStyle = pattern;
+            overlayCtx.globalAlpha = getVectorObjectFillOpacity(obj) ?? 1;
+            overlayCtx.clip();
+            overlayCtx.fillRect(-canvasWidth, -canvasHeight, canvasWidth * 3, canvasHeight * 3);
           }
         }
-        ctx.restore();
+        overlayCtx.restore();
+        // Textured fills are composited in a post-pass above Fabric's solid stroke.
+        // Punch the stroke band back out so the already-rendered solid stroke stays visible.
+        cutOutSolidStrokeFromTexturedFill(overlayCtx, obj);
       }
     }
 
@@ -929,16 +1008,20 @@ export function renderVectorTextureOverlayForObjects(
     }
 
     for (const contour of contourPaths) {
-      drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, resolvedRenderStyle);
+      drawVectorStrokeBrushPath(overlayCtx, contour.points, contour.closed, resolvedRenderStyle);
     }
   }
 
-  ctx.restore();
+  overlayCtx.restore();
+  ctx.drawImage(overlayCanvas, 0, 0, canvasWidth, canvasHeight);
 }
 
 export function renderVectorTextureOverlayForFabricCanvas(
   ctx: CanvasRenderingContext2D,
-  fabricCanvas: { getObjects: () => any[] },
+  fabricCanvas: {
+    getObjects: () => any[];
+    viewportTransform?: number[] | null;
+  },
   options: {
     canvasSize?: number;
     canvasWidth?: number;
@@ -947,10 +1030,20 @@ export function renderVectorTextureOverlayForFabricCanvas(
     onTextureSourceReady?: (() => void) | null;
   } = {},
 ) {
+  const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  const canvasHeight = options.canvasHeight ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  if (options.clear !== false) {
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  }
+
   renderVectorTextureOverlayForObjects(
     ctx,
     fabricCanvas.getObjects() as any[],
-    options,
+    {
+      ...options,
+      clear: false,
+      contextTransform: fabricCanvas.viewportTransform,
+    },
   );
 }
 

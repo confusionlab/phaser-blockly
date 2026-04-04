@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DisclosureButton } from '@/components/ui/disclosure-button';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { AppIcon, ChevronDown, ChevronRight, Component as ComponentIcon, Earth, type AppIconName } from '@/components/ui/icons';
+import { AppIcon, ChevronDown, ChevronRight, Component as ComponentIcon, Earth, Trash2, type AppIconName } from '@/components/ui/icons';
 import { HoverHelp } from '@/components/ui/hover-help';
 import { SegmentedControl } from '@/components/ui/segmented-control';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ShelfObjectThumbnail } from '@/components/stage/ShelfObjectThumbnail';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import {
+  coerceDefaultValue,
   getDefaultVariableValue,
   hasVariableNameConflict,
   normalizeVariableCardinality,
@@ -20,7 +23,6 @@ import { useModal } from '@/components/ui/modal-provider';
 import { Modal } from '@/components/ui/modal';
 import {
   ProjectPropertyManagerDialog,
-  ProjectPropertyManagerRow,
 } from '@/components/dialogs/ProjectPropertyManagerDialog';
 import { ReferenceUsageDialog } from '@/components/dialogs/ReferenceUsageDialog';
 import type { ProjectReferenceImpact, ProjectReferenceOwnerTarget } from '@/lib/projectReferenceUsage';
@@ -49,6 +51,14 @@ type VariableEntry = {
   target: VariableTarget;
   note?: string;
 };
+
+type VariableDefaultDraft =
+  | { type: 'number'; cardinality: 'single'; value: string }
+  | { type: 'string'; cardinality: 'single'; value: string }
+  | { type: 'boolean'; cardinality: 'single'; value: boolean }
+  | { type: 'number'; cardinality: 'array'; items: string[] }
+  | { type: 'string'; cardinality: 'array'; items: string[] }
+  | { type: 'boolean'; cardinality: 'array'; items: boolean[] };
 
 type LocalHierarchyObjectNode = {
   key: string;
@@ -93,11 +103,25 @@ const VARIABLE_CARDINALITIES: { value: VariableCardinality; label: string }[] = 
   { value: 'single', label: 'Single' },
   { value: 'array', label: 'Multiple' },
 ];
+const VARIABLE_KIND_OPTIONS: ReadonlyArray<{
+  value: `${VariableType}:${VariableCardinality}`;
+  label: string;
+  type: VariableType;
+  cardinality: VariableCardinality;
+}> = [
+  { value: 'number:single', label: 'Number', type: 'number', cardinality: 'single' },
+  { value: 'string:single', label: 'Text', type: 'string', cardinality: 'single' },
+  { value: 'boolean:single', label: 'Boolean', type: 'boolean', cardinality: 'single' },
+  { value: 'number:array', label: 'Number Array', type: 'number', cardinality: 'array' },
+  { value: 'string:array', label: 'Text Array', type: 'string', cardinality: 'array' },
+  { value: 'boolean:array', label: 'Boolean Array', type: 'boolean', cardinality: 'array' },
+] as const;
 
 const VARIABLE_FIELD_HELP = {
   scope: 'Global variables are available everywhere. Local variables belong to the current object or reusable component selection.',
   type: 'Choose what kind of data the variable stores: text, number, or true/false.',
   values: 'Single stores one value. Multiple stores a list of values in order.',
+  startValue: 'This is the value the game starts with before any blocks change it.',
 } as const;
 
 const LOCAL_HIERARCHY_INDENT_PX = 20;
@@ -119,9 +143,66 @@ function getTypeLabel(type: VariableType): string {
   }
 }
 
-function getVariableKindLabel(variable: Variable): string {
-  const cardinality = normalizeVariableCardinality(variable.cardinality);
-  return cardinality === 'array' ? `${getTypeLabel(variable.type)} Array` : getTypeLabel(variable.type);
+function createVariableDefaultDraft(
+  type: VariableType,
+  cardinality: VariableCardinality,
+  sourceValue: Variable['defaultValue'] = getDefaultVariableValue(type, cardinality),
+): VariableDefaultDraft {
+  const normalizedValue = coerceDefaultValue(type, cardinality, sourceValue);
+
+  if (cardinality === 'array') {
+    const items = Array.isArray(normalizedValue) ? normalizedValue : [];
+    switch (type) {
+      case 'number':
+        return { type, cardinality, items: items.map((item) => String(item)) };
+      case 'string':
+        return { type, cardinality, items: items.map((item) => String(item)) };
+      case 'boolean':
+        return { type, cardinality, items: items.map((item) => Boolean(item)) };
+    }
+  }
+
+  switch (type) {
+    case 'number':
+      return { type, cardinality: 'single', value: String(normalizedValue) };
+    case 'string':
+      return { type, cardinality: 'single', value: String(normalizedValue) };
+    case 'boolean':
+      return { type, cardinality: 'single', value: Boolean(normalizedValue) };
+  }
+}
+
+function materializeVariableDefaultDraft(draft: VariableDefaultDraft): Variable['defaultValue'] {
+  if (draft.cardinality === 'array') {
+    return coerceDefaultValue(draft.type, draft.cardinality, draft.items);
+  }
+  return coerceDefaultValue(draft.type, draft.cardinality, draft.value);
+}
+
+function createArrayDraftItem(type: VariableType): string | boolean {
+  switch (type) {
+    case 'number':
+      return '0';
+    case 'string':
+      return '';
+    case 'boolean':
+      return false;
+  }
+}
+
+function getVariableKindValue(
+  type: VariableType,
+  cardinality: VariableCardinality,
+): `${VariableType}:${VariableCardinality}` {
+  return `${type}:${cardinality}`;
+}
+
+function parseVariableKindValue(value: string): {
+  type: VariableType;
+  cardinality: VariableCardinality;
+} | null {
+  const matched = VARIABLE_KIND_OPTIONS.find((option) => option.value === value);
+  return matched ? { type: matched.type, cardinality: matched.cardinality } : null;
 }
 
 function VariableOptionRow({
@@ -148,6 +229,251 @@ function VariableOptionRow({
           {helpText}
         </HoverHelp>
       </div>
+    </div>
+  );
+}
+
+function VariableDefaultEditor({
+  draft,
+  onChange,
+  onCommit,
+  inputIdPrefix,
+}: {
+  draft: VariableDefaultDraft;
+  onChange: (draft: VariableDefaultDraft) => void;
+  onCommit?: (draft: VariableDefaultDraft) => void;
+  inputIdPrefix: string;
+}) {
+  if (draft.cardinality === 'single') {
+    if (draft.type === 'boolean') {
+      const checkboxId = `${inputIdPrefix}-boolean`;
+      return (
+        <div className="flex items-center gap-3 rounded-lg border border-border/70 bg-background/80 px-3 py-2">
+          <Checkbox
+            checked={draft.value}
+            id={checkboxId}
+            onCheckedChange={(checked) => {
+              const nextDraft = { ...draft, value: checked === true };
+              onChange(nextDraft);
+              onCommit?.(nextDraft);
+            }}
+          />
+          <Label className="cursor-pointer text-sm text-foreground" htmlFor={checkboxId}>
+            Start as true
+          </Label>
+        </div>
+      );
+    }
+
+    return (
+      <Input
+        id={`${inputIdPrefix}-single`}
+        type={draft.type === 'number' ? 'number' : 'text'}
+        value={draft.value}
+        onChange={(event) => {
+          onChange({ ...draft, value: event.target.value });
+        }}
+        onBlur={() => {
+          onCommit?.(draft);
+        }}
+        placeholder={draft.type === 'number' ? '0' : 'Enter text'}
+      />
+    );
+  }
+
+  if (draft.type === 'boolean') {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            The game starts with these items in order.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              const nextDraft = {
+                ...draft,
+                items: [...draft.items, false],
+              };
+              onChange(nextDraft);
+              onCommit?.(nextDraft);
+            }}
+          >
+            Add item
+          </Button>
+        </div>
+
+        {draft.items.length > 0 ? (
+          <div className="space-y-2">
+            {draft.items.map((item, index) => {
+              const itemId = `${inputIdPrefix}-item-${index}`;
+              return (
+                <div
+                  key={itemId}
+                  className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/80 px-3 py-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        checked={item}
+                        id={itemId}
+                        onCheckedChange={(checked) => {
+                          const nextItems = [...draft.items];
+                          nextItems[index] = checked === true;
+                          const nextDraft = { ...draft, items: nextItems };
+                          onChange(nextDraft);
+                          onCommit?.(nextDraft);
+                        }}
+                      />
+                      <Label className="cursor-pointer text-sm text-foreground" htmlFor={itemId}>
+                        Item {index + 1} is true
+                      </Label>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const nextDraft = {
+                        ...draft,
+                        items: draft.items.filter((_, itemIndex) => itemIndex !== index),
+                      };
+                      onChange(nextDraft);
+                      onCommit?.(nextDraft);
+                    }}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
+            No items yet.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">
+          The game starts with these items in order.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            const nextDraft = {
+              ...draft,
+              items: [...draft.items, String(createArrayDraftItem(draft.type))],
+            };
+            onChange(nextDraft);
+            onCommit?.(nextDraft);
+          }}
+        >
+          Add item
+        </Button>
+      </div>
+
+      {draft.items.length > 0 ? (
+        <div className="space-y-2">
+          {draft.items.map((item, index) => {
+            const itemId = `${inputIdPrefix}-item-${index}`;
+            return (
+              <div
+                key={itemId}
+                className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/80 px-3 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <Input
+                    id={itemId}
+                    type={draft.type === 'number' ? 'number' : 'text'}
+                    value={item}
+                    onChange={(event) => {
+                      const nextItems = [...draft.items];
+                      nextItems[index] = event.target.value;
+                      onChange({ ...draft, items: nextItems });
+                    }}
+                    onBlur={() => {
+                      onCommit?.(draft);
+                    }}
+                    placeholder={draft.type === 'number' ? '0' : `Item ${index + 1}`}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    const nextDraft = {
+                      ...draft,
+                      items: draft.items.filter((_, itemIndex) => itemIndex !== index),
+                    };
+                    onChange(nextDraft);
+                    onCommit?.(nextDraft);
+                  }}
+                >
+                  Remove
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
+          No items yet.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VariableDefaultField({
+  draft,
+  onChange,
+  inputIdPrefix,
+}: {
+  draft: VariableDefaultDraft;
+  onChange: (draft: VariableDefaultDraft) => void;
+  inputIdPrefix: string;
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="text-sm font-medium text-foreground">Starts with</div>
+          <p className="text-xs text-muted-foreground">
+            {VARIABLE_FIELD_HELP.startValue}
+          </p>
+        </div>
+        <HoverHelp
+          label="Startup value help"
+          panelClassName="max-w-[18rem]"
+          triggerClassName="h-7 w-7 p-0"
+        >
+          {VARIABLE_FIELD_HELP.startValue}
+        </HoverHelp>
+      </div>
+      <VariableDefaultEditor
+        draft={draft}
+        inputIdPrefix={inputIdPrefix}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
+function VariableGridHeader() {
+  return (
+    <div className="grid grid-cols-[minmax(0,1.6fr)_180px_minmax(0,2.2fr)_auto] items-center gap-3 px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
+      <div>Name</div>
+      <div>Type</div>
+      <div>Default</div>
+      <div />
     </div>
   );
 }
@@ -239,6 +565,9 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const [error, setError] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [defaultDraft, setDefaultDraft] = useState<VariableDefaultDraft>(
+    () => createVariableDefaultDraft('number', 'single'),
+  );
   const [expandedLocalKeys, setExpandedLocalKeys] = useState<Set<string>>(new Set());
   const [blockedDelete, setBlockedDelete] = useState<{ entityLabel: string; impact: ProjectReferenceImpact } | null>(null);
 
@@ -282,6 +611,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     setName('');
     setType('number');
     setCardinality('single');
+    setDefaultDraft(createVariableDefaultDraft('number', 'single'));
     setError(null);
     setScope(nextScope);
   };
@@ -548,6 +878,28 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     emitVariablesChanged();
   };
 
+  const applyVariableUpdates = (entry: VariableEntry, updates: Partial<Variable>) => {
+    switch (entry.target.kind) {
+      case 'global':
+        updateGlobalVariable(entry.variable.id, updates);
+        break;
+      case 'component': {
+        const component = componentById.get(entry.target.componentId);
+        if (!component) return;
+        updateComponent(entry.target.componentId, {
+          localVariables: (component.localVariables || []).map((variable) =>
+            variable.id === entry.variable.id ? { ...variable, ...updates } : variable,
+          ),
+        });
+        break;
+      }
+      case 'object':
+        updateLocalVariable(entry.target.sceneId, entry.target.objectId, entry.variable.id, updates);
+        break;
+    }
+    emitVariablesChanged();
+  };
+
   const handleAdd = () => {
     const trimmedName = normalizeVariableName(name);
     const target: VariableTarget | null = scope === 'global'
@@ -582,7 +934,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       name: trimmedName,
       type,
       cardinality,
-      defaultValue: getDefaultVariableValue(type, cardinality),
+      defaultValue: materializeVariableDefaultDraft(defaultDraft),
       scope: target.kind === 'global' ? 'global' : 'local',
     };
 
@@ -613,37 +965,129 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
 
   const VariableRow = ({ entry }: { entry: VariableEntry }) => {
     const isEditing = editingKey === entry.key;
+    const [inlineDefaultDraft, setInlineDefaultDraft] = useState<VariableDefaultDraft>(() =>
+      createVariableDefaultDraft(
+        entry.variable.type,
+        normalizeVariableCardinality(entry.variable.cardinality),
+        entry.variable.defaultValue,
+      ),
+    );
+
+    useEffect(() => {
+      setInlineDefaultDraft(
+        createVariableDefaultDraft(
+          entry.variable.type,
+          normalizeVariableCardinality(entry.variable.cardinality),
+          entry.variable.defaultValue,
+        ),
+      );
+    }, [entry.variable.cardinality, entry.variable.defaultValue, entry.variable.type]);
+
+    const variableKindValue = getVariableKindValue(
+      entry.variable.type,
+      normalizeVariableCardinality(entry.variable.cardinality),
+    );
 
     return (
-      <ProjectPropertyManagerRow
-        icon={(
-          <AppIcon
-            className="size-4 flex-shrink-0 text-muted-foreground"
-            decorative={false}
-            name={getTypeIconName(entry.variable.type)}
-            title={getTypeLabel(entry.variable.type)}
+      <div className="grid grid-cols-[minmax(0,1.6fr)_180px_minmax(0,2.2fr)_auto] items-start gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <AppIcon
+              className="size-4 flex-shrink-0 text-muted-foreground"
+              decorative={false}
+              name={getTypeIconName(entry.variable.type)}
+              title={getTypeLabel(entry.variable.type)}
+            />
+            {isEditing ? (
+              <Input
+                aria-label={`Rename ${entry.variable.name}`}
+                autoFocus
+                className="h-8"
+                value={editName}
+                onBlur={() => saveRename(entry)}
+                onChange={(event) => setEditName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    saveRename(entry);
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setEditingKey(null);
+                    setEditName('');
+                  }
+                }}
+              />
+            ) : (
+              <button
+                className="min-w-0 truncate text-left text-sm font-medium text-foreground outline-none transition-colors hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring/60 rounded-sm"
+                onDoubleClick={() => {
+                  setEditingKey(entry.key);
+                  setEditName(entry.variable.name);
+                }}
+                type="button"
+              >
+                {entry.variable.name}
+              </button>
+            )}
+          </div>
+          <div className="pt-1 pl-6 text-xs text-muted-foreground">
+            {entry.note ?? 'Double-click to rename'}
+          </div>
+        </div>
+
+        <Select
+          value={variableKindValue}
+          onValueChange={(value) => {
+            const nextKind = parseVariableKindValue(value);
+            if (!nextKind) return;
+            const nextDraft = createVariableDefaultDraft(
+              nextKind.type,
+              nextKind.cardinality,
+              materializeVariableDefaultDraft(inlineDefaultDraft),
+            );
+            setInlineDefaultDraft(nextDraft);
+            applyVariableUpdates(entry, {
+              type: nextKind.type,
+              cardinality: nextKind.cardinality,
+              defaultValue: materializeVariableDefaultDraft(nextDraft),
+            });
+          }}
+        >
+          <SelectTrigger className="h-9 w-full bg-muted/40 shadow-none focus-visible:ring-2" size="sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {VARIABLE_KIND_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <div className="min-w-0 rounded-md bg-muted/30 px-2 py-2">
+          <VariableDefaultEditor
+            draft={inlineDefaultDraft}
+            inputIdPrefix={`variable-${entry.variable.id}`}
+            onChange={setInlineDefaultDraft}
+            onCommit={(nextDraft) => {
+              setInlineDefaultDraft(nextDraft);
+              applyVariableUpdates(entry, { defaultValue: materializeVariableDefaultDraft(nextDraft) });
+            }}
           />
-        )}
-        name={entry.variable.name}
-        nameMeta={getVariableKindLabel(entry.variable)}
-        subtitle={entry.note}
-        isEditing={isEditing}
-        editValue={editName}
-        renameLabel="Rename Variable"
-        deleteLabel="Delete Variable"
-        renameFieldLabel={`Rename ${entry.variable.name}`}
-        onEditValueChange={setEditName}
-        onEditSave={() => saveRename(entry)}
-        onEditCancel={() => {
-          setEditingKey(null);
-          setEditName('');
-        }}
-        onEdit={() => {
-          setEditingKey(entry.key);
-          setEditName(entry.variable.name);
-        }}
-        onDelete={() => void handleDelete(entry)}
-      />
+        </div>
+
+        <Button
+          aria-label={`Delete ${entry.variable.name}`}
+          className="mt-0.5"
+          onClick={() => void handleDelete(entry)}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      </div>
     );
   };
 
@@ -691,6 +1135,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
           <section className="space-y-2">
             {globalEntries.length > 0 ? (
               <div className="space-y-1">
+                <VariableGridHeader />
                 {globalEntries.map((entry) => (
                   <VariableRow key={entry.key} entry={entry} />
                 ))}
@@ -732,6 +1177,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                           title={object.title}
                         >
                           <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
+                            <VariableGridHeader />
                             {object.entries.map((entry) => (
                               <VariableRow key={entry.key} entry={entry} />
                             ))}
@@ -740,6 +1186,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                       ))}
                       {component.entries.length > 0 ? (
                         <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
+                          <VariableGridHeader />
                           {component.entries.map((entry) => (
                             <VariableRow key={entry.key} entry={entry} />
                           ))}
@@ -776,6 +1223,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                           title={object.title}
                         >
                           <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
+                            <VariableGridHeader />
                             {object.entries.map((entry) => (
                               <VariableRow key={entry.key} entry={entry} />
                             ))}
@@ -837,7 +1285,9 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                 options={VARIABLE_TYPES}
                 value={type}
                 onValueChange={(nextValue) => {
-                  setType(nextValue as VariableType);
+                  const nextType = nextValue as VariableType;
+                  setType(nextType);
+                  setDefaultDraft(createVariableDefaultDraft(nextType, cardinality));
                   setError(null);
                 }}
               />
@@ -876,12 +1326,20 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                 options={VARIABLE_CARDINALITIES}
                 value={cardinality}
                 onValueChange={(nextValue) => {
-                  setCardinality(nextValue as VariableCardinality);
+                  const nextCardinality = nextValue as VariableCardinality;
+                  setCardinality(nextCardinality);
+                  setDefaultDraft(createVariableDefaultDraft(type, nextCardinality));
                   setError(null);
                 }}
               />
             </VariableOptionRow>
           </div>
+
+          <VariableDefaultField
+            draft={defaultDraft}
+            inputIdPrefix="variable-default"
+            onChange={setDefaultDraft}
+          />
 
           {error ? <p className="text-xs text-red-500">{error}</p> : null}
         </div>

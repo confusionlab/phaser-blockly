@@ -13,6 +13,7 @@ test.describe('background document runtime flattening', () => {
         {
           buildBackgroundConfigFromDocument,
           flattenBackgroundDocumentToChunkData,
+          getCachedBackgroundRuntimeChunkData,
           resolveBackgroundRuntimeChunkData,
         },
       ] = await Promise.all([
@@ -54,6 +55,7 @@ test.describe('background document runtime flattening', () => {
         backgroundType: background.type,
         source,
         flattenedSource: flattened['0,0'] ?? null,
+        cachedRuntimeSource: getCachedBackgroundRuntimeChunkData(background)?.['0,0'] ?? null,
         hasStoredRuntimeChunks: Object.prototype.hasOwnProperty.call(background, 'chunks'),
         runtimeSource: runtimeChunks['0,0'] ?? null,
       };
@@ -61,6 +63,7 @@ test.describe('background document runtime flattening', () => {
 
     expect(result.backgroundType).toBe('tiled');
     expect(result.flattenedSource).toBe(result.source);
+    expect(result.cachedRuntimeSource).toBe(result.source);
     expect(result.runtimeSource).toBe(result.flattenedSource);
     expect(result.hasStoredRuntimeChunks).toBe(false);
   });

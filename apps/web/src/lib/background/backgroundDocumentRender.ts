@@ -45,6 +45,20 @@ const backgroundDocumentFlattenCache = new Map<string, Promise<ChunkDataMap>>();
 const backgroundRuntimeChunkCache = new Map<string, Promise<ChunkDataMap>>();
 const backgroundResolvedRuntimeChunks = new Map<string, ChunkDataMap>();
 
+function cacheResolvedRuntimeChunksForDocument(
+  document: BackgroundDocument,
+  chunks: ChunkDataMap,
+): ChunkDataMap {
+  const cacheKey = getBackgroundDocumentFlattenSignature(document);
+  const normalized = normalizeChunkDataMap(chunks);
+  return rememberResolvedChunkData(
+    backgroundResolvedRuntimeChunks,
+    cacheKey,
+    normalized,
+    MAX_CACHED_BACKGROUND_DOCUMENT_FLATTENS,
+  );
+}
+
 function hashString(value: string): string {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -161,7 +175,10 @@ export function getCachedBackgroundRuntimeChunkData(
   }
 
   if (background.chunks) {
-    return normalizeChunkDataMap(background.chunks);
+    const normalizedChunks = normalizeChunkDataMap(background.chunks);
+    if (Object.keys(normalizedChunks).length > 0 || !background.document) {
+      return normalizedChunks;
+    }
   }
 
   const cacheKey = getBackgroundRuntimeChunkCacheKey(background);
@@ -191,7 +208,10 @@ export async function resolveBackgroundRuntimeChunkData(
   }
 
   if (background.chunks) {
-    return normalizeChunkDataMap(background.chunks);
+    const normalizedChunks = normalizeChunkDataMap(background.chunks);
+    if (Object.keys(normalizedChunks).length > 0 || !background.document) {
+      return normalizedChunks;
+    }
   }
 
   const cacheKey = getBackgroundRuntimeChunkCacheKey(background);
@@ -597,6 +617,9 @@ export async function buildBackgroundConfigFromDocument(
     scrollFactor?: { x: number; y: number };
   },
 ): Promise<BackgroundConfig> {
+  const runtimeChunks = await flattenBackgroundDocumentToChunkData(document);
+  cacheResolvedRuntimeChunksForDocument(document, runtimeChunks);
+
   return {
     type: 'tiled',
     value: options.baseColor,

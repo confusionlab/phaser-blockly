@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
-import { ActiveSelection, type Canvas as FabricCanvas } from 'fabric';
+import type { Canvas as FabricCanvas } from 'fabric';
 import { applyBitmapBucketFill } from '@/lib/background/bitmapFillCore';
+import { useFabricVectorClipboardCommands } from '@/components/editors/shared/useFabricVectorClipboardCommands';
 import { getCanvas2dContext } from '@/utils/canvas2d';
 import {
   createEmptyCostumeVectorDocument,
@@ -25,14 +26,11 @@ import type {
 } from '@/types';
 import { CANVAS_SIZE, type CanvasSelectionBoundsSnapshot } from './costumeCanvasShared';
 import {
-  applyVectorFillStyleToObject,
-  applyVectorStrokeStyleToObject,
+  applyVectorStyleUpdatesToSelection,
+  cloneFabricObjectWithVectorStyle,
   getVectorStyleSelectionSnapshot,
   getVectorStyleCapabilitiesForSelection,
-  getVectorStyleTargets,
-  isActiveSelectionObject,
   isTextObject,
-  vectorObjectSupportsFill,
   VECTOR_JSON_EXTRA_PROPS,
 } from './costumeCanvasVectorRuntime';
 import { useCostumeCanvasSelectionTransformCommands } from './useCostumeCanvasSelectionTransformCommands';
@@ -269,6 +267,7 @@ export function useCostumeCanvasCommandController({
     alignSelection: alignCanvasSelection,
     deleteSelection: deleteCanvasSelection,
     moveSelectionOrder: moveCanvasSelectionOrder,
+    nudgeSelection: nudgeCanvasSelection,
     flipSelection: flipCanvasSelection,
     rotateSelection: rotateCanvasSelection,
   } = useCostumeCanvasSelectionTransformCommands({
@@ -483,72 +482,41 @@ export function useCostumeCanvasCommandController({
     return deleteCanvasSelection();
   }, [deleteBitmapFloatingSelection, deleteCanvasSelection, editorModeRef, fabricCanvasRef]);
 
-  const cloneFabricObject = useCallback(async (obj: any) => {
-    if (!obj || typeof obj.clone !== 'function') {
-      throw new Error('Object is not cloneable');
-    }
-
-    const maybePromise = obj.clone();
-    if (maybePromise && typeof maybePromise.then === 'function') {
-      return await maybePromise;
-    }
-
-    return await new Promise<any>((resolve) => {
-      obj.clone((cloned: any) => resolve(cloned));
-    });
-  }, []);
-
-  const duplicateSelection = useCallback(async (): Promise<boolean> => {
-    const fabricCanvas = fabricCanvasRef.current;
-    if (!fabricCanvas) return false;
-    if (editorModeRef.current !== 'vector') return false;
-
-    const activeObject = fabricCanvas.getActiveObject() as any;
-    if (!activeObject) return false;
-    if (isTextObject(activeObject) && (activeObject as any).isEditing) return false;
-
-    const moveOffset = 20;
-    const clones: any[] = [];
-
-    if (isActiveSelectionObject(activeObject) && typeof activeObject.getObjects === 'function') {
-      const selectedObjects = (activeObject.getObjects() as any[]).filter(Boolean);
-      for (const selected of selectedObjects) {
-        const cloned = await cloneFabricObject(selected);
-        cloned.set({
-          left: (typeof cloned.left === 'number' ? cloned.left : 0) + moveOffset,
-          top: (typeof cloned.top === 'number' ? cloned.top : 0) + moveOffset,
-        });
-        fabricCanvas.add(cloned);
-        clones.push(cloned);
-      }
-    } else {
-      const cloned = await cloneFabricObject(activeObject);
-      cloned.set({
-        left: (typeof cloned.left === 'number' ? cloned.left : 0) + moveOffset,
-        top: (typeof cloned.top === 'number' ? cloned.top : 0) + moveOffset,
-      });
-      fabricCanvas.add(cloned);
-      clones.push(cloned);
-    }
-
-    if (clones.length === 0) return false;
-
-    if (clones.length === 1) {
-      fabricCanvas.setActiveObject(clones[0]);
-    } else {
-      const nextSelection = new ActiveSelection(clones, { canvas: fabricCanvas });
-      fabricCanvas.setActiveObject(nextSelection);
-    }
-
-    fabricCanvas.requestRenderAll();
-    saveHistory();
-    return true;
-  }, [cloneFabricObject, editorModeRef, fabricCanvasRef, saveHistory]);
+  const {
+    duplicateSelection,
+    copySelection,
+    cutSelection,
+    pasteSelection,
+  } = useFabricVectorClipboardCommands({
+    canRun: () => editorModeRef.current === 'vector',
+    cloneObject: cloneFabricObjectWithVectorStyle,
+    deleteSelection: deleteCanvasSelection,
+    fabricCanvasRef,
+    normalizeCanvasVectorStrokeUniform,
+    pasteMoveOffset: 0,
+    pasteTargetCenter: {
+      x: CANVAS_SIZE / 2,
+      y: CANVAS_SIZE / 2,
+    },
+    saveHistory,
+    syncSelectionState,
+  });
 
   const moveSelectionOrder = useCallback((action: MoveOrderAction): boolean => {
     if (editorModeRef.current !== 'vector') return false;
     return moveCanvasSelectionOrder(action);
   }, [editorModeRef, moveCanvasSelectionOrder]);
+
+  const nudgeSelection = useCallback((dx: number, dy: number): boolean => {
+    const editorMode = editorModeRef.current;
+    if (editorMode !== 'vector' && editorMode !== 'bitmap') {
+      return false;
+    }
+    if (editorMode === 'bitmap' && bitmapSelectionBusyRef.current) {
+      return false;
+    }
+    return nudgeCanvasSelection(dx, dy);
+  }, [bitmapSelectionBusyRef, editorModeRef, nudgeCanvasSelection]);
 
   const flipSelection = useCallback((axis: SelectionFlipAxis): boolean => {
     return flipCanvasSelection(axis);
@@ -712,36 +680,10 @@ export function useCostumeCanvasCommandController({
         strokeStyleUpdates.strokeBrushId = vectorStyleUpdates.strokeBrushId;
       }
 
-      const nextStrokeWidth = 'strokeWidth' in strokeStyleUpdates && typeof strokeStyleUpdates.strokeWidth === 'number'
-        ? Math.max(0, strokeStyleUpdates.strokeWidth)
-        : Math.max(0, vectorStyle.strokeWidth);
-      const vectorTargets = getVectorStyleTargets(activeObject);
-      if (!vectorTargets.length) return;
-
-      vectorTargets.forEach((target) => {
-        const groupedByActiveSelection =
-          !!target.group &&
-          isActiveSelectionObject(target.group);
-        const shouldPreserveCenter =
-          !groupedByActiveSelection &&
-          (
-            target.strokeUniform !== true ||
-            ('strokeWidth' in strokeStyleUpdates && target.strokeWidth !== nextStrokeWidth)
-          );
-        const centerPoint = shouldPreserveCenter && typeof target.getCenterPoint === 'function'
-          ? target.getCenterPoint()
-          : null;
-        const fillChanged = vectorObjectSupportsFill(target)
-          ? applyVectorFillStyleToObject(target, fillStyleUpdates)
-          : false;
-        const strokeChanged = applyVectorStrokeStyleToObject(target, strokeStyleUpdates);
-        changed = changed || fillChanged;
-        changed = changed || strokeChanged;
-        if (strokeChanged && centerPoint && typeof target.setPositionByOrigin === 'function') {
-          target.setPositionByOrigin(centerPoint, 'center', 'center');
-        }
-        target.setCoords?.();
-      });
+      changed = applyVectorStyleUpdatesToSelection(activeObject, {
+        fillStyle: fillStyleUpdates,
+        strokeStyle: strokeStyleUpdates,
+      }) || changed;
     }
 
     if (!changed) return;
@@ -749,11 +691,13 @@ export function useCostumeCanvasCommandController({
     activeObject.setCoords?.();
     fabricCanvas.requestRenderAll();
     scheduleVectorStyleHistorySave();
-  }, [brushColorRef, editorModeRef, fabricCanvasRef, saveHistory, scheduleVectorStyleHistorySave, textStyle, vectorStyle]);
+  }, [brushColorRef, editorModeRef, fabricCanvasRef, scheduleVectorStyleHistorySave, textStyle, vectorStyle]);
 
   return {
     alignSelection,
     applyFill,
+    copySelection,
+    cutSelection,
     deleteSelection,
     duplicateSelection,
     exportCostumeState,
@@ -763,6 +707,8 @@ export function useCostumeCanvasCommandController({
     isTextEditing,
     loadDocument,
     moveSelectionOrder,
+    nudgeSelection,
+    pasteSelection,
     rotateSelection,
     switchEditorMode,
     syncActiveVectorStyle,

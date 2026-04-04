@@ -1564,8 +1564,12 @@ function createProjectStore(): ProjectStoreHook {
       duplicateBlocklyXml = remapVariableIdsInBlocklyXml(original.blocklyXml || '', variableIdMap);
     }
     duplicateBlocklyXml = normalizeBlocklyXml(duplicateBlocklyXml);
+    const normalizedPhysicsCollider = normalizePhysicsCollider({
+      physics: clonePhysicsConfig(original.physics),
+      collider: cloneColliderConfig(original.collider),
+    });
 
-    const duplicate: GameObject = {
+    const duplicate: GameObject = normalizePhysicsCollider({
       ...original,
       id: duplicateId,
       // Component instances keep the original name (they're instances of the same component)
@@ -1573,9 +1577,13 @@ function createProjectStore(): ProjectStoreHook {
       x: original.x + 50,
       y: original.y + 50,
       order: original.order + 1,
+      costumes: cloneCostumes(original.costumes),
+      sounds: cloneSounds(original.sounds),
+      physics: normalizedPhysicsCollider.physics,
+      collider: normalizedPhysicsCollider.collider,
       blocklyXml: duplicateBlocklyXml,
       localVariables: duplicateLocalVariables,
-    };
+    });
 
     set(state => ({
       project: state.project

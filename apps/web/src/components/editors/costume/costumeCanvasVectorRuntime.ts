@@ -28,6 +28,23 @@ export const VECTOR_JSON_EXTRA_PROPS = [
   'vectorStrokeOpacity',
 ];
 
+export async function cloneFabricObjectWithVectorStyle<T extends { clone?: (...args: any[]) => any }>(
+  obj: T | null | undefined,
+): Promise<T> {
+  if (!obj || typeof obj.clone !== 'function') {
+    throw new Error('Object is not cloneable');
+  }
+
+  const maybePromise = obj.clone(VECTOR_JSON_EXTRA_PROPS);
+  if (maybePromise && typeof maybePromise.then === 'function') {
+    return await maybePromise;
+  }
+
+  return await new Promise<T>((resolve) => {
+    obj.clone?.(VECTOR_JSON_EXTRA_PROPS, (cloned: T) => resolve(cloned));
+  });
+}
+
 export const VECTOR_POINT_CONTROL_STYLE = {
   cornerColor: 'rgba(0, 0, 0, 0)',
   cornerStrokeColor: 'rgba(0, 0, 0, 0)',
@@ -390,6 +407,22 @@ export interface VectorBrushStylableObject {
   vectorStrokeOpacity?: number;
 }
 
+type VectorFillStyleUpdates = Partial<Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>>;
+type VectorStrokeStyleUpdates = Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>>;
+
+type CenterPreservingVectorObject = VectorBrushStylableObject & {
+  getCenterPoint?: () => unknown;
+  group?: unknown;
+  setCoords?: () => void;
+  setPositionByOrigin?: (point: unknown, originX: 'center', originY: 'center') => void;
+};
+
+export interface ApplyVectorStyleUpdatesToSelectionOptions {
+  fillStyle?: VectorFillStyleUpdates;
+  normalizeRendering?: boolean;
+  strokeStyle?: VectorStrokeStyleUpdates;
+}
+
 function hasOwnVectorStyleUpdate<Key extends PropertyKey>(
   updates: object,
   key: Key,
@@ -628,6 +661,67 @@ export function applyVectorStrokeStyleToObject(
   obj.set(updates);
   return true;
 }
+
+function getRequestedStrokeWidth(
+  target: VectorBrushStylableObject,
+  strokeStyle: VectorStrokeStyleUpdates,
+): number | null {
+  if (!hasOwnVectorStyleUpdate(strokeStyle, 'strokeWidth')) {
+    return null;
+  }
+
+  if (typeof strokeStyle.strokeWidth === 'number' && Number.isFinite(strokeStyle.strokeWidth)) {
+    return Math.max(0, strokeStyle.strokeWidth);
+  }
+
+  return Math.max(0, typeof target.strokeWidth === 'number' && Number.isFinite(target.strokeWidth) ? target.strokeWidth : 0);
+}
+
+export function applyVectorStyleUpdatesToSelection(
+  obj: unknown,
+  {
+    fillStyle = {},
+    normalizeRendering = false,
+    strokeStyle = {},
+  }: ApplyVectorStyleUpdatesToSelectionOptions,
+): boolean {
+  const targets = getVectorStyleTargets(obj) as CenterPreservingVectorObject[];
+  let didChange = false;
+
+  for (const target of targets) {
+    const requestedStrokeWidth = getRequestedStrokeWidth(target, strokeStyle);
+    const groupedByActiveSelection =
+      !!target.group &&
+      isActiveSelectionObject(target.group);
+    const shouldPreserveCenter =
+      !groupedByActiveSelection &&
+      (
+        target.strokeUniform !== true ||
+        (requestedStrokeWidth !== null && target.strokeWidth !== requestedStrokeWidth)
+      );
+    const centerPoint = shouldPreserveCenter && typeof target.getCenterPoint === 'function'
+      ? target.getCenterPoint()
+      : null;
+    const fillChanged = vectorObjectSupportsFill(target)
+      ? applyVectorFillStyleToObject(target, fillStyle)
+      : false;
+    const strokeChanged = applyVectorStrokeStyleToObject(target, strokeStyle);
+    const renderingChanged = normalizeRendering
+      ? normalizeVectorObjectRendering(target)
+      : false;
+
+    if (strokeChanged && centerPoint && typeof target.setPositionByOrigin === 'function') {
+      target.setPositionByOrigin(centerPoint, 'center', 'center');
+    }
+    if (fillChanged || strokeChanged || renderingChanged) {
+      target.setCoords?.();
+      didChange = true;
+    }
+  }
+
+  return didChange;
+}
+
 export function normalizeVectorObjectRendering(obj: unknown): boolean {
   if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
     return false;

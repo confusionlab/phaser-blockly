@@ -90,6 +90,24 @@ async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) 
   await page.mouse.up();
 }
 
+async function openCostumeVectorContextMenu(page: Page, xFactor: number, yFactor: number): Promise<void> {
+  const canvasSurface = page.getByTestId('costume-canvas-surface');
+  const box = await getCostumeCanvasBox(page);
+  await canvasSurface.click({
+    button: 'right',
+    position: {
+      x: box.width * xFactor,
+      y: box.height * yFactor,
+    },
+  });
+  await expect(page.getByTestId('vector-selection-context-menu')).toBeVisible();
+}
+
+async function expectVectorContextMenuOrder(page: Page): Promise<void> {
+  const labels = await page.getByTestId('vector-selection-context-menu').getByRole('button').allTextContents();
+  expect(labels.map((label) => label.trim())).toEqual(['Copy', 'Cut', 'Paste', 'Duplicate']);
+}
+
 async function readCostumeActiveLayerCursor(page: Page): Promise<string> {
   return page.evaluate(() => {
     const canvas = document.querySelector('[data-testid="costume-active-layer-host"] .upper-canvas')
@@ -252,6 +270,32 @@ async function waitForCostumeCanvasReady(page: Page): Promise<void> {
       return fabricCanvas instanceof HTMLCanvasElement && fabricCanvas.width > 0 && fabricCanvas.height > 0;
     });
   }, { timeout: 10000 }).toBe(true);
+}
+
+async function expectLocatorToBeTopmost(locator: Locator): Promise<void> {
+  await expect.poll(async () => (
+    locator.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const probeX = rect.left + Math.min(rect.width / 2, 48);
+      const probeY = rect.top + Math.min(rect.height / 2, 32);
+      const topElement = document.elementFromPoint(probeX, probeY);
+      return !!topElement && (topElement === element || element.contains(topElement));
+    })
+  )).toBe(true);
+}
+
+async function readNearestStackingZIndex(locator: Locator): Promise<number> {
+  return locator.evaluate((element) => {
+    let current: HTMLElement | null = element as HTMLElement;
+    while (current) {
+      const zIndex = getComputedStyle(current).zIndex;
+      if (zIndex && zIndex !== 'auto') {
+        return Number.parseInt(zIndex, 10) || 0;
+      }
+      current = current.parentElement;
+    }
+    return 0;
+  });
 }
 
 async function roundTripThroughCodeTab(page: Page): Promise<void> {
@@ -445,6 +489,57 @@ async function readCurrentCostumeDocumentSignature(page: Page): Promise<string |
   });
 }
 
+async function readObjectCurrentCostumeVectorObjectCount(page: Page, objectName: string): Promise<number> {
+  return await page.evaluate(async ({ objectName }) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const object = project?.scenes?.[0]?.objects?.find((candidate) => candidate.name === objectName);
+    const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+    const vectorLayers = costume?.document?.layers?.filter((layer) => layer.kind === 'vector') ?? [];
+
+    return vectorLayers.reduce((count, layer) => {
+      try {
+        const parsed = JSON.parse(layer.vector.fabricJson) as { objects?: unknown[] };
+        return count + (Array.isArray(parsed.objects) ? parsed.objects.length : 0);
+      } catch {
+        return count;
+      }
+    }, 0);
+  }, { objectName });
+}
+
+async function readObjectCurrentCostumeVectorObjectPosition(
+  page: Page,
+  objectName: string,
+): Promise<{ left: number | null; top: number | null } | null> {
+  return await page.evaluate(async ({ objectName }) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const object = project?.scenes?.[0]?.objects?.find((candidate) => candidate.name === objectName);
+    const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+    const vectorLayer = costume?.document?.layers?.find((layer) => layer.kind === 'vector');
+    if (!vectorLayer) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{ left?: unknown; top?: unknown }>;
+      };
+      const entry = Array.isArray(parsed.objects) ? parsed.objects[0] : null;
+      if (!entry) {
+        return null;
+      }
+      return {
+        left: typeof entry.left === 'number' ? entry.left : null,
+        top: typeof entry.top === 'number' ? entry.top : null,
+      };
+    } catch {
+      return null;
+    }
+  }, { objectName });
+}
+
 test.describe('Costume editor tools', () => {
   test('vector layers render shapes and reload cleanly after a tab round-trip', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
@@ -466,6 +561,81 @@ test.describe('Costume editor tools', () => {
 
     await expect(page.getByRole('button', { name: /^layer 2/i })).toBeVisible({ timeout: 10000 });
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+  });
+
+  test('vector copy and paste works across different objects and costumes', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.22, 0.22, 0.4, 0.38);
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, 0.31, 0.3);
+    await page.keyboard.press('ControlOrMeta+C');
+
+    await page.getByRole('button', { name: /add object/i }).click();
+    await page.getByText(/^Object 2$/).first().click();
+    await page.getByRole('radio', { name: /^costumes?$/i }).click();
+    await addVectorLayer(page);
+
+    await page.keyboard.press('ControlOrMeta+V');
+
+    await expect.poll(async () => readObjectCurrentCostumeVectorObjectCount(page, 'Object 2'), { timeout: 10000 }).toBe(1);
+    await expect.poll(async () => readObjectCurrentCostumeVectorObjectCount(page, 'Object 1'), { timeout: 10000 }).toBe(1);
+  });
+
+  test('vector context menu shows Copy, Cut, Paste, Duplicate and pastes in order', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.22, 0.22, 0.4, 0.38);
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, 0.31, 0.3);
+
+    await openCostumeVectorContextMenu(page, 0.31, 0.3);
+    await expectVectorContextMenuOrder(page);
+    await page.getByTestId('vector-selection-context-menu').getByRole('button', { name: /^copy$/i }).click();
+
+    await openCostumeVectorContextMenu(page, 0.5, 0.5);
+    await expectVectorContextMenuOrder(page);
+    await page.getByTestId('vector-selection-context-menu').getByRole('button', { name: /^paste$/i }).click();
+
+    await expect.poll(async () => readObjectCurrentCostumeVectorObjectCount(page, 'Object 1'), { timeout: 10000 }).toBe(2);
+  });
+
+  test('vector selections move with arrow keys in the costume editor', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.22, 0.22, 0.4, 0.38);
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, 0.31, 0.3);
+    const beforePosition = await readObjectCurrentCostumeVectorObjectPosition(page, 'Object 1');
+    expect(beforePosition).not.toBeNull();
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press('ArrowDown');
+
+    await expect.poll(async () => {
+      const afterPosition = await readObjectCurrentCostumeVectorObjectPosition(page, 'Object 1');
+      if (!beforePosition || !afterPosition) {
+        return null;
+      }
+      return {
+        dx: (afterPosition.left ?? 0) - (beforePosition.left ?? 0),
+        dy: (afterPosition.top ?? 0) - (beforePosition.top ?? 0),
+      };
+    }, { timeout: 10000 }).toEqual({ dx: 10, dy: 1 });
   });
 
   test('bitmap tools paint on the active layer and survive a tab round-trip', async ({ page }) => {
@@ -852,6 +1022,59 @@ test.describe('Costume editor tools', () => {
     await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.52, 0.52);
 
     await expect.poll(async () => readCostumeSelectionGizmoBluePixelCount(page), { timeout: 10000 }).toBeGreaterThan(120);
+  });
+
+  test('costume editor chrome stays above the canvas stack on deeper layer stacks', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    for (let index = 0; index < 5; index += 1) {
+      await addVectorLayer(page);
+      await waitForCostumeCanvasReady(page);
+    }
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+
+    const propertyBar = page.getByTestId('costume-toolbar-properties');
+    const toolBar = page.getByTestId('costume-toolbar-tools');
+    const layerPanel = page.getByTestId('layer-panel');
+
+    await expect(propertyBar).toBeVisible();
+    await expect(toolBar).toBeVisible();
+    await expect(layerPanel).toBeVisible();
+
+    const chromeLayers = {
+      propertyBar: await readNearestStackingZIndex(propertyBar),
+      toolBar: await readNearestStackingZIndex(toolBar),
+      layerPanel: await readNearestStackingZIndex(layerPanel),
+    };
+    const canvasLayers = await page.evaluate(() => {
+      const readZIndex = (selector: string) => {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement)) {
+          return 0;
+        }
+        return Number.parseInt(getComputedStyle(element).zIndex || '0', 10) || 0;
+      };
+
+      return {
+        activeLayerVisual: readZIndex('[data-testid="costume-active-layer-visual"]'),
+        vectorGuide: readZIndex('[data-testid="costume-vector-guide-overlay"]'),
+        brushCursor: readZIndex('[data-testid="costume-brush-cursor-overlay"]'),
+      };
+    });
+
+    expect(canvasLayers.activeLayerVisual).toBeGreaterThan(10);
+    expect(chromeLayers.propertyBar).toBeGreaterThan(canvasLayers.activeLayerVisual);
+    expect(chromeLayers.toolBar).toBeGreaterThan(canvasLayers.activeLayerVisual);
+    expect(chromeLayers.layerPanel).toBeGreaterThan(canvasLayers.activeLayerVisual);
+    expect(chromeLayers.propertyBar).toBeGreaterThan(canvasLayers.vectorGuide);
+    expect(chromeLayers.toolBar).toBeGreaterThan(canvasLayers.brushCursor);
+
+    await expectLocatorToBeTopmost(propertyBar);
+    await expectLocatorToBeTopmost(toolBar);
+    await expectLocatorToBeTopmost(layerPanel);
   });
 
   test('layer panel renders thumbnails for bitmap and vector layers', async ({ page }) => {
