@@ -336,7 +336,6 @@ const unifiedCornerScaleActionHandler = controlsUtils.wrapWithFireEvent(
       minHeight: getTransformMinimumDimension(target),
       proportional: scaleProportionally,
       centered,
-      allowMirroring: !centered,
     });
     const changed = applyFabricScaleResult(target, scaled, startDimensions);
 

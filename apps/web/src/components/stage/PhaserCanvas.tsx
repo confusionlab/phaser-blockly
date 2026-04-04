@@ -3493,7 +3493,6 @@ function createEditorScene(
           minHeight: 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001),
           proportional,
           centered,
-          allowMirroring: !centered,
         });
         const sx = scaled.signedWidth / Math.max(1, frame.width);
         const sy = scaled.signedHeight / Math.max(1, frame.height);
