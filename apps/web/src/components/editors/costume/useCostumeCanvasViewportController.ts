@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject, type R
 import type { BitmapBrushKind } from '@/lib/background/brushCore';
 import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
 import {
+  computeEditorViewportFitResult,
+  EDITOR_VIEWPORT_FIT_PADDING_PX,
+} from '@/lib/editor/editorViewportPolicy';
+import {
   clampCameraToWorldRect,
   clampViewportZoom,
   panCameraFromDrag,
@@ -184,21 +188,27 @@ export function useCostumeCanvasViewportController({
 
   const zoomToBounds = useCallback((
     bounds: { left: number; top: number; width: number; height: number },
-    paddingPx = 56,
+    paddingPx = EDITOR_VIEWPORT_FIT_PADDING_PX,
   ): boolean => {
     const view = viewportSizeRef.current;
     if (view.width <= 0 || view.height <= 0) return false;
 
-    const availableWidth = Math.max(1, view.width - paddingPx * 2);
-    const availableHeight = Math.max(1, view.height - paddingPx * 2);
-    const targetScale = Math.min(
-      availableWidth / Math.max(1, bounds.width),
-      availableHeight / Math.max(1, bounds.height),
-    );
-    const targetZoom = clampZoom(targetScale / BASE_VIEW_SCALE);
+    const fitResult = computeEditorViewportFitResult({
+      bounds,
+      viewportSize: view,
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+      paddingPx,
+      pixelsPerWorldUnitAtZoom1: BASE_VIEW_SCALE,
+    });
+    if (!fitResult) {
+      return false;
+    }
+
+    const targetZoom = clampZoom(fitResult.zoom);
     const targetCenter = clampCameraCenter({
-      x: bounds.left + bounds.width / 2,
-      y: bounds.top + bounds.height / 2,
+      x: fitResult.centerX,
+      y: fitResult.centerY,
     }, targetZoom, view);
 
     setZoom(targetZoom);

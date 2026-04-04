@@ -27,6 +27,12 @@ import {
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import { hasSceneObjectClipboardContents } from '@/lib/editor/objectCommands';
 import {
+  computeEditorViewportFitResult,
+  EDITOR_VIEWPORT_FIT_PADDING_PX,
+  EDITOR_VIEWPORT_SELECTION_PADDING_PX,
+  EDITOR_VIEWPORT_ZOOM_STEP,
+} from '@/lib/editor/editorViewportPolicy';
+import {
   copySceneObjectSelection,
   cutSceneObjectSelection,
   deleteSceneObjectSelection,
@@ -129,9 +135,9 @@ const STAGE_GIZMO_COLOR_CSS = 'rgb(14, 165, 233)';
 const STAGE_GIZMO_FILL_CSS = 'rgba(14, 165, 233, 0.08)';
 const STAGE_SELECTION_FILL_ALPHA = 0.06;
 const MIN_STAGE_SURFACE_SIZE = 64;
-const STAGE_VIEWPORT_ZOOM_STEP = 0.1;
-const STAGE_VIEWPORT_FIT_PADDING_PX = 48;
-const STAGE_VIEWPORT_SELECTION_PADDING_PX = 72;
+const STAGE_VIEWPORT_ZOOM_STEP = EDITOR_VIEWPORT_ZOOM_STEP;
+const STAGE_VIEWPORT_FIT_PADDING_PX = EDITOR_VIEWPORT_FIT_PADDING_PX;
+const STAGE_VIEWPORT_SELECTION_PADDING_PX = EDITOR_VIEWPORT_SELECTION_PADDING_PX;
 
 type StageGizmoPalette = {
   phaserColor: number;
@@ -1167,20 +1173,21 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
       return;
     }
 
-    const availableWidth = Math.max(1, stageEditorContext.projection.hostSize.width - (paddingPx * 2));
-    const availableHeight = Math.max(1, stageEditorContext.projection.hostSize.height - (paddingPx * 2));
-    const nextZoom = Math.min(
-      MAX_STAGE_EDITOR_ZOOM,
-      Math.max(
-        MIN_STAGE_EDITOR_ZOOM,
-        Math.min(availableWidth / Math.max(1, bounds.width), availableHeight / Math.max(1, bounds.height)),
-      ),
-    );
+    const fitResult = computeEditorViewportFitResult({
+      bounds,
+      viewportSize: stageEditorContext.projection.hostSize,
+      minZoom: MIN_STAGE_EDITOR_ZOOM,
+      maxZoom: MAX_STAGE_EDITOR_ZOOM,
+      paddingPx,
+    });
+    if (!fitResult) {
+      return;
+    }
 
     stageEditorContext.controller.setEditorViewport({
-      centerX: bounds.centerX,
-      centerY: bounds.centerY,
-      zoom: nextZoom,
+      centerX: fitResult.centerX,
+      centerY: fitResult.centerY,
+      zoom: fitResult.zoom,
     });
   }, [getActiveStageEditorContext]);
 

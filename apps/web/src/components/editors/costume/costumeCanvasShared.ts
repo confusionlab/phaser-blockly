@@ -10,13 +10,14 @@ import type {
   VectorToolStyleMixedState,
 } from './CostumeToolbar';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
+import { EDITOR_VIEWPORT_ZOOM_STEP } from '@/lib/editor/editorViewportPolicy';
 
 export const CANVAS_SIZE = 1024;
 export const BASE_DISPLAY_SIZE = 480;
 export const BASE_VIEW_SCALE = BASE_DISPLAY_SIZE / CANVAS_SIZE;
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 10;
-export const ZOOM_STEP = 0.1;
+export const ZOOM_STEP = EDITOR_VIEWPORT_ZOOM_STEP;
 export const MAX_PAN_OVERSCROLL_PX = 160;
 export const HANDLE_SIZE = 20;
 export const VECTOR_SELECTION_COLOR = '#005eff';

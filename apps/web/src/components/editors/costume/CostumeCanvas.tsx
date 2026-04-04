@@ -67,6 +67,10 @@ import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportCo
 import { syncCanvasSelectionGizmoAppearance } from './costumeCanvasSelectionGizmo';
 import { VectorSelectionContextMenu } from '@/components/editors/shared/VectorSelectionContextMenu';
 import type { FinishPendingEditsOptions } from '@/lib/editor/interactionSurface';
+import {
+  EDITOR_VIEWPORT_FIT_PADDING_PX,
+  EDITOR_VIEWPORT_SELECTION_PADDING_PX,
+} from '@/lib/editor/editorViewportPolicy';
 import { hasVectorClipboardContents } from '@/lib/editor/vectorClipboard';
 
 export { DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
@@ -1261,13 +1265,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   }, [setZoomLevel]);
 
   const handleZoomToFit = useCallback(() => {
-    zoomToBounds(COSTUME_WORLD_RECT, 48);
+    zoomToBounds(COSTUME_WORLD_RECT, EDITOR_VIEWPORT_FIT_PADDING_PX);
   }, [zoomToBounds]);
 
   const handleZoomToSelection = useCallback(() => {
     const selectionSnapshot = getSelectionBoundsSnapshot();
     if (!selectionSnapshot) return;
-    zoomToBounds(selectionSnapshot.bounds, 72);
+    zoomToBounds(selectionSnapshot.bounds, EDITOR_VIEWPORT_SELECTION_PADDING_PX);
   }, [getSelectionBoundsSnapshot, zoomToBounds]);
 
   useEffect(() => {

@@ -9,6 +9,12 @@ import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useModal } from '@/components/ui/modal-provider';
+import {
+  computeEditorViewportFitResult,
+  EDITOR_VIEWPORT_FIT_PADDING_PX,
+  EDITOR_VIEWPORT_SELECTION_PADDING_PX,
+  EDITOR_VIEWPORT_ZOOM_STEP,
+} from '@/lib/editor/editorViewportPolicy';
 import type { BitmapFloatingSelectionBehavior } from '@/lib/editor/interactionSurface';
 import { boundsIntersect, getBoundsFromPoints, shouldShowViewportRecovery } from '@/lib/editor/viewportRecovery';
 import { hasVectorClipboardContents } from '@/lib/editor/vectorClipboard';
@@ -160,7 +166,7 @@ const LARGE_PAYLOAD_WARNING_BYTES = 15 * 1024 * 1024;
 const INITIAL_SHAPE_STROKE_WIDTH = 6;
 const MAX_RASTER_OPERATION_DIMENSION = 8192;
 const MAX_RASTER_OPERATION_PIXELS = 36 * 1024 * 1024;
-const ZOOM_STEP = 0.1;
+const ZOOM_STEP = EDITOR_VIEWPORT_ZOOM_STEP;
 
 type ChunkDelta = {
   before: Record<string, string | null>;
@@ -864,17 +870,27 @@ export function BackgroundCanvasEditor() {
     return screenPointToWorldPoint(screenPoint, rect, camera, zoom, 'up');
   }, [camera, zoom]);
 
-  const fitToBounds = useCallback((bounds: { left: number; right: number; bottom: number; top: number }) => {
-    const width = Math.max(1, bounds.right - bounds.left);
-    const height = Math.max(1, bounds.top - bounds.bottom);
+  const fitToBounds = useCallback((
+    bounds: { left: number; right: number; bottom: number; top: number },
+    paddingPx = EDITOR_VIEWPORT_FIT_PADDING_PX,
+  ) => {
     const host = hostRef.current;
     if (!host) return;
     const rect = host.getBoundingClientRect();
-    const nextZoom = clampViewportZoom(Math.min(rect.width / width, rect.height / height) * 0.9, MIN_ZOOM, MAX_ZOOM);
-    setZoom(nextZoom);
+    const fitResult = computeEditorViewportFitResult({
+      bounds,
+      viewportSize: rect,
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+      paddingPx,
+    });
+    if (!fitResult) {
+      return;
+    }
+    setZoom(fitResult.zoom);
     setCamera({
-      x: (bounds.left + bounds.right) * 0.5,
-      y: (bounds.top + bounds.bottom) * 0.5,
+      x: fitResult.centerX,
+      y: fitResult.centerY,
     });
   }, []);
 
@@ -1016,13 +1032,13 @@ export function BackgroundCanvasEditor() {
       if (!selectionBounds) {
         return;
       }
-      fitToBounds(selectionBounds);
+      fitToBounds(selectionBounds, EDITOR_VIEWPORT_SELECTION_PADDING_PX);
       return;
     }
 
     const selection = floatingSelectionRef.current;
     if (!selection) return;
-    fitToBounds(getFloatingSelectionWorldBounds(selection));
+    fitToBounds(getFloatingSelectionWorldBounds(selection), EDITOR_VIEWPORT_SELECTION_PADDING_PX);
   }, [editorMode, fitToBounds]);
 
   const resolveBitmapFillTextureSource = useCallback((textureId: BitmapFillTextureId) => {
