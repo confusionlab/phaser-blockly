@@ -51,6 +51,12 @@ type FabricObjectWithTransformGizmo = {
   transparentCorners?: boolean;
 };
 
+type FabricScaleTransformStartState = {
+  frame: NonNullable<ReturnType<typeof getObjectTransformFrame>>;
+  startDimensions: ReturnType<typeof getTransformStartDimensions>;
+  rotationRadians: number;
+};
+
 const TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER: Record<string, TransformGizmoCorner> = {
   tl: 'nw',
   tr: 'ne',
@@ -147,6 +153,50 @@ function getTransformStartDimensions(fabricObject: any, transform: any) {
 function getTransformMinimumDimension(fabricObject: any) {
   const zoom = Math.max(Number(fabricObject?.canvas?.getZoom?.()) || 1, 0.0001);
   return 8 / zoom;
+}
+
+function getCornerScaleTransformStartState(target: any, transform: any): FabricScaleTransformStartState | null {
+  const existing = transform?.__pochaCornerScaleStartState as FabricScaleTransformStartState | undefined;
+  if (existing) {
+    return existing;
+  }
+
+  const frame = getObjectTransformFrame(target);
+  if (!frame) {
+    return null;
+  }
+
+  const created: FabricScaleTransformStartState = {
+    frame,
+    startDimensions: getTransformStartDimensions(target, transform),
+    rotationRadians: -getFabricObjectRotationRadians(target),
+  };
+  if (transform && typeof transform === 'object') {
+    transform.__pochaCornerScaleStartState = created;
+  }
+  return created;
+}
+
+function getEdgeScaleTransformStartState(target: any, transform: any): FabricScaleTransformStartState | null {
+  const existing = transform?.__pochaEdgeScaleStartState as FabricScaleTransformStartState | undefined;
+  if (existing) {
+    return existing;
+  }
+
+  const frame = getObjectTransformFrame(target);
+  if (!frame) {
+    return null;
+  }
+
+  const created: FabricScaleTransformStartState = {
+    frame,
+    startDimensions: getTransformStartDimensions(target, transform),
+    rotationRadians: -getFabricObjectRotationRadians(target),
+  };
+  if (transform && typeof transform === 'object') {
+    transform.__pochaEdgeScaleStartState = created;
+  }
+  return created;
 }
 
 function applyFabricScaleResult(
@@ -307,8 +357,8 @@ const unifiedCornerScaleActionHandler = controlsUtils.wrapWithFireEvent(
     if (forbidScaling) {
       return false;
     }
-    const frame = getObjectTransformFrame(target);
-    if (!frame) {
+    const startState = getCornerScaleTransformStartState(target, transform);
+    if (!startState) {
       return false;
     }
 
@@ -318,26 +368,25 @@ const unifiedCornerScaleActionHandler = controlsUtils.wrapWithFireEvent(
       handleXSign: -1 | 1;
       handleYSign: -1 | 1;
     }> = {
-      nw: { anchor: frame.corners.se, handleXSign: -1, handleYSign: -1 },
-      ne: { anchor: frame.corners.sw, handleXSign: 1, handleYSign: -1 },
-      se: { anchor: frame.corners.nw, handleXSign: 1, handleYSign: 1 },
-      sw: { anchor: frame.corners.ne, handleXSign: -1, handleYSign: 1 },
+      nw: { anchor: startState.frame.corners.se, handleXSign: -1, handleYSign: -1 },
+      ne: { anchor: startState.frame.corners.sw, handleXSign: 1, handleYSign: -1 },
+      se: { anchor: startState.frame.corners.nw, handleXSign: 1, handleYSign: 1 },
+      sw: { anchor: startState.frame.corners.ne, handleXSign: -1, handleYSign: 1 },
     };
-    const startDimensions = getTransformStartDimensions(target, transform);
     const scaled = computeCornerScaleResult({
-      referencePoint: centered ? frame.center : cornerConfig[corner].anchor,
+      referencePoint: centered ? startState.frame.center : cornerConfig[corner].anchor,
       pointerPoint: { x, y },
       handleXSign: cornerConfig[corner].handleXSign,
       handleYSign: cornerConfig[corner].handleYSign,
-      rotationRadians: -getFabricObjectRotationRadians(target),
-      baseWidth: Math.max(startDimensions.baseWidth, 1),
-      baseHeight: Math.max(startDimensions.baseHeight, 1),
+      rotationRadians: startState.rotationRadians,
+      baseWidth: Math.max(startState.startDimensions.baseWidth, 1),
+      baseHeight: Math.max(startState.startDimensions.baseHeight, 1),
       minWidth: getTransformMinimumDimension(target),
       minHeight: getTransformMinimumDimension(target),
       proportional: scaleProportionally,
       centered,
     });
-    const changed = applyFabricScaleResult(target, scaled, startDimensions);
+    const changed = applyFabricScaleResult(target, scaled, startState.startDimensions);
 
     const canvas = target.canvas as FabricCanvasWithTransformGuide | null;
     if (canvas) {
@@ -395,28 +444,27 @@ const unifiedEdgeScaleActionHandler = ((eventData: Record<string, any>, transfor
     return false;
   }
 
-  const frame = getObjectTransformFrame(target);
-  if (!frame) {
+  const startState = getEdgeScaleTransformStartState(target, transform);
+  if (!startState) {
     return false;
   }
 
-  const edgeSegments = getTransformGizmoEdgeSegments(frame);
+  const edgeSegments = getTransformGizmoEdgeSegments(startState.frame);
   const edgeSegment = edgeSegments[side];
-  const startDimensions = getTransformStartDimensions(target, transform);
   const scaled = computeEdgeScaleResult({
-    referencePoint: centered ? frame.center : edgeSegments[getOppositeTransformGizmoSide(side)].center,
+    referencePoint: centered ? startState.frame.center : edgeSegments[getOppositeTransformGizmoSide(side)].center,
     pointerPoint: { x, y },
     edge: edgeSegment.edge,
     handleSign: edgeSegment.handleSign,
-    rotationRadians: -getFabricObjectRotationRadians(target),
-    baseWidth: Math.max(startDimensions.baseWidth, 1),
-    baseHeight: Math.max(startDimensions.baseHeight, 1),
+    rotationRadians: startState.rotationRadians,
+    baseWidth: Math.max(startState.startDimensions.baseWidth, 1),
+    baseHeight: Math.max(startState.startDimensions.baseHeight, 1),
     minWidth: getTransformMinimumDimension(target),
     minHeight: getTransformMinimumDimension(target),
     proportional: scaleProportionally,
     centered,
   });
-  return applyFabricScaleResult(target, scaled, startDimensions);
+  return applyFabricScaleResult(target, scaled, startState.startDimensions);
 }) as any;
 
 function createUnifiedScaleControl(cornerKey: keyof typeof TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER, x: number, y: number) {
