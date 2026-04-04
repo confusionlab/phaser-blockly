@@ -41,7 +41,6 @@ import {
   shouldTreatOpenedProjectAsCloudSaved,
 } from '@/lib/cloudProjectState';
 import { tryStartPlaying } from '@/lib/playStartGuard';
-import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import {
   getSelectionNudgeDelta,
   isBlocklyShortcutTarget,
@@ -50,14 +49,13 @@ import {
 } from '@/utils/keyboard';
 import { useModal } from '@/components/ui/modal-provider';
 import {
-  copySceneObjectsToClipboard,
-  cutSceneObjectsWithHistory,
-  deleteSceneObjectsWithHistory,
-  duplicateSceneObjectsWithHistory,
-  nudgeSceneObjectsWithHistory,
-  pasteSceneObjectClipboardWithHistory,
-} from '@/lib/editor/objectCommands';
-import { getScenePasteTargetCenter } from '@/lib/editor/scenePastePlacement';
+  copySceneObjectSelection,
+  cutSceneObjectSelection,
+  deleteSceneObjectSelection,
+  duplicateSceneObjectSelection,
+  nudgeSceneObjectSelection,
+  pasteSceneObjectSelection,
+} from '@/lib/editor/sceneObjectSelectionActions';
 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | null;
@@ -919,12 +917,20 @@ export function EditorLayout() {
     const selectedSceneObjectIds = selectedObjectIds.length > 0
       ? selectedObjectIds
       : (selectedObjectId ? [selectedObjectId] : []);
-    const stagePasteTargetCenter = getScenePasteTargetCenter({
-      project,
-      sceneId: selectedSceneId,
-      viewMode,
+    const sceneObjectSelectionContext = {
+      addObject,
+      duplicateObject,
       editorViewport: getStageEditorViewport(selectedSceneId),
-    });
+      project,
+      removeObject,
+      sceneId: selectedSceneId,
+      selectObject: (objectId: string | null) => selectObjects(objectId ? [objectId] : [], objectId),
+      selectObjects,
+      selectedObjectId,
+      selectedObjectIds: selectedSceneObjectIds,
+      updateObject,
+      viewMode,
+    };
 
     if (e.defaultPrevented || e.isComposing) {
       return;
@@ -1075,14 +1081,11 @@ export function EditorLayout() {
       }
 
       e.preventDefault();
-
-      duplicateSceneObjectsWithHistory({
-        source: 'shortcut:duplicate',
-        sceneId: selectedSceneId,
-        objectIds: selectedSceneObjectIds,
-        duplicateObject,
-        selectObjects,
-      });
+      duplicateSceneObjectSelection(
+        sceneObjectSelectionContext,
+        selectedSceneObjectIds,
+        { source: 'shortcut:duplicate' },
+      );
       return;
     }
 
@@ -1096,7 +1099,7 @@ export function EditorLayout() {
       }
 
       e.preventDefault();
-      copySceneObjectsToClipboard(project, selectedSceneId, selectedSceneObjectIds);
+      copySceneObjectSelection(sceneObjectSelectionContext, selectedSceneObjectIds);
       return;
     }
 
@@ -1109,16 +1112,8 @@ export function EditorLayout() {
         return;
       }
 
-      const pastedIds = pasteSceneObjectClipboardWithHistory({
-        source: 'shortcut:paste',
-        project,
-        sceneId: selectedSceneId,
-        targetCenter: stagePasteTargetCenter,
-        addObject,
-        updateObject,
-        selectObjects,
-      });
-      if (pastedIds.length > 0) {
+      const pasted = pasteSceneObjectSelection(sceneObjectSelectionContext, { source: 'shortcut:paste' });
+      if (pasted) {
         e.preventDefault();
       }
       return;
@@ -1134,23 +1129,11 @@ export function EditorLayout() {
       }
 
       e.preventDefault();
-      const selectedScene = project.scenes.find((scene) => scene.id === selectedSceneId);
-      const orderedSceneObjectIds = selectedScene
-        ? getSceneObjectsInLayerOrder(selectedScene).map((object) => object.id)
-        : [];
-
-      cutSceneObjectsWithHistory({
-        source: 'shortcut:cut',
-        project,
-        sceneId: selectedSceneId,
-        deleteIds: selectedSceneObjectIds,
-        orderedSceneObjectIds,
-        selectedObjectId,
-        selectedObjectIds: selectedSceneObjectIds,
-        removeObject,
-        selectObject: (objectId) => selectObjects(objectId ? [objectId] : [], objectId),
-        selectObjects,
-      });
+      cutSceneObjectSelection(
+        sceneObjectSelectionContext,
+        selectedSceneObjectIds,
+        { source: 'shortcut:cut' },
+      );
       return;
     }
 
@@ -1165,36 +1148,21 @@ export function EditorLayout() {
       }
 
       e.preventDefault();
-      const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId);
-      const orderedSceneObjectIds = selectedScene
-        ? getSceneObjectsInLayerOrder(selectedScene).map((object) => object.id)
-        : [];
-
-      deleteSceneObjectsWithHistory({
-        source: 'shortcut:delete',
-        sceneId: selectedSceneId,
-        deleteIds: selectedSceneObjectIds,
-        orderedSceneObjectIds,
-        selectedObjectId,
-        selectedObjectIds: selectedSceneObjectIds,
-        removeObject,
-        selectObject: (objectId) => selectObjects(objectId ? [objectId] : [], objectId),
-        selectObjects,
-      });
+      deleteSceneObjectSelection(
+        sceneObjectSelectionContext,
+        selectedSceneObjectIds,
+        { source: 'shortcut:delete' },
+      );
       return;
     }
 
     if (isSceneObjectShortcutContext && !isTyping && !isInBlocklyArea && project && selectedSceneId) {
       const nudgeDelta = getSelectionNudgeDelta(e);
       if (nudgeDelta && selectedSceneObjectIds.length > 0) {
-        const nudged = nudgeSceneObjectsWithHistory({
+        const nudged = nudgeSceneObjectSelection(sceneObjectSelectionContext, selectedSceneObjectIds, {
           source: 'shortcut:nudge-scene-objects',
-          project,
-          sceneId: selectedSceneId,
-          objectIds: selectedSceneObjectIds,
           dx: nudgeDelta.x,
           dy: -nudgeDelta.y,
-          updateObject,
         });
         if (nudged) {
           e.preventDefault();

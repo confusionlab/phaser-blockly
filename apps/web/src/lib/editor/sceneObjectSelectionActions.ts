@@ -4,6 +4,7 @@ import {
   cutSceneObjectsWithHistory,
   deleteSceneObjectsWithHistory,
   duplicateSceneObjectsWithHistory,
+  nudgeSceneObjectsWithHistory,
   pasteSceneObjectClipboardWithHistory,
 } from '@/lib/editor/objectCommands';
 import type { StageEditorViewport, StageViewMode } from '@/lib/stageViewport';
@@ -34,6 +35,11 @@ type ResolvedSceneObjectSelectionState = {
 
 type SceneObjectHistoryActionOptions = {
   source?: string;
+};
+
+type SceneObjectNudgeActionOptions = SceneObjectHistoryActionOptions & {
+  dx: number;
+  dy: number;
 };
 
 function resolveSceneObjectSelectionState(
@@ -182,4 +188,24 @@ export function deleteSceneObjectSelection(
     selectObjects: context.selectObjects,
   });
   return true;
+}
+
+export function nudgeSceneObjectSelection(
+  context: SceneObjectSelectionActionContext,
+  objectIds: string[],
+  options: SceneObjectNudgeActionOptions,
+): boolean {
+  if (!context.project || !context.sceneId || objectIds.length === 0) {
+    return false;
+  }
+
+  return nudgeSceneObjectsWithHistory({
+    source: options.source ?? 'scene-selection:nudge',
+    project: context.project,
+    sceneId: context.sceneId,
+    objectIds,
+    dx: options.dx,
+    dy: options.dy,
+    updateObject: context.updateObject,
+  });
 }

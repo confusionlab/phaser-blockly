@@ -5,6 +5,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
+import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { SelectionActionContextMenu } from '@/components/editors/shared/SelectionActionContextMenu';
 import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
 import type {
@@ -19,7 +20,7 @@ import type {
 } from '@/types';
 import { COMPONENT_COLOR, getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
-import { runInHistoryTransaction } from '@/store/universalHistory';
+import { canRedoHistory, canUndoHistory, redoHistory, runInHistoryTransaction, undoHistory } from '@/store/universalHistory';
 import {
   getProjectedChunkSizePx,
 } from '@/lib/background/chunkMath';
@@ -34,6 +35,8 @@ import {
   resolveSceneObjectActionIds,
 } from '@/lib/editor/sceneObjectSelectionActions';
 import {
+  MAX_STAGE_EDITOR_ZOOM,
+  MIN_STAGE_EDITOR_ZOOM,
   normalizeStageEditorViewport,
   panStageEditorViewport,
   scrollStageEditorViewport,
@@ -126,6 +129,9 @@ const STAGE_GIZMO_COLOR_CSS = 'rgb(14, 165, 233)';
 const STAGE_GIZMO_FILL_CSS = 'rgba(14, 165, 233, 0.08)';
 const STAGE_SELECTION_FILL_ALPHA = 0.06;
 const MIN_STAGE_SURFACE_SIZE = 64;
+const STAGE_VIEWPORT_ZOOM_STEP = 0.1;
+const STAGE_VIEWPORT_FIT_PADDING_PX = 48;
+const STAGE_VIEWPORT_SELECTION_PADDING_PX = 72;
 
 type StageGizmoPalette = {
   phaserColor: number;
@@ -172,6 +178,17 @@ type SelectionFrame = {
 type SelectionGuide = {
   proportional: boolean;
   corner: TransformGizmoCorner | null;
+};
+
+type StageWorldBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
 };
 
 type StageDebugSnapshot = {
@@ -855,6 +872,109 @@ function pickTopObjectIdAtWorldPoint(scene: Phaser.Scene, worldX: number, worldY
   return null;
 }
 
+function createStageWorldBounds(
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+): StageWorldBounds | null {
+  if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom)) {
+    return null;
+  }
+
+  const normalizedLeft = Math.min(left, right);
+  const normalizedRight = Math.max(left, right);
+  const normalizedTop = Math.min(top, bottom);
+  const normalizedBottom = Math.max(top, bottom);
+  const width = Math.max(1, normalizedRight - normalizedLeft);
+  const height = Math.max(1, normalizedBottom - normalizedTop);
+
+  return {
+    left: normalizedLeft,
+    top: normalizedTop,
+    right: normalizedRight,
+    bottom: normalizedBottom,
+    width,
+    height,
+    centerX: normalizedLeft + (width / 2),
+    centerY: normalizedTop + (height / 2),
+  };
+}
+
+function unionStageWorldBounds(
+  current: StageWorldBounds | null,
+  next: StageWorldBounds | null,
+): StageWorldBounds | null {
+  if (!current) {
+    return next;
+  }
+  if (!next) {
+    return current;
+  }
+
+  return createStageWorldBounds(
+    Math.min(current.left, next.left),
+    Math.min(current.top, next.top),
+    Math.max(current.right, next.right),
+    Math.max(current.bottom, next.bottom),
+  );
+}
+
+function getSceneObjectWorldBounds(
+  scene: Phaser.Scene,
+  objectIds?: string[] | null,
+  options?: { includeInvisible?: boolean },
+): StageWorldBounds | null {
+  const requestedIdSet = objectIds ? new Set(objectIds) : null;
+  let result: StageWorldBounds | null = null;
+
+  scene.children.each((child: Phaser.GameObjects.GameObject) => {
+    if (!(child instanceof Phaser.GameObjects.Container) || !child.getData('objectData')) {
+      return;
+    }
+    if (requestedIdSet && !requestedIdSet.has(child.name)) {
+      return;
+    }
+    if (!options?.includeInvisible && !child.visible) {
+      return;
+    }
+
+    const hitRect = child.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+    const bounds = hitRect ? hitRect.getBounds() : child.getBounds();
+    result = unionStageWorldBounds(
+      result,
+      createStageWorldBounds(bounds.left, bounds.top, bounds.right, bounds.bottom),
+    );
+  });
+
+  return result;
+}
+
+function getStageWorldBoundaryBounds(
+  points: Array<{ x: number; y: number }>,
+  canvasWidth: number,
+  canvasHeight: number,
+): StageWorldBounds | null {
+  if (points.length === 0) {
+    return null;
+  }
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  points.forEach((point) => {
+    const phaserPoint = userToPhaser(point.x, point.y, canvasWidth, canvasHeight);
+    minX = Math.min(minX, phaserPoint.x);
+    minY = Math.min(minY, phaserPoint.y);
+    maxX = Math.max(maxX, phaserPoint.x);
+    maxY = Math.max(maxY, phaserPoint.y);
+  });
+
+  return createStageWorldBounds(minX, minY, maxX, maxY);
+}
+
 function getOrderedObjectIdsForActiveScene(fallbackIds: string[] = []): string[] {
   const { project } = useProjectStore.getState();
   const { selectedSceneId } = useEditorStore.getState();
@@ -1018,6 +1138,154 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   const closeStageSelectionContextMenu = useCallback(() => {
     setStageSelectionContextMenu(null);
   }, []);
+  const stageSelectedObjectIds = useMemo(() => (
+    selectedObjectIds.length > 0
+      ? selectedObjectIds
+      : (selectedObjectId ? [selectedObjectId] : [])
+  ), [selectedObjectId, selectedObjectIds]);
+  const getActiveStageEditorContext = useCallback(() => {
+    if (isPlaying || viewMode !== 'editor') {
+      return null;
+    }
+
+    const phaserScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+    const controller = phaserScene ? getStageViewportController(phaserScene) : null;
+    if (!phaserScene || !controller || controller.getMode() !== 'editor') {
+      return null;
+    }
+
+    return {
+      controller,
+      phaserScene,
+      projection: controller.getProjection(),
+    };
+  }, [isPlaying, viewMode]);
+
+  const fitStageWorldBounds = useCallback((bounds: StageWorldBounds | null, paddingPx: number) => {
+    const stageEditorContext = getActiveStageEditorContext();
+    if (!stageEditorContext || !bounds) {
+      return;
+    }
+
+    const availableWidth = Math.max(1, stageEditorContext.projection.hostSize.width - (paddingPx * 2));
+    const availableHeight = Math.max(1, stageEditorContext.projection.hostSize.height - (paddingPx * 2));
+    const nextZoom = Math.min(
+      MAX_STAGE_EDITOR_ZOOM,
+      Math.max(
+        MIN_STAGE_EDITOR_ZOOM,
+        Math.min(availableWidth / Math.max(1, bounds.width), availableHeight / Math.max(1, bounds.height)),
+      ),
+    );
+
+    stageEditorContext.controller.setEditorViewport({
+      centerX: bounds.centerX,
+      centerY: bounds.centerY,
+      zoom: nextZoom,
+    });
+  }, [getActiveStageEditorContext]);
+
+  const zoomStageAroundViewportCenter = useCallback((nextZoom: number) => {
+    const stageEditorContext = getActiveStageEditorContext();
+    if (!stageEditorContext) {
+      return;
+    }
+
+    const currentViewport = stageEditorContext.controller.getEditorViewport();
+    stageEditorContext.controller.setEditorViewport({
+      ...currentViewport,
+      zoom: Math.min(MAX_STAGE_EDITOR_ZOOM, Math.max(MIN_STAGE_EDITOR_ZOOM, nextZoom)),
+    });
+  }, [getActiveStageEditorContext]);
+
+  const getCurrentStageSelectionBounds = useCallback(() => {
+    if (stageSelectedObjectIds.length === 0) {
+      return null;
+    }
+
+    const stageEditorContext = getActiveStageEditorContext();
+    if (!stageEditorContext) {
+      return null;
+    }
+
+    return getSceneObjectWorldBounds(stageEditorContext.phaserScene, stageSelectedObjectIds, {
+      includeInvisible: true,
+    });
+  }, [getActiveStageEditorContext, stageSelectedObjectIds]);
+
+  const handleStageZoomToActualSize = useCallback(() => {
+    const stageEditorContext = getActiveStageEditorContext();
+    if (!stageEditorContext) {
+      return;
+    }
+
+    const currentViewport = stageEditorContext.controller.getEditorViewport();
+    stageEditorContext.controller.setEditorViewport({
+      ...currentViewport,
+      zoom: 1,
+    });
+  }, [getActiveStageEditorContext]);
+
+  const handleStageZoomToFit = useCallback(() => {
+    if (!project || !selectedScene) {
+      return;
+    }
+
+    let contentBounds = createStageWorldBounds(0, 0, project.settings.canvasWidth, project.settings.canvasHeight);
+    const stageEditorContext = getActiveStageEditorContext();
+    if (!stageEditorContext) {
+      return;
+    }
+
+    contentBounds = unionStageWorldBounds(
+      contentBounds,
+      getSceneObjectWorldBounds(stageEditorContext.phaserScene, null, { includeInvisible: false }),
+    );
+    contentBounds = unionStageWorldBounds(
+      contentBounds,
+      getStageWorldBoundaryBounds(
+        selectedScene.worldBoundary?.enabled ? (selectedScene.worldBoundary.points || []) : [],
+        project.settings.canvasWidth,
+        project.settings.canvasHeight,
+      ),
+    );
+
+    fitStageWorldBounds(contentBounds, STAGE_VIEWPORT_FIT_PADDING_PX);
+  }, [fitStageWorldBounds, getActiveStageEditorContext, project, selectedScene]);
+
+  const handleStageZoomToSelection = useCallback(() => {
+    fitStageWorldBounds(getCurrentStageSelectionBounds(), STAGE_VIEWPORT_SELECTION_PADDING_PX);
+  }, [fitStageWorldBounds, getCurrentStageSelectionBounds]);
+  const handleStageUndo = useCallback(() => {
+    if (canUndoHistory()) {
+      undoHistory();
+    }
+  }, []);
+  const handleStageRedo = useCallback(() => {
+    if (canRedoHistory()) {
+      redoHistory();
+    }
+  }, []);
+  const handleStageZoomOut = useCallback(() => {
+    const stageEditorContext = getActiveStageEditorContext();
+    if (!stageEditorContext) {
+      return;
+    }
+
+    zoomStageAroundViewportCenter(stageEditorContext.controller.getEditorViewport().zoom - STAGE_VIEWPORT_ZOOM_STEP);
+  }, [getActiveStageEditorContext, zoomStageAroundViewportCenter]);
+  const handleStageZoomIn = useCallback(() => {
+    const stageEditorContext = getActiveStageEditorContext();
+    if (!stageEditorContext) {
+      return;
+    }
+
+    zoomStageAroundViewportCenter(stageEditorContext.controller.getEditorViewport().zoom + STAGE_VIEWPORT_ZOOM_STEP);
+  }, [getActiveStageEditorContext, zoomStageAroundViewportCenter]);
+  const showStageViewportOverlay = !isPlaying && viewMode === 'editor';
+  const canStageZoomToSelection = showStageViewportOverlay && stageSelectedObjectIds.length > 0;
+  const canStageUndo = showStageViewportOverlay && canUndoHistory();
+  const canStageRedo = showStageViewportOverlay && canRedoHistory();
+  const stageViewportZoom = editorViewportState?.zoom ?? 1;
 
   const sceneObjectSelectionContext = useMemo(() => ({
     addObject,
@@ -1029,7 +1297,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     selectObject,
     selectObjects,
     selectedObjectId,
-    selectedObjectIds,
+    selectedObjectIds: stageSelectedObjectIds,
     updateObject,
     viewMode,
   }), [
@@ -1039,7 +1307,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     project,
     removeObject,
     selectedObjectId,
-    selectedObjectIds,
+    stageSelectedObjectIds,
     selectedSceneId,
     selectObject,
     selectObjects,
@@ -1462,25 +1730,6 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
 
     const host = containerRef.current;
 
-    const resolveEditorStageContext = () => {
-      const game = gameRef.current;
-      if (!game) {
-        return null;
-      }
-
-      const editorScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
-      if (!editorScene) {
-        return null;
-      }
-
-      const controller = getStageViewportController(editorScene);
-      if (!controller || controller.getMode() !== 'editor') {
-        return null;
-      }
-
-      return { controller, editorScene };
-    };
-
     const handlePointerDown = (event: PointerEvent) => {
       if (event.button !== 2) {
         stageContextMenuGestureRef.current = null;
@@ -1506,7 +1755,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     };
 
     const handleHostContextMenu = (event: MouseEvent) => {
-      const editorStageContext = resolveEditorStageContext();
+      const editorStageContext = getActiveStageEditorContext();
       if (!editorStageContext) {
         return;
       }
@@ -1583,7 +1832,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
       host.removeEventListener('pointermove', handlePointerMove, true);
       host.removeEventListener('contextmenu', handleHostContextMenu);
     };
-  }, [STAGE_CONTEXT_MENU_DRAG_THRESHOLD, closeStageSelectionContextMenu, isPlaying]);
+  }, [STAGE_CONTEXT_MENU_DRAG_THRESHOLD, closeStageSelectionContextMenu, getActiveStageEditorContext, isPlaying]);
 
   useEffect(() => {
     inventoryUnsubscribeRef.current?.();
@@ -2932,6 +3181,24 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         className="relative h-full w-full overflow-hidden"
         style={isPlaying ? undefined : { backgroundColor: editorStageShellColor }}
       />
+      {showStageViewportOverlay ? (
+        <CanvasViewportOverlay
+          canUndo={canStageUndo}
+          canRedo={canStageRedo}
+          onUndo={handleStageUndo}
+          onRedo={handleStageRedo}
+          zoom={stageViewportZoom}
+          minZoom={MIN_STAGE_EDITOR_ZOOM}
+          maxZoom={MAX_STAGE_EDITOR_ZOOM}
+          onZoomOut={handleStageZoomOut}
+          onZoomIn={handleStageZoomIn}
+          onZoomToActualSize={handleStageZoomToActualSize}
+          onZoomToFit={handleStageZoomToFit}
+          onZoomToSelection={handleStageZoomToSelection}
+          canZoomToSelection={canStageZoomToSelection}
+          className="pr-44"
+        />
+      ) : null}
       <ViewportRecoveryPill
         visible={stageReturnToCenterVisible}
         onClick={handleStageReturnToCenter}
