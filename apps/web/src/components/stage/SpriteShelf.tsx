@@ -68,14 +68,16 @@ import { runInHistoryTransaction } from '@/store/universalHistory';
 import { normalizeVariableDefinition, remapVariableIdsInBlocklyXml } from '@/lib/variableUtils';
 import { acquireGlobalKeyboardCapture, focusKeyboardSurface, isTextEntryTarget } from '@/utils/keyboard';
 import {
-  copySceneObjectsToClipboard,
-  cutSceneObjectsWithHistory,
-  deleteSceneObjectsWithHistory,
-  duplicateSceneObjectsWithHistory,
   hasSceneObjectClipboardContents,
-  pasteSceneObjectClipboardWithHistory,
 } from '@/lib/editor/objectCommands';
-import { getScenePasteTargetCenter } from '@/lib/editor/scenePastePlacement';
+import {
+  copySceneObjectSelection,
+  cutSceneObjectSelection,
+  deleteSceneObjectSelection,
+  duplicateSceneObjectSelection,
+  pasteSceneObjectSelection,
+  resolveSceneObjectActionIds,
+} from '@/lib/editor/sceneObjectSelectionActions';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { ShelfTreeRow } from './ShelfTreeRow';
@@ -922,87 +924,102 @@ export function SpriteShelf({
     if (!contextMenu || contextMenu.kind !== 'object') {
       return [];
     }
-    if (selectedIdsInScene.length > 1 && selectedIdsInScene.includes(contextMenu.object.id)) {
-      return selectedIdsInScene;
-    }
-    return [contextMenu.object.id];
+    return resolveSceneObjectActionIds(contextMenu.object.id, orderedSceneObjectIds, selectedIdsInScene);
   };
 
   const handleDuplicate = () => {
     if (!contextMenu || contextMenu.kind !== 'object') return;
-    duplicateSceneObjectsWithHistory({
-      source: 'sprite-shelf:duplicate-object',
-      sceneId: selectedSceneId,
-      objectIds: getContextMenuObjectActionIds(),
+    duplicateSceneObjectSelection({
+      addObject,
       duplicateObject,
+      editorViewport: getStageEditorViewport(selectedSceneId),
+      project,
+      removeObject,
+      sceneId: selectedSceneId,
+      selectObject,
       selectObjects,
-    });
+      selectedObjectId,
+      selectedObjectIds: selectedIdsInScene,
+      updateObject,
+      viewMode,
+    }, getContextMenuObjectActionIds(), { source: 'sprite-shelf:duplicate-object' });
     handleCloseContextMenu();
   };
 
   const handleCopy = () => {
     if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
-    copySceneObjectsToClipboard(project, selectedSceneId, getContextMenuObjectActionIds());
+    copySceneObjectSelection({
+      addObject,
+      duplicateObject,
+      editorViewport: getStageEditorViewport(selectedSceneId),
+      project,
+      removeObject,
+      sceneId: selectedSceneId,
+      selectObject,
+      selectObjects,
+      selectedObjectId,
+      selectedObjectIds: selectedIdsInScene,
+      updateObject,
+      viewMode,
+    }, getContextMenuObjectActionIds());
     handleCloseContextMenu();
   };
 
   const handlePaste = () => {
     if (!project) return;
-    const targetCenter = getScenePasteTargetCenter({
-      project,
-      sceneId: selectedSceneId,
-      viewMode,
-      editorViewport: getStageEditorViewport(selectedSceneId),
-    });
-    pasteSceneObjectClipboardWithHistory({
-      source: 'sprite-shelf:paste-object',
-      project,
-      sceneId: selectedSceneId,
-      targetCenter,
+    pasteSceneObjectSelection({
       addObject,
-      updateObject,
+      duplicateObject,
+      editorViewport: getStageEditorViewport(selectedSceneId),
+      project,
+      removeObject,
+      sceneId: selectedSceneId,
+      selectObject,
       selectObjects,
-    });
+      selectedObjectId,
+      selectedObjectIds: selectedIdsInScene,
+      updateObject,
+      viewMode,
+    }, { source: 'sprite-shelf:paste-object' });
     handleCloseContextMenu();
   };
 
   const handleCut = () => {
     if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
-
-    cutSceneObjectsWithHistory({
-      source: 'sprite-shelf:cut-object',
+    cutSceneObjectSelection({
+      addObject,
+      duplicateObject,
+      editorViewport: getStageEditorViewport(selectedSceneId),
       project,
-      sceneId: selectedSceneId,
-      deleteIds: getContextMenuObjectActionIds(),
-      orderedSceneObjectIds,
-      selectedObjectId,
-      selectedObjectIds: selectedIdsInScene,
       removeObject,
+      sceneId: selectedSceneId,
       selectObject,
       selectObjects,
-    });
+      selectedObjectId,
+      selectedObjectIds: selectedIdsInScene,
+      updateObject,
+      viewMode,
+    }, getContextMenuObjectActionIds(), { source: 'sprite-shelf:cut-object' });
 
     handleCloseContextMenu();
   };
 
   const handleDelete = () => {
     if (!contextMenu || contextMenu.kind !== 'object') return;
-
-    const deleteIds = selectedIdsInScene.length > 1 && selectedIdsInScene.includes(contextMenu.object.id)
-      ? selectedIdsInScene
-      : [contextMenu.object.id];
-
-    deleteSceneObjectsWithHistory({
-      source: 'sprite-shelf:delete-object',
-      sceneId: selectedSceneId,
-      deleteIds,
-      orderedSceneObjectIds,
-      selectedObjectId,
-      selectedObjectIds: selectedIdsInScene,
+    deleteSceneObjectSelection({
+      addObject,
+      duplicateObject,
+      editorViewport: getStageEditorViewport(selectedSceneId),
+      project,
       removeObject,
+      sceneId: selectedSceneId,
       selectObject,
       selectObjects,
-    });
+      selectedObjectId,
+      selectedObjectIds: selectedIdsInScene,
+      updateObject,
+      viewMode,
+    }, getContextMenuObjectActionIds(), { source: 'sprite-shelf:delete-object' });
 
     handleCloseContextMenu();
   };

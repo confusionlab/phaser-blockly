@@ -3266,6 +3266,11 @@ export function BackgroundCanvasEditor() {
     });
   }, [closeVectorContextMenu]);
 
+  const handleVectorContextMenuDelete = useCallback(() => {
+    closeVectorContextMenu();
+    vectorCanvasRef.current?.deleteSelection();
+  }, [closeVectorContextMenu]);
+
   useEffect(() => {
     if (editorMode === 'vector') {
       return;
@@ -4013,10 +4018,12 @@ export function BackgroundCanvasEditor() {
       {vectorContextMenuPosition ? (
         <VectorSelectionContextMenu
           canCopy={hasVectorSelection}
+          canDelete={hasVectorSelection}
           canPaste={hasVectorClipboardContents()}
           onClose={closeVectorContextMenu}
           onCopy={handleVectorContextMenuCopy}
           onCut={handleVectorContextMenuCut}
+          onDelete={handleVectorContextMenuDelete}
           onDuplicate={handleVectorContextMenuDuplicate}
           onPaste={handleVectorContextMenuPaste}
           position={vectorContextMenuPosition}

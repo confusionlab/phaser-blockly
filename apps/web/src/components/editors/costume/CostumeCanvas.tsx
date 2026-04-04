@@ -1321,6 +1321,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     });
   }, [closeVectorContextMenu, duplicateSelection]);
 
+  const handleVectorContextMenuDelete = useCallback(() => {
+    closeVectorContextMenu();
+    deleteSelection();
+  }, [closeVectorContextMenu, deleteSelection]);
+
   return (
     <>
       <CostumeCanvasStage
@@ -1363,10 +1368,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       {vectorContextMenuPosition ? (
         <VectorSelectionContextMenu
           canCopy={hasVectorSelection}
+          canDelete={hasVectorSelection}
           canPaste={hasVectorClipboardContents()}
           onClose={closeVectorContextMenu}
           onCopy={handleVectorContextMenuCopy}
           onCut={handleVectorContextMenuCut}
+          onDelete={handleVectorContextMenuDelete}
           onDuplicate={handleVectorContextMenuDuplicate}
           onPaste={handleVectorContextMenuPaste}
           position={vectorContextMenuPosition}

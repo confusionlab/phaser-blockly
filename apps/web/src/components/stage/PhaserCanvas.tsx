@@ -5,6 +5,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
+import { SelectionActionContextMenu } from '@/components/editors/shared/SelectionActionContextMenu';
 import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
 import type {
   Scene as SceneData,
@@ -23,6 +24,15 @@ import {
   getProjectedChunkSizePx,
 } from '@/lib/background/chunkMath';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
+import { hasSceneObjectClipboardContents } from '@/lib/editor/objectCommands';
+import {
+  copySceneObjectSelection,
+  cutSceneObjectSelection,
+  deleteSceneObjectSelection,
+  duplicateSceneObjectSelection,
+  pasteSceneObjectSelection,
+  resolveSceneObjectActionIds,
+} from '@/lib/editor/sceneObjectSelectionActions';
 import {
   normalizeStageEditorViewport,
   panStageEditorViewport,
@@ -931,6 +941,7 @@ interface PhaserCanvasProps {
 }
 
 export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasProps) {
+  const STAGE_CONTEXT_MENU_DRAG_THRESHOLD = 4;
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
@@ -960,18 +971,26 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   } | null>(null);
   const [draggedInventoryCanDrop, setDraggedInventoryCanDrop] = useState(false);
   const [componentDragPreview, setComponentDragPreview] = useState<ComponentDragPreview | null>(null);
+  const [stageSelectionContextMenu, setStageSelectionContextMenu] = useState<{
+    actionObjectIds: string[];
+    deleteLabel?: string;
+    kind: 'empty' | 'selection';
+    position: { x: number; y: number };
+  } | null>(null);
   const scheduledEditorResizeRef = useRef<number | null>(null);
   const scheduledEditorResizeForceRef = useRef(false);
   const scheduledEditorResizeSizeRef = useRef<StageSize | null>(null);
   const editorHostSizeRef = useRef<StageSize>({ width: 1, height: 1 });
   const editorSurfaceSizeRef = useRef<StageSize | null>(null);
   const editorSurfaceResizeCountRef = useRef(0);
+  const stageContextMenuGestureRef = useRef<{ clientX: number; clientY: number; moved: boolean } | null>(null);
 
-  const { project, updateObject, addComponentInstance } = useProjectStore();
+  const { project, addObject, removeObject, duplicateObject, updateObject, addComponentInstance } = useProjectStore();
   const {
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
+    selectObject,
     selectObjects,
     selectScene,
     showColliderOutlines,
@@ -996,6 +1015,90 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   }
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
+  const closeStageSelectionContextMenu = useCallback(() => {
+    setStageSelectionContextMenu(null);
+  }, []);
+
+  const sceneObjectSelectionContext = useMemo(() => ({
+    addObject,
+    duplicateObject,
+    editorViewport: getStageEditorViewport(selectedSceneId),
+    project,
+    removeObject,
+    sceneId: selectedSceneId,
+    selectObject,
+    selectObjects,
+    selectedObjectId,
+    selectedObjectIds,
+    updateObject,
+    viewMode,
+  }), [
+    addObject,
+    duplicateObject,
+    getStageEditorViewport,
+    project,
+    removeObject,
+    selectedObjectId,
+    selectedObjectIds,
+    selectedSceneId,
+    selectObject,
+    selectObjects,
+    updateObject,
+    viewMode,
+  ]);
+
+  const handleStageSelectionContextMenuCopy = useCallback(() => {
+    if (!stageSelectionContextMenu || stageSelectionContextMenu.kind !== 'selection') {
+      return;
+    }
+    copySceneObjectSelection(sceneObjectSelectionContext, stageSelectionContextMenu.actionObjectIds);
+    closeStageSelectionContextMenu();
+  }, [closeStageSelectionContextMenu, sceneObjectSelectionContext, stageSelectionContextMenu]);
+
+  const handleStageSelectionContextMenuCut = useCallback(() => {
+    if (!stageSelectionContextMenu || stageSelectionContextMenu.kind !== 'selection') {
+      return;
+    }
+    cutSceneObjectSelection(
+      sceneObjectSelectionContext,
+      stageSelectionContextMenu.actionObjectIds,
+      { source: 'stage:context-menu:cut-selection' },
+    );
+    closeStageSelectionContextMenu();
+  }, [closeStageSelectionContextMenu, sceneObjectSelectionContext, stageSelectionContextMenu]);
+
+  const handleStageSelectionContextMenuPaste = useCallback(() => {
+    pasteSceneObjectSelection(sceneObjectSelectionContext, { source: 'stage:context-menu:paste-selection' });
+    closeStageSelectionContextMenu();
+  }, [closeStageSelectionContextMenu, sceneObjectSelectionContext]);
+
+  const handleStageSelectionContextMenuDuplicate = useCallback(() => {
+    if (!stageSelectionContextMenu || stageSelectionContextMenu.kind !== 'selection') {
+      return;
+    }
+    duplicateSceneObjectSelection(
+      sceneObjectSelectionContext,
+      stageSelectionContextMenu.actionObjectIds,
+      { source: 'stage:context-menu:duplicate-selection' },
+    );
+    closeStageSelectionContextMenu();
+  }, [closeStageSelectionContextMenu, sceneObjectSelectionContext, stageSelectionContextMenu]);
+
+  const handleStageSelectionContextMenuDelete = useCallback(() => {
+    if (!stageSelectionContextMenu || stageSelectionContextMenu.kind !== 'selection') {
+      return;
+    }
+    deleteSceneObjectSelection(
+      sceneObjectSelectionContext,
+      stageSelectionContextMenu.actionObjectIds,
+      { source: 'stage:context-menu:delete-selection' },
+    );
+    closeStageSelectionContextMenu();
+  }, [closeStageSelectionContextMenu, sceneObjectSelectionContext, stageSelectionContextMenu]);
+
+  useEffect(() => {
+    closeStageSelectionContextMenu();
+  }, [closeStageSelectionContextMenu, isPlaying, selectedSceneId]);
 
   const syncEditorCanvasElementBox = useCallback((hostSize?: StageSize, surfaceSize?: StageSize) => {
     if (isPlaying) {
@@ -1301,13 +1404,6 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
       return getStageViewportController(editorScene);
     };
 
-    const handleHostContextMenu = (event: MouseEvent) => {
-      const controller = getEditorViewportController();
-      if (controller?.getMode() === 'editor') {
-        event.preventDefault();
-      }
-    };
-
     const handleHostWheel = (event: WheelEvent) => {
       const controller = getEditorViewportController();
       if (!controller || controller.getMode() !== 'editor') {
@@ -1349,17 +1445,145 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
       );
     };
 
-    host.addEventListener('contextmenu', handleHostContextMenu);
     host.addEventListener('wheel', handleHostWheel, {
       passive: false,
       capture: true,
     });
 
     return () => {
-      host.removeEventListener('contextmenu', handleHostContextMenu);
       host.removeEventListener('wheel', handleHostWheel, true);
     };
   }, [isPlaying]);
+
+  useEffect(() => {
+    if (isPlaying || !containerRef.current) {
+      return;
+    }
+
+    const host = containerRef.current;
+
+    const resolveEditorStageContext = () => {
+      const game = gameRef.current;
+      if (!game) {
+        return null;
+      }
+
+      const editorScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+      if (!editorScene) {
+        return null;
+      }
+
+      const controller = getStageViewportController(editorScene);
+      if (!controller || controller.getMode() !== 'editor') {
+        return null;
+      }
+
+      return { controller, editorScene };
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.button !== 2) {
+        stageContextMenuGestureRef.current = null;
+        return;
+      }
+
+      stageContextMenuGestureRef.current = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        moved: false,
+      };
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const gesture = stageContextMenuGestureRef.current;
+      if (!gesture) {
+        return;
+      }
+
+      if (Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) >= STAGE_CONTEXT_MENU_DRAG_THRESHOLD) {
+        gesture.moved = true;
+      }
+    };
+
+    const handleHostContextMenu = (event: MouseEvent) => {
+      const editorStageContext = resolveEditorStageContext();
+      if (!editorStageContext) {
+        return;
+      }
+
+      event.preventDefault();
+
+      const gesture = stageContextMenuGestureRef.current;
+      stageContextMenuGestureRef.current = null;
+      if (gesture?.moved) {
+        closeStageSelectionContextMenu();
+        return;
+      }
+
+      const { controller, editorScene } = editorStageContext;
+      const hostPoint = getElementLocalPoint(host, event.clientX, event.clientY);
+      const projection = controller.getProjection();
+      const worldPoint = editorScene.cameras.main.getWorldPoint(
+        projection.visibleRect.x + hostPoint.x,
+        projection.visibleRect.y + hostPoint.y,
+      );
+
+      if (!worldPoint) {
+        closeStageSelectionContextMenu();
+        return;
+      }
+
+      const clickedObjectId = pickTopObjectIdAtWorldPoint(editorScene, worldPoint.x, worldPoint.y);
+      if (!clickedObjectId) {
+        if (!hasSceneObjectClipboardContents()) {
+          closeStageSelectionContextMenu();
+          return;
+        }
+        setStageSelectionContextMenu({
+          actionObjectIds: [],
+          kind: 'empty',
+          position: { x: event.clientX, y: event.clientY },
+        });
+        return;
+      }
+
+      const storeState = useEditorStore.getState();
+      const currentSelectedIds = storeState.selectedObjectIds.length > 0
+        ? storeState.selectedObjectIds
+        : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+      const orderedSceneObjectIds = getOrderedObjectIdsForActiveScene();
+      const actionObjectIds = resolveSceneObjectActionIds(clickedObjectId, orderedSceneObjectIds, currentSelectedIds);
+      const primaryObjectId = actionObjectIds.includes(clickedObjectId)
+        ? clickedObjectId
+        : (actionObjectIds[0] ?? clickedObjectId);
+      const matchesCurrentSelection = (
+        actionObjectIds.length === currentSelectedIds.length
+        && actionObjectIds.every((objectId) => currentSelectedIds.includes(objectId))
+        && storeState.selectedObjectId === primaryObjectId
+      );
+
+      if (!matchesCurrentSelection) {
+        storeState.selectObjects(actionObjectIds, primaryObjectId, { recordHistory: false });
+      }
+
+      setStageSelectionContextMenu({
+        actionObjectIds,
+        deleteLabel: actionObjectIds.length > 1 ? `Delete Selected (${actionObjectIds.length})` : 'Delete',
+        kind: 'selection',
+        position: { x: event.clientX, y: event.clientY },
+      });
+    };
+
+    host.addEventListener('pointerdown', handlePointerDown, true);
+    host.addEventListener('pointermove', handlePointerMove, true);
+    host.addEventListener('contextmenu', handleHostContextMenu);
+
+    return () => {
+      host.removeEventListener('pointerdown', handlePointerDown, true);
+      host.removeEventListener('pointermove', handlePointerMove, true);
+      host.removeEventListener('contextmenu', handleHostContextMenu);
+    };
+  }, [STAGE_CONTEXT_MENU_DRAG_THRESHOLD, closeStageSelectionContextMenu, isPlaying]);
 
   useEffect(() => {
     inventoryUnsubscribeRef.current?.();
@@ -2713,6 +2937,22 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         onClick={handleStageReturnToCenter}
         dataTestId="stage-return-to-center"
       />
+      {stageSelectionContextMenu ? (
+        <SelectionActionContextMenu
+          canCopy={stageSelectionContextMenu.kind === 'selection' && stageSelectionContextMenu.actionObjectIds.length > 0}
+          canDelete={stageSelectionContextMenu.kind === 'selection' && stageSelectionContextMenu.actionObjectIds.length > 0}
+          canPaste={hasSceneObjectClipboardContents()}
+          dataTestId="stage-selection-context-menu"
+          deleteLabel={stageSelectionContextMenu.deleteLabel}
+          onClose={closeStageSelectionContextMenu}
+          onCopy={stageSelectionContextMenu.kind === 'selection' ? handleStageSelectionContextMenuCopy : undefined}
+          onCut={stageSelectionContextMenu.kind === 'selection' ? handleStageSelectionContextMenuCut : undefined}
+          onDelete={stageSelectionContextMenu.kind === 'selection' ? handleStageSelectionContextMenuDelete : undefined}
+          onDuplicate={stageSelectionContextMenu.kind === 'selection' ? handleStageSelectionContextMenuDuplicate : undefined}
+          onPaste={handleStageSelectionContextMenuPaste}
+          position={stageSelectionContextMenu.position}
+        />
+      ) : null}
       {!isPlaying && componentDragPreview ? (
         componentDragPreview.assetId ? (
           <div
