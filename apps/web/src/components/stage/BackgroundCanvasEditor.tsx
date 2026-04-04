@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import { Check, X } from '@/components/ui/icons';
+import { Minimize2 } from '@/components/ui/icons';
 import { BitmapBrushCursorOverlay } from '@/components/editors/shared/BitmapBrushCursorOverlay';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
@@ -128,10 +128,7 @@ import {
 import {
   canRedoHistory,
   canUndoHistory,
-  createHistoryAnchor,
-  hasHistoryChangesSinceAnchor,
   redoHistory,
-  revertHistoryToAnchor,
   subscribeToHistoryChanges,
   undoHistory,
 } from '@/store/universalHistory';
@@ -654,7 +651,7 @@ function areRenderedLayerChunkEntriesEqual(
 }
 
 export function BackgroundCanvasEditor() {
-  const { showAlert, showConfirm } = useModal();
+  const { showAlert } = useModal();
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -689,7 +686,6 @@ export function BackgroundCanvasEditor() {
   const bitmapStateEpochRef = useRef(0);
   const didMountRef = useRef(false);
   const initializedSceneIdRef = useRef<string | null>(null);
-  const historyAnchorRef = useRef(createHistoryAnchor());
   const lastCommittedBackgroundRef = useRef<BackgroundConfig | null | undefined>(null);
   const backgroundColorCommitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialBackgroundColorRef = useRef('#87CEEB');
@@ -1518,7 +1514,6 @@ export function BackgroundCanvasEditor() {
 
     if (initializedSceneIdRef.current !== scene.id) {
       initializedSceneIdRef.current = scene.id;
-      historyAnchorRef.current = createHistoryAnchor();
       void loadFromBackgroundConfig();
       return;
     }
@@ -3080,39 +3075,33 @@ export function BackgroundCanvasEditor() {
     });
   }, [applyNextDocumentState, commitBackgroundDocumentState, flushActiveInteraction, persistActiveLayerIntoDocument]);
 
-  const handleDone = useCallback(async () => {
+  const flushPendingBackgroundColorCommit = useCallback(() => {
+    if (backgroundColorCommitTimeoutRef.current) {
+      clearTimeout(backgroundColorCommitTimeoutRef.current);
+      backgroundColorCommitTimeoutRef.current = null;
+    }
+    if (!scene || backgroundColorRef.current === initialBackgroundColorRef.current) {
+      return;
+    }
+    const nextDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    if (!nextDocument) {
+      return;
+    }
+    commitBackgroundDocumentState(nextDocument, backgroundColorRef.current, 'scene:background-color', {
+      allowMerge: true,
+      mergeWindowMs: 150,
+    });
+    initialBackgroundColorRef.current = backgroundColorRef.current;
+  }, [commitBackgroundDocumentState, persistActiveLayerIntoDocument, scene]);
+
+  const handleExitFullscreen = useCallback(async () => {
     const didFlushActiveInteraction = await flushActiveInteraction();
     if (!didFlushActiveInteraction) {
       return;
     }
+    flushPendingBackgroundColorCommit();
     closeBackgroundEditor();
-  }, [closeBackgroundEditor, flushActiveInteraction]);
-
-  const handleCancel = useCallback(() => {
-    const run = async () => {
-      if (rasterOperationBusyRef.current) {
-        await showAlert({
-          title: 'Operation In Progress',
-          description: 'Please wait for the current bitmap operation to finish.',
-        });
-        return;
-      }
-      if (hasHistoryChangesSinceAnchor(historyAnchorRef.current) || hasUnsavedBackgroundChanges()) {
-        const confirmed = await showConfirm({
-          title: 'Discard Changes',
-          description: 'Discard unsaved background edits?',
-          confirmLabel: 'Discard',
-          tone: 'destructive',
-        });
-        if (!confirmed) return;
-      }
-      if (hasHistoryChangesSinceAnchor(historyAnchorRef.current)) {
-        revertHistoryToAnchor(historyAnchorRef.current);
-      }
-      closeBackgroundEditor();
-    };
-    void run();
-  }, [closeBackgroundEditor, hasUnsavedBackgroundChanges, showAlert, showConfirm]);
+  }, [closeBackgroundEditor, flushActiveInteraction, flushPendingBackgroundColorCommit]);
 
   useEffect(() => {
     const copySelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.copySelection() ?? false) : false;
@@ -3227,15 +3216,10 @@ export function BackgroundCanvasEditor() {
         }
         if (plainEscape) {
           event.preventDefault();
-          void (async () => {
-            const didResolveInnerInteraction = await flushActiveInteraction({
-              behavior: 'revert',
-              reportHandled: true,
-            });
-            if (!didResolveInnerInteraction) {
-              handleCancel();
-            }
-          })();
+          void flushActiveInteraction({
+            behavior: 'revert',
+            reportHandled: true,
+          });
           return true;
         }
         if (plainEnter) {
@@ -3243,15 +3227,10 @@ export function BackgroundCanvasEditor() {
             return false;
           }
           event.preventDefault();
-          void (async () => {
-            const didResolveInnerInteraction = await flushActiveInteraction({
-              behavior: 'commit',
-              reportHandled: true,
-            });
-            if (!didResolveInnerInteraction) {
-              await handleDone();
-            }
-          })();
+          void flushActiveInteraction({
+            behavior: 'commit',
+            reportHandled: true,
+          });
           return true;
         }
         return false;
@@ -3259,7 +3238,7 @@ export function BackgroundCanvasEditor() {
     };
     registerBackgroundUndo(handler);
     return () => registerBackgroundUndo(null);
-  }, [deleteFloatingSelection, editorMode, flushActiveInteraction, handleCancel, handleDone, nudgeFloatingSelection, performHistoryStep, registerBackgroundUndo, tool]);
+  }, [deleteFloatingSelection, editorMode, flushActiveInteraction, nudgeFloatingSelection, performHistoryStep, registerBackgroundUndo, tool]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -3350,21 +3329,8 @@ export function BackgroundCanvasEditor() {
     if (!backgroundEditorOpen) return;
     if (!scene || !selectedSceneId) return;
     if (scene.id === selectedSceneId) return;
-    const run = async () => {
-      const save = await showConfirm({
-        title: 'Save Background Changes',
-        description: 'Save background changes before switching scenes?',
-        confirmLabel: 'Save Changes',
-        cancelLabel: 'Discard',
-      });
-      if (save) {
-        await handleDone();
-      } else {
-        handleCancel();
-      }
-    };
-    void run();
-  }, [backgroundEditorOpen, handleCancel, handleDone, scene, selectedSceneId, showConfirm]);
+    void handleExitFullscreen();
+  }, [backgroundEditorOpen, handleExitFullscreen, scene, selectedSceneId]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
     cancelCameraCenterAnimation();
@@ -3955,19 +3921,17 @@ export function BackgroundCanvasEditor() {
               <OverlayPill tone={overlayPillTone} size="compact">
                 <OverlayActionButton
                   disabled={busy}
-                  label="Cancel"
-                  onClick={handleCancel}
+                  label="Exit fullscreen"
+                  onClick={() => {
+                    void handleExitFullscreen();
+                  }}
+                  pressed
+                  selected
+                  size="compact"
+                  title="Exit fullscreen"
                   tone={overlayPillTone}
                 >
-                  <X className="size-3.5" />
-                </OverlayActionButton>
-                <OverlayActionButton
-                  disabled={busy}
-                  label="Done"
-                  onClick={handleDone}
-                  tone={overlayPillTone}
-                >
-                  <Check className="size-3.5" />
+                  <Minimize2 className="size-3.5" />
                 </OverlayActionButton>
               </OverlayPill>
             )}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import { Check, Trash2, X } from '@/components/ui/icons';
+import { Minimize2, Trash2 } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
@@ -10,10 +10,7 @@ import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import {
-  createHistoryAnchor,
-  hasHistoryChangesSinceAnchor,
   redoHistory,
-  revertHistoryToAnchor,
   undoHistory,
 } from '@/store/universalHistory';
 import type { WorldPoint } from '@/types';
@@ -274,7 +271,6 @@ export function WorldBoundaryEditor() {
   const stageRef = useRef<SVGSVGElement | null>(null);
   const backgroundCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const backgroundCompositorRef = useRef<TiledBackgroundCanvasCompositor | null>(null);
-  const historyAnchorRef = useRef(createHistoryAnchor());
   const pointsRef = useRef<WorldPoint[]>([]);
   const enabledRef = useRef(false);
   const dragStartPointsRef = useRef<WorldPoint[] | null>(null);
@@ -357,7 +353,6 @@ export function WorldBoundaryEditor() {
     setHoveredInsertionHandle(null);
     if (initializedSceneIdRef.current !== scene.id) {
       initializedSceneIdRef.current = scene.id;
-      historyAnchorRef.current = createHistoryAnchor();
       setView(getInitialView(nextPoints, canvasWidth, canvasHeight));
     }
   }, [canvasHeight, canvasWidth, scene]);
@@ -505,7 +500,7 @@ export function WorldBoundaryEditor() {
     return getUserSpaceViewportFromCanvasViewBox(viewBox, canvasWidth, canvasHeight);
   }, [canvasHeight, canvasWidth, viewBox]);
 
-  const handleDone = useCallback(() => {
+  const handleExitFullscreen = useCallback(() => {
     closeWorldBoundaryEditor();
   }, [closeWorldBoundaryEditor]);
 
@@ -559,25 +554,14 @@ export function WorldBoundaryEditor() {
       }
 
       event.preventDefault();
-      if (finishInnerInteraction(plainEscape ? 'revert' : 'commit')) {
-        return;
-      }
-
-      if (plainEscape) {
-        if (hasHistoryChangesSinceAnchor(historyAnchorRef.current)) {
-          revertHistoryToAnchor(historyAnchorRef.current);
-        }
-        closeWorldBoundaryEditor();
-        return;
-      }
-      handleDone();
+      finishInnerInteraction(plainEscape ? 'revert' : 'commit');
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [closeWorldBoundaryEditor, finishInnerInteraction, handleDone]);
+  }, [finishInnerInteraction]);
 
   const showReturnToCenter = useMemo(() => {
     const stageBounds = {
@@ -846,7 +830,7 @@ export function WorldBoundaryEditor() {
   };
 
   return (
-    <div className="fixed inset-0 z-[100001] bg-background flex flex-col overscroll-none">
+    <div className="fixed inset-0 z-[100001] bg-background flex flex-col overscroll-none" data-testid="world-boundary-editor-root">
       <div
         className="flex-1 min-h-0 relative overflow-hidden"
         style={{ backgroundColor: editorSurfaceColor }}
@@ -890,23 +874,15 @@ export function WorldBoundaryEditor() {
               </Button>
               <OverlayPill tone={overlayPillTone} size="compact">
                 <OverlayActionButton
-                  label="Cancel"
-                  onClick={() => {
-                    if (hasHistoryChangesSinceAnchor(historyAnchorRef.current)) {
-                      revertHistoryToAnchor(historyAnchorRef.current);
-                    }
-                    closeWorldBoundaryEditor();
-                  }}
+                  label="Exit fullscreen"
+                  onClick={handleExitFullscreen}
+                  pressed
+                  selected
+                  size="compact"
+                  title="Exit fullscreen"
                   tone={overlayPillTone}
                 >
-                  <X className="size-3.5" />
-                </OverlayActionButton>
-                <OverlayActionButton
-                  label="Done"
-                  onClick={handleDone}
-                  tone={overlayPillTone}
-                >
-                  <Check className="size-3.5" />
+                  <Minimize2 className="size-3.5" />
                 </OverlayActionButton>
               </OverlayPill>
             </>

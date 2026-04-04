@@ -21,6 +21,12 @@ async function openBackgroundEditor(page: Page) {
   return { root, box };
 }
 
+async function closeBackgroundEditor(page: Page): Promise<void> {
+  const root = page.getByTestId('background-editor-root');
+  await root.getByRole('button', { name: /^exit fullscreen$/i }).click();
+  await expect(root).toBeHidden();
+}
+
 async function readPlayCanvasDarkPixelCount(page: Page): Promise<number> {
   return await page.evaluate(async () => {
     const host = document.querySelector('[data-testid="play-phaser-host"]');
@@ -108,7 +114,7 @@ test.describe('play mode background runtime', () => {
     await page.mouse.move(startX + editor.box.width * 0.08, startY + editor.box.height * 0.06, { steps: 8 });
     await page.mouse.up();
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await page.evaluate(async () => {
@@ -131,7 +137,7 @@ test.describe('play mode background runtime', () => {
     await page.mouse.move(startX + editor.box.width * 0.08, startY + editor.box.height * 0.06, { steps: 8 });
     await page.mouse.up();
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await reopenCurrentProject(page);
@@ -158,7 +164,7 @@ test.describe('play mode background runtime', () => {
     await page.mouse.move(startX + editor.box.width * 0.14, startY + editor.box.height * 0.12, { steps: 8 });
     await page.mouse.up();
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await page.evaluate(async () => {

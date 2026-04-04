@@ -970,6 +970,19 @@ export function EditorLayout() {
       return;
     }
 
+    if (worldBoundaryEditorOpen) {
+      if (
+        e.key === '`' ||
+        e.key === 'Escape' ||
+        e.key === 'Enter' ||
+        e.metaKey ||
+        e.ctrlKey
+      ) {
+        e.preventDefault();
+      }
+      return;
+    }
+
     if (activeObjectTab === 'costumes') {
       const handled = costumeUndoHandler?.handleKeyDown?.(e) ?? false;
       if (handled) {

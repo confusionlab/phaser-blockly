@@ -19,7 +19,14 @@ async function openWorldBoundaryEditor(page: Page): Promise<void> {
     useEditorStore.getState().openWorldBoundaryEditor(sceneId);
   });
 
+  await expect(page.getByTestId('world-boundary-editor-root')).toBeVisible();
   await expect(page.locator('#world-boundary-editor-stage')).toBeVisible();
+}
+
+async function closeWorldBoundaryEditor(page: Page): Promise<void> {
+  const root = page.getByTestId('world-boundary-editor-root');
+  await root.getByRole('button', { name: /^exit fullscreen$/i }).click();
+  await expect(root).toBeHidden();
 }
 
 async function readWorldBoundaryState(page: Page): Promise<WorldBoundarySnapshot> {
@@ -54,7 +61,7 @@ async function dispatchWorldBoundaryShortcut(
 }
 
 test.describe('World boundary editor', () => {
-  test('undo and redo inside the modal use the universal history timeline', async ({ page }) => {
+  test('undo and redo inside the fullscreen editor use the universal history timeline', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `World Boundary ${Date.now()}` });
     const baselineState = {
       enabled: false,
@@ -63,7 +70,7 @@ test.describe('World boundary editor', () => {
     await expect.poll(async () => readWorldBoundaryState(page)).toEqual(baselineState);
 
     await openWorldBoundaryEditor(page);
-    await page.getByRole('button', { name: /^clear$/i }).click();
+    await page.getByRole('button', { name: /^clear boundary$/i }).click();
 
     await expect.poll(async () => readWorldBoundaryState(page)).toEqual({
       enabled: false,
@@ -82,8 +89,8 @@ test.describe('World boundary editor', () => {
     });
   });
 
-  test('cancel rewinds committed world boundary edits back to the open anchor', async ({ page }) => {
-    await bootstrapEditorProject(page, { projectName: `World Boundary Cancel ${Date.now()}` });
+  test('closing the editor keeps committed world boundary edits', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `World Boundary Close ${Date.now()}` });
     const baselineState = {
       enabled: false,
       pointCount: 0,
@@ -91,14 +98,17 @@ test.describe('World boundary editor', () => {
     await expect.poll(async () => readWorldBoundaryState(page)).toEqual(baselineState);
 
     await openWorldBoundaryEditor(page);
-    await page.getByRole('button', { name: /^clear$/i }).click();
+    await page.getByRole('button', { name: /^clear boundary$/i }).click();
     await expect.poll(async () => readWorldBoundaryState(page)).toEqual({
       enabled: false,
       pointCount: 4,
     });
 
-    await page.getByRole('button', { name: /^cancel$/i }).click();
+    await closeWorldBoundaryEditor(page);
     await expect(page.locator('#world-boundary-editor-stage')).toBeHidden();
-    await expect.poll(async () => readWorldBoundaryState(page)).toEqual(baselineState);
+    await expect.poll(async () => readWorldBoundaryState(page)).toEqual({
+      enabled: false,
+      pointCount: 4,
+    });
   });
 });

@@ -504,15 +504,9 @@ async function expectVectorContextMenuOrder(page: Page): Promise<void> {
   expect(labels.map((label) => label.trim())).toEqual(['Copy', 'Cut', 'Paste', 'Duplicate', 'Delete']);
 }
 
-async function cancelBackgroundEditor(page: Page): Promise<void> {
+async function closeBackgroundEditor(page: Page): Promise<void> {
   const root = page.getByTestId('background-editor-root');
-  await page.getByRole('button', { name: /cancel/i }).first().click();
-
-  const discardDialog = page.getByRole('dialog', { name: /discard changes/i });
-  if (await discardDialog.isVisible()) {
-    await discardDialog.getByRole('button', { name: /^discard$/i }).click();
-  }
-
+  await root.getByRole('button', { name: /^exit fullscreen$/i }).click();
   await expect(root).toBeHidden();
 }
 
@@ -541,7 +535,7 @@ test.describe('Background editor', () => {
     await page.getByRole('button', { name: /^select$/i }).click();
     await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).opacity).toBe(0);
 
-    await cancelBackgroundEditor(page);
+    await closeBackgroundEditor(page);
   });
 
   test('can draw and persist chunked background', async ({ page }) => {
@@ -557,16 +551,16 @@ test.describe('Background editor', () => {
 
     await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(root).toBeHidden();
 
     const reopened = await openBackgroundEditor(page);
     await expect(reopened.root).toBeVisible();
     await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
-    await cancelBackgroundEditor(page);
+    await closeBackgroundEditor(page);
   });
 
-  test('cancel discards uncommitted edits', async ({ page }) => {
+  test('closing the editor keeps committed edits in history', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
     const { root, box } = await openBackgroundEditor(page);
 
@@ -578,13 +572,13 @@ test.describe('Background editor', () => {
     await page.mouse.move(startX + 80, startY + 80);
     await page.mouse.up();
 
-    await cancelBackgroundEditor(page);
+    await closeBackgroundEditor(page);
 
     const reopened = await openBackgroundEditor(page);
     await expect(reopened.root).toBeVisible();
     const chunkCountAfter = await readBackgroundChunkCount(page);
-    expect(chunkCountAfter).toBe(chunkCountBefore);
-    await cancelBackgroundEditor(page);
+    expect(chunkCountAfter).toBeGreaterThan(chunkCountBefore);
+    await closeBackgroundEditor(page);
   });
 
   test('overlay undo and redo buttons mirror costume canvas controls', async ({ page }) => {
@@ -614,7 +608,7 @@ test.describe('Background editor', () => {
     await redoButton.click();
     await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
 
-    await cancelBackgroundEditor(page);
+    await closeBackgroundEditor(page);
   });
 
   test('keeps explicit bitmap and vector layers in the saved background document', async ({ page }) => {
@@ -647,7 +641,7 @@ test.describe('Background editor', () => {
     await bitmapLayerButton.click();
     await expect(bitmapLayerButton).toHaveAttribute('aria-pressed', 'true');
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(page.getByTestId('background-editor-root')).toBeHidden();
 
     const summary = await readBackgroundDocumentSummary(page);
@@ -661,7 +655,7 @@ test.describe('Background editor', () => {
     const reopened = await openBackgroundEditor(page);
     await expect(page.locator('[data-testid="layer-row"][data-layer-kind="bitmap"]')).toHaveCount(1);
     await expect(page.locator('[data-testid="layer-row"][data-layer-kind="vector"]')).toHaveCount(1);
-    await page.getByRole('button', { name: /cancel/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(reopened.root).toBeHidden();
   });
 
@@ -681,7 +675,7 @@ test.describe('Background editor', () => {
     await expect(undoButton).toBeEnabled();
     await undoButton.click();
     await expect(redoButton).toBeEnabled();
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(0);
 
@@ -698,7 +692,7 @@ test.describe('Background editor', () => {
     await undoButton.click();
     await expect(redoButton).toBeEnabled();
     await redoButton.click();
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(1);
   });
@@ -730,7 +724,7 @@ test.describe('Background editor', () => {
     await page.keyboard.type('BG');
     await page.getByRole('button', { name: /^select$/i }).click();
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(2);
   });
@@ -761,7 +755,7 @@ test.describe('Background editor', () => {
     await page.getByTestId('compact-color-picker-hex-input').fill('#22C55E');
     await page.getByTestId('compact-color-picker-hex-input').press('Enter');
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     const savedColors = await readSavedBackgroundVectorObjectColors(page);
@@ -963,7 +957,7 @@ test.describe('Background editor', () => {
     });
 
     await page.keyboard.press('ControlOrMeta+D');
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page), { timeout: 10000 }).toBe(2);
@@ -995,7 +989,7 @@ test.describe('Background editor', () => {
         y: Math.round(centerY - editor.box.y),
       },
     });
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     const beforePosition = await readSavedBackgroundVectorObjectPosition(page);
@@ -1011,7 +1005,7 @@ test.describe('Background editor', () => {
     });
     await page.keyboard.press('ArrowLeft');
     await page.keyboard.press('Shift+ArrowUp');
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await expect.poll(async () => {
@@ -1067,7 +1061,7 @@ test.describe('Background editor', () => {
     });
     await page.keyboard.press('ControlOrMeta+C');
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await page.evaluate(async () => {
@@ -1137,7 +1131,7 @@ test.describe('Background editor', () => {
     await expectVectorContextMenuOrder(page);
     await page.getByTestId('vector-selection-context-menu').getByRole('button', { name: /^paste$/i }).click();
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page), { timeout: 10000 }).toBe(1);
   });
@@ -1162,7 +1156,7 @@ test.describe('Background editor', () => {
     });
     await setToolbarColorOpacity(page, 'Fill', 20);
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await expect.poll(async () => readSavedBackgroundVectorObjectStyle(page), { timeout: 10000 }).toMatchObject({
@@ -1221,7 +1215,7 @@ test.describe('Background editor', () => {
     await expect(propertyBar.getByText('Multiple')).toHaveCount(0);
     await expect(propertyBar.getByRole('button', { name: /stroke \(mixed\)/i }).getByText('?')).toBeVisible();
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await expect.poll(async () => readSavedBackgroundVectorObjectColors(page), { timeout: 10000 }).toHaveLength(2);
@@ -1276,7 +1270,7 @@ test.describe('Background editor', () => {
     await page.getByRole('button', { name: /^multiple$/i }).first().click();
     await page.getByRole('menuitemradio', { name: /^paper$/i }).click();
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await expect.poll(async () => readSavedBackgroundVectorObjectPaintStyles(page), { timeout: 10000 }).toHaveLength(2);
@@ -1325,7 +1319,7 @@ test.describe('Background editor', () => {
 
     await setToolbarHexColor(page, 'Fill', '#FFFFFF');
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await expect.poll(async () => readSavedBackgroundVectorObjectColors(page), { timeout: 10000 }).toHaveLength(2);
@@ -1379,7 +1373,7 @@ test.describe('Background editor', () => {
 
     await setToolbarHexColor(page, 'Stroke', '#111111');
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await expect.poll(async () => readSavedBackgroundVectorObjectColors(page), { timeout: 10000 }).toHaveLength(2);
@@ -1427,7 +1421,7 @@ test.describe('Background editor', () => {
 
     await setVectorStrokeWidth(page, 50);
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
 
     await expect.poll(async () => readSavedBackgroundVectorObjectPaintStyles(page), { timeout: 10000 }).toHaveLength(2);
@@ -1486,7 +1480,7 @@ test.describe('Background editor', () => {
     await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.52);
     await page.mouse.up();
 
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(root).toBeHidden();
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(1);
   });
@@ -1510,7 +1504,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
     await page.mouse.up();
 
     await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(page.getByTestId('background-editor-root')).toBeHidden();
 
     const baselineDarkPixels = await readPersistedDarkPixelCount(page);
@@ -1525,7 +1519,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
     await page.mouse.up();
 
     await expect.poll(async () => readBackgroundSelectionGizmoBluePixelCount(page), { timeout: 5000 }).toBeGreaterThan(200);
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(page.getByTestId('background-editor-root')).toBeHidden();
 
     const nextDarkPixels = await readPersistedDarkPixelCount(page);
@@ -1546,7 +1540,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
     await page.mouse.up();
 
     await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(initialEditor.root).toBeHidden();
 
     const baselineDarkPixels = await readPersistedDarkPixelCount(page);
@@ -1562,7 +1556,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
 
     await expect.poll(async () => readBackgroundSelectionGizmoBluePixelCount(page), { timeout: 5000 }).toBeGreaterThan(200);
     await setActiveLayerOpacity(page, 60);
-    await page.getByRole('button', { name: /done/i }).first().click();
+    await closeBackgroundEditor(page);
     await expect(reopened.root).toBeHidden();
 
     const nextDarkPixels = await readPersistedDarkPixelCount(page);

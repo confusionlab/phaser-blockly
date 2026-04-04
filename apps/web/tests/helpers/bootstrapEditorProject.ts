@@ -1,7 +1,5 @@
 import { type Page } from '@playwright/test';
 
-const APP_URL = process.env.PLAYWRIGHT_TEST_BASE_URL ?? 'http://localhost:5173/';
-
 interface BootstrapEditorProjectOptions {
   projectName: string;
   addObject?: boolean;
@@ -12,7 +10,7 @@ export async function bootstrapEditorProject(
   page: Page,
   options: BootstrapEditorProjectOptions,
 ): Promise<void> {
-  await page.goto(APP_URL);
+  await page.goto('/');
   await page.waitForLoadState('networkidle');
 
   await page.evaluate(async ({ projectName, addObject, blocklyXml }) => {

@@ -249,6 +249,7 @@ interface ToolbarPreviewSliderProps {
   step?: number;
   onValueChange: (value: number) => void;
   preview: React.ReactNode;
+  previewEnabled?: boolean;
   labelDisplay?: 'left' | 'none';
   className?: string;
   sliderClassName?: string;
@@ -264,6 +265,7 @@ const ToolbarPreviewSlider = memo(({
   step = 1,
   onValueChange,
   preview,
+  previewEnabled = true,
   labelDisplay = 'left',
   className,
   sliderClassName,
@@ -272,6 +274,12 @@ const ToolbarPreviewSlider = memo(({
 }: ToolbarPreviewSliderProps) => {
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!previewEnabled) {
+      setIsPreviewVisible(false);
+    }
+  }, [previewEnabled]);
 
   useEffect(() => {
     if (!isPreviewVisible) {
@@ -301,8 +309,16 @@ const ToolbarPreviewSlider = memo(({
           value={value}
           onValueChange={onValueChange}
           onValueCommit={() => setIsPreviewVisible(false)}
-          onPointerDownCapture={() => setIsPreviewVisible(true)}
-          onFocusCapture={() => setIsPreviewVisible(true)}
+          onPointerDownCapture={() => {
+            if (previewEnabled) {
+              setIsPreviewVisible(true);
+            }
+          }}
+          onFocusCapture={() => {
+            if (previewEnabled) {
+              setIsPreviewVisible(true);
+            }
+          }}
           onBlurCapture={() => setIsPreviewVisible(false)}
           min={min}
           max={max}
@@ -312,7 +328,7 @@ const ToolbarPreviewSlider = memo(({
       </div>
       <span className={cn('w-8 text-right text-xs text-muted-foreground', valueClassName)}>{value}</span>
       <AnchoredPopupSurface
-        open={isPreviewVisible}
+        open={previewEnabled && isPreviewVisible}
         anchorRef={anchorRef}
         onClose={() => setIsPreviewVisible(false)}
         side="top"
@@ -616,6 +632,7 @@ export const CostumeToolbar = memo(({
   toolAccessory,
 }: CostumeToolbarProps) => {
   const [openMenu, setOpenMenu] = useState<ToolbarMenuId | null>(null);
+  const sliderPreviewEnabled = activeTool !== 'select';
   const showSelectTool = toolVisibility?.showSelectTool ?? true;
   const showPenTool = toolVisibility?.showPenTool ?? true;
   const showBrushTool = toolVisibility?.showBrushTool ?? true;
@@ -961,6 +978,7 @@ export const CostumeToolbar = memo(({
                         onValueChange={(strokeWidth) => onBitmapShapeStyleChange({ strokeWidth })}
                         min={0}
                         max={50}
+                        previewEnabled={sliderPreviewEnabled}
                         preview={(
                           <StrokeWidthPreview
                             thickness={bitmapShapeStyle.strokeWidth}
@@ -1019,6 +1037,7 @@ export const CostumeToolbar = memo(({
                           onValueChange={(strokeWidth) => onVectorStyleChange({ strokeWidth })}
                           min={0}
                           max={50}
+                          previewEnabled={sliderPreviewEnabled}
                           labelDisplay="none"
                           className="min-w-[124px] border-r-0 pr-0"
                           sliderClassName="w-16"
@@ -1085,13 +1104,14 @@ export const CostumeToolbar = memo(({
                       onValueChange={onBrushSizeChange}
                       min={1}
                       max={50}
-                        preview={(
-                          <BrushSizePreview
-                            size={brushSize}
-                            previewScale={previewScale}
-                          />
-                        )}
-                      />
+                      previewEnabled={sliderPreviewEnabled}
+                      preview={(
+                        <BrushSizePreview
+                          size={brushSize}
+                          previewScale={previewScale}
+                        />
+                      )}
+                    />
                   )}
 
                   {showTextToolbarControls && (
@@ -1130,6 +1150,7 @@ export const CostumeToolbar = memo(({
                         onValueChange={(fontSize) => onTextStyleChange({ fontSize })}
                         min={8}
                         max={120}
+                        previewEnabled={sliderPreviewEnabled}
                         sliderClassName="w-16"
                         thumbClassName="size-3"
                         preview={(
@@ -1270,6 +1291,7 @@ export const CostumeToolbar = memo(({
                           onValueChange={(strokeWidth) => onVectorStyleChange({ strokeWidth })}
                           min={0}
                           max={50}
+                          previewEnabled={sliderPreviewEnabled}
                           labelDisplay="none"
                           className="min-w-[124px] border-r-0 pr-0"
                           sliderClassName="w-16"

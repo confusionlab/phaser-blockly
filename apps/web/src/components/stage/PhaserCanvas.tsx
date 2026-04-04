@@ -495,6 +495,26 @@ function phaserToUser(phaserX: number, phaserY: number, canvasWidth: number, can
   };
 }
 
+function isPrimaryPointerPress(pointer: Phaser.Input.Pointer): boolean {
+  const event = pointer.event as MouseEvent | PointerEvent | undefined;
+  if (typeof event?.button === 'number') {
+    return event.button === 0;
+  }
+  if (typeof pointer.button === 'number') {
+    return pointer.button === 0;
+  }
+  if (typeof event?.buttons === 'number') {
+    return (event.buttons & 1) === 1;
+  }
+  if (typeof pointer.buttons === 'number') {
+    return (pointer.buttons & 1) === 1;
+  }
+  if (typeof pointer.primaryDown === 'boolean') {
+    return pointer.primaryDown;
+  }
+  return pointer.leftButtonDown();
+}
+
 function hashTextureInput(value: string): string {
   // FNV-1a hash keeps runtime cost low while producing deterministic texture keys.
   let hash = 0x811c9dc5;
@@ -2008,7 +2028,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   }, [updateObject]);
 
   const handleStageObjectPointerDown = useCallback((pointer: Phaser.Input.Pointer, objectId: string) => {
-    if (!pointer.leftButtonDown()) return;
+    if (!isPrimaryPointerPress(pointer)) return;
 
     const state = useEditorStore.getState();
     const event = pointer.event as MouseEvent | PointerEvent | undefined;
@@ -2261,6 +2281,9 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
                 }),
                 (nextViewport) => {
                   storeEditorViewport(selectedScene?.id ?? null, nextViewport);
+                },
+                () => {
+                  cancelStageViewportCenterAnimation();
                 },
               );
             }
@@ -3428,6 +3451,7 @@ function createEditorScene(
   initialEditorViewport: StageEditorViewport,
   getLayoutMetrics: () => { hostSize: StageSize; surfaceSize: StageSize },
   onEditorViewportChange: (viewport: StageEditorViewport) => void,
+  onPointerInteractionStart: () => void,
 ) {
   if (!sceneData) return;
   const getOrderedSceneObjectIds = () => getOrderedObjectIdsForActiveScene(
@@ -3517,7 +3541,7 @@ function createEditorScene(
     // Middle mouse (button 1) or right mouse (button 2) starts panning (only in editor mode)
     const currentMode = stageViewportController.getMode();
     if (currentMode === 'editor' && (pointer.middleButtonDown() || pointer.rightButtonDown())) {
-      cancelStageViewportCenterAnimation();
+      onPointerInteractionStart();
       isPanning = true;
       panStartX = pointer.x;
       panStartY = pointer.y;
@@ -3550,13 +3574,16 @@ function createEditorScene(
       panStartViewport = null;
     }
     setLockedStageCursor(null);
-    endTranslateDrag(pointer);
+    endTranslateDrag(pointer.id, pointer.worldX, pointer.worldY);
     if (isMarqueeSelecting && marqueePointerId === pointer.id) {
       endMarqueeSelection(pointer);
     }
   });
 
   scene.input.setTopOnly(true);
+  scene.events.once('shutdown', () => {
+    clearTranslateDragPointerListeners();
+  });
 
   const marqueeGraphics = scene.add.graphics();
   marqueeGraphics.setDepth(10_000);
@@ -3576,6 +3603,25 @@ function createEditorScene(
     startPositions: Map<string, { x: number; y: number }>;
     hasMoved: boolean;
   } | null = null;
+  let detachTranslateDragPointerListeners: (() => void) | null = null;
+
+  const clearTranslateDragPointerListeners = () => {
+    detachTranslateDragPointerListeners?.();
+    detachTranslateDragPointerListeners = null;
+  };
+
+  const getWorldPointFromClientPosition = (clientX: number, clientY: number) => {
+    const host = scene.game.canvas?.parentElement;
+    if (!(host instanceof HTMLElement)) {
+      return null;
+    }
+    const projection = stageViewportController.getProjection();
+    const hostPoint = getElementLocalPoint(host, clientX, clientY);
+    return scene.cameras.main.getWorldPoint(
+      projection.visibleRect.x + hostPoint.x,
+      projection.visibleRect.y + hostPoint.y,
+    );
+  };
   const groupOverlayGraphics = scene.add.graphics();
   groupOverlayGraphics.setVisible(false);
   groupOverlayGraphics.setDepth(10_003);
@@ -4042,9 +4088,11 @@ function createEditorScene(
     marqueePointerId = null;
   };
 
-  const isPointerOverVisibleGizmo = (worldX: number, worldY: number): boolean => {
-    for (const handle of groupHandles.values()) {
-      if (handle.visible && handle.getBounds().contains(worldX, worldY)) {
+  const isPointerOverVisibleGizmo = (pointer: Phaser.Input.Pointer): boolean => {
+    const visibleGroupHandles = Array.from(groupHandles.values()).filter((handle) => handle.visible && handle.input?.enabled);
+    if (visibleGroupHandles.length > 0) {
+      const hitHandles = scene.input.manager.hitTest(pointer, visibleGroupHandles, scene.cameras.main, []);
+      if (hitHandles.length > 0) {
         return true;
       }
     }
@@ -4053,17 +4101,21 @@ function createEditorScene(
     const selectedIds = activeIds.length > 0
       ? activeIds
       : (activeId ? [activeId] : []);
+    const visibleObjectHandles: Array<Phaser.GameObjects.Shape | Phaser.GameObjects.Arc> = [];
     for (const objectId of selectedIds) {
       const container = scene.children.getByName(objectId) as Phaser.GameObjects.Container | null;
       if (!container) continue;
       for (const name of GIZMO_HANDLE_NAMES) {
         const handle = container.getByName(name) as Phaser.GameObjects.Shape | Phaser.GameObjects.Arc | null;
-        if (handle && handle.visible && handle.getBounds().contains(worldX, worldY)) {
-          return true;
+        if (handle && handle.visible && handle.input?.enabled) {
+          visibleObjectHandles.push(handle);
         }
       }
     }
-    return false;
+    if (visibleObjectHandles.length === 0) {
+      return false;
+    }
+    return scene.input.manager.hitTest(pointer, visibleObjectHandles, scene.cameras.main, []).length > 0;
   };
 
   for (const [handleName, handle] of groupHandles.entries()) {
@@ -4273,6 +4325,27 @@ function createEditorScene(
     });
   }
 
+  const updateActiveTranslateDrag = (pointerId: number, worldX: number, worldY: number) => {
+    if (!activeTranslateDrag || activeTranslateDrag.pointerId !== pointerId) {
+      return false;
+    }
+
+    const dx = worldX - activeTranslateDrag.startWorldX;
+    const dy = worldY - activeTranslateDrag.startWorldY;
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+      activeTranslateDrag.hasMoved = true;
+    }
+    for (const id of activeTranslateDrag.objectIds) {
+      const draggedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+      const startPos = activeTranslateDrag.startPositions.get(id);
+      if (draggedContainer && startPos) {
+        draggedContainer.x = startPos.x + dx;
+        draggedContainer.y = startPos.y + dy;
+      }
+    }
+    return true;
+  };
+
   const beginTranslateDrag = (pointer: Phaser.Input.Pointer, objectId: string) => {
     const storeState = useEditorStore.getState();
     const selectedIds = storeState.selectedObjectIds.length > 0
@@ -4303,10 +4376,55 @@ function createEditorScene(
       startPositions,
       hasMoved: false,
     };
+    if (typeof window !== 'undefined') {
+      const handleTranslatePointerMove = (event: PointerEvent | MouseEvent) => {
+        if (!activeTranslateDrag) {
+          return;
+        }
+        if (event instanceof PointerEvent && event.pointerType !== 'mouse' && event.pointerId !== activeTranslateDrag.pointerId) {
+          return;
+        }
+        const worldPoint = getWorldPointFromClientPosition(event.clientX, event.clientY);
+        if (!worldPoint) {
+          return;
+        }
+        updateActiveTranslateDrag(activeTranslateDrag.pointerId, worldPoint.x, worldPoint.y);
+      };
+
+      const handleTranslatePointerUp = (event: PointerEvent | MouseEvent) => {
+        if (!activeTranslateDrag) {
+          clearTranslateDragPointerListeners();
+          return;
+        }
+        if (event instanceof PointerEvent && event.pointerType !== 'mouse' && event.pointerId !== activeTranslateDrag.pointerId) {
+          return;
+        }
+        const worldPoint = getWorldPointFromClientPosition(event.clientX, event.clientY);
+        endTranslateDrag(
+          activeTranslateDrag.pointerId,
+          worldPoint?.x ?? activeTranslateDrag.startWorldX,
+          worldPoint?.y ?? activeTranslateDrag.startWorldY,
+        );
+      };
+
+      clearTranslateDragPointerListeners();
+      window.addEventListener('pointermove', handleTranslatePointerMove, true);
+      window.addEventListener('mousemove', handleTranslatePointerMove, true);
+      window.addEventListener('pointerup', handleTranslatePointerUp, true);
+      window.addEventListener('mouseup', handleTranslatePointerUp, true);
+      window.addEventListener('pointercancel', handleTranslatePointerUp, true);
+      detachTranslateDragPointerListeners = () => {
+        window.removeEventListener('pointermove', handleTranslatePointerMove, true);
+        window.removeEventListener('mousemove', handleTranslatePointerMove, true);
+        window.removeEventListener('pointerup', handleTranslatePointerUp, true);
+        window.removeEventListener('mouseup', handleTranslatePointerUp, true);
+        window.removeEventListener('pointercancel', handleTranslatePointerUp, true);
+      };
+    }
   };
 
-  const endTranslateDrag = (pointer: Phaser.Input.Pointer) => {
-    if (!activeTranslateDrag || activeTranslateDrag.pointerId !== pointer.id) return;
+  const endTranslateDrag = (pointerId: number, worldX: number, worldY: number) => {
+    if (!activeTranslateDrag || activeTranslateDrag.pointerId !== pointerId) return;
 
     if (activeTranslateDrag.hasMoved) {
       const currentTranslateDrag = activeTranslateDrag;
@@ -4321,23 +4439,25 @@ function createEditorScene(
     }
 
     activeTranslateDrag = null;
+    clearTranslateDragPointerListeners();
   };
 
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-    if (!pointer.leftButtonDown()) return;
-    cancelStageViewportCenterAnimation();
+    const event = pointer.event as MouseEvent | PointerEvent | undefined;
+    const primaryPress = isPrimaryPointerPress(pointer);
+    if (!primaryPress) return;
+    onPointerInteractionStart();
 
     const worldX = pointer.worldX;
     const worldY = pointer.worldY;
 
-    if (isPointerOverVisibleGizmo(worldX, worldY)) {
+    if (isPointerOverVisibleGizmo(pointer)) {
       return;
     }
 
     const pickedObjectId = pickTopObjectIdAtWorldPoint(scene, worldX, worldY);
     if (pickedObjectId) {
       onObjectPointerDown(pointer, pickedObjectId);
-      const event = pointer.event as MouseEvent | PointerEvent | undefined;
       const hasSelectionModifier = !!event?.shiftKey;
       if (!hasSelectionModifier) {
         beginTranslateDrag(pointer, pickedObjectId);
@@ -4347,14 +4467,12 @@ function createEditorScene(
 
     const currentMode = stageViewportController.getMode();
     if (currentMode !== 'editor') {
-      const event = pointer.event as MouseEvent | PointerEvent | undefined;
       if (!event?.shiftKey) {
         useEditorStore.getState().clearSelection();
       }
       return;
     }
 
-    const event = pointer.event as MouseEvent | PointerEvent | undefined;
     marqueeMode = event?.shiftKey ? 'add' : 'replace';
     marqueeStartX = worldX;
     marqueeStartY = worldY;
@@ -4391,6 +4509,12 @@ function createEditorScene(
     setSelectionVisible(false);
     container.setData('setSelectionVisible', setSelectionVisible);
 
+    const dragHandle = container.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+    const dragEventSource: Phaser.GameObjects.GameObject & Phaser.Events.EventEmitter = dragHandle ?? container;
+    if (dragHandle) {
+      scene.input.setDraggable(dragHandle);
+    }
+
     let dragContext: {
       pointerId: number;
       leaderStartX: number;
@@ -4399,7 +4523,7 @@ function createEditorScene(
       startPositions: Map<string, { x: number; y: number }>;
     } | null = null;
 
-    container.on('dragstart', (pointer: Phaser.Input.Pointer) => {
+    dragEventSource.on('dragstart', (pointer: Phaser.Input.Pointer) => {
       const storeState = useEditorStore.getState();
       const selectedIds = storeState.selectedObjectIds.length > 0
         ? storeState.selectedObjectIds
@@ -4415,16 +4539,17 @@ function createEditorScene(
           startPositions.set(id, { x: selectedContainer.x, y: selectedContainer.y });
         }
       }
+      const leaderBounds = dragHandle?.getBounds() ?? container.getBounds();
       dragContext = {
         pointerId: pointer.id,
-        leaderStartX: container.x,
-        leaderStartY: container.y,
+        leaderStartX: leaderBounds.centerX,
+        leaderStartY: leaderBounds.centerY,
         objectIds: dragIds,
         startPositions,
       };
     });
 
-    container.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+    dragEventSource.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
       if (dragContext) {
         const dx = dragX - dragContext.leaderStartX;
         const dy = dragY - dragContext.leaderStartY;
@@ -4442,7 +4567,7 @@ function createEditorScene(
       container.y = dragY;
     });
 
-    container.on('dragend', () => {
+    dragEventSource.on('dragend', () => {
       if (dragContext) {
         const currentDragContext = dragContext;
         runInHistoryTransaction('stage:drag-selection', () => {
@@ -4465,20 +4590,7 @@ function createEditorScene(
 
   // Update selection visuals on scene update
   scene.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-    if (activeTranslateDrag && activeTranslateDrag.pointerId === pointer.id) {
-      const dx = pointer.worldX - activeTranslateDrag.startWorldX;
-      const dy = pointer.worldY - activeTranslateDrag.startWorldY;
-      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-        activeTranslateDrag.hasMoved = true;
-      }
-      for (const id of activeTranslateDrag.objectIds) {
-        const draggedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
-        const startPos = activeTranslateDrag.startPositions.get(id);
-        if (draggedContainer && startPos) {
-          draggedContainer.x = startPos.x + dx;
-          draggedContainer.y = startPos.y + dy;
-        }
-      }
+    if (updateActiveTranslateDrag(pointer.id, pointer.worldX, pointer.worldY)) {
       return;
     }
 
@@ -4493,7 +4605,7 @@ function createEditorScene(
 
   scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
     setLockedStageCursor(null);
-    endTranslateDrag(pointer);
+    endTranslateDrag(pointer.id, pointer.worldX, pointer.worldY);
     if (isMarqueeSelecting && marqueePointerId === pointer.id) {
       endMarqueeSelection(pointer);
     }
@@ -4907,7 +5019,7 @@ function createPlaySceneContent(
   runtime.setupPhysicsColliders();
 
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-    if (!pointer.leftButtonDown()) {
+    if (!isPrimaryPointerPress(pointer)) {
       return;
     }
     runtime.queueWorldClick(pointer.worldX, pointer.worldY);
@@ -5019,6 +5131,7 @@ function createObjectVisual(
     hitRect = scene.add.rectangle(0, 0, defaultSize, defaultSize, 0x000000, 0);
     hitRect.setName('hitArea');
     hitRect.setInteractive({ useHandCursor: true });
+    scene.input.setDraggable(hitRect);
     container.add(hitRect);
   }
 
@@ -5043,6 +5156,7 @@ function createObjectVisual(
       hitRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
       hitRect.removeInteractive();
       hitRect.setInteractive({ useHandCursor: true });
+      scene.input.setDraggable(hitRect);
     }
 
     if (selectionRect) {
@@ -5105,6 +5219,9 @@ function createObjectVisual(
     }
     if (selectionRect) {
       selectionRect.setSize(72, 72);
+    }
+    if (hitRect) {
+      scene.input.setDraggable(hitRect);
     }
   }
 
