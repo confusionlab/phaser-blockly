@@ -1318,6 +1318,7 @@ export function SpriteShelf({
               name={object?.name ?? 'Object'}
               costumes={effectiveProps.costumes}
               currentCostumeIndex={effectiveProps.currentCostumeIndex}
+              visible={object?.visible ?? true}
             />
           ) : null
         )}

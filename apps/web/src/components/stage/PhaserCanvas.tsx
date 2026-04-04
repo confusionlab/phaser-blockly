@@ -1,10 +1,11 @@
-import { useEffect, useRef, useCallback, useLayoutEffect, useState } from 'react';
+import { useEffect, useRef, useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import Phaser from 'phaser';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
+import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
 import type {
   Scene as SceneData,
   GameObject,
@@ -40,10 +41,12 @@ import { getDraggedComponentId, setDraggedComponentId } from './shelfDrag';
 import {
   getSceneBackgroundBaseColor,
   getTiledBackgroundChunkSize,
+  getVisibleTiledBackgroundScreenChunks,
   isTiledBackground,
   TiledBackgroundCanvasCompositor,
   type UserSpaceViewport,
 } from '@/lib/background/compositor';
+import { boundsIntersect, getBoundsFromPoints, shouldShowViewportRecovery } from '@/lib/editor/viewportRecovery';
 import { resolveBackgroundRuntimeChunkData } from '@/lib/background/backgroundDocumentRender';
 import {
   areCostumeAssetFramesEqual,
@@ -944,6 +947,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   // Track the initial scene when play mode starts - don't recreate game when scene changes during play
   const playModeInitialSceneRef = useRef<string | null>(null);
   const editorViewportBySceneIdRef = useRef<Map<string, StageEditorViewport>>(new Map());
+  const [editorViewportState, setEditorViewportState] = useState<StageEditorViewport | null>(null);
   const [activeRuntime, setActiveRuntime] = useState<RuntimeEngine | null>(null);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemEntry[]>([]);
   const [isInventoryVisible, setIsInventoryVisible] = useState(true);
@@ -1129,6 +1133,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
 
   useEffect(() => {
     editorViewportBySceneIdRef.current.clear();
+    setEditorViewportState(null);
   }, [project?.id]);
 
   const getStoredEditorViewport = useCallback((
@@ -1146,7 +1151,23 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   ) => {
     const key = sceneId ?? '__default__';
     editorViewportBySceneIdRef.current.set(key, viewport);
+    if (sceneId === selectedSceneIdRef.current) {
+      setEditorViewportState(viewport);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!project) {
+      setEditorViewportState(null);
+      return;
+    }
+    setEditorViewportState(
+      getStoredEditorViewport(selectedScene?.id ?? null, {
+        width: project.settings.canvasWidth,
+        height: project.settings.canvasHeight,
+      }),
+    );
+  }, [getStoredEditorViewport, project, selectedScene?.id]);
 
   useEffect(() => {
     if (!import.meta.env.DEV || typeof window === 'undefined' || isPlaying) {
@@ -1465,8 +1486,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
 
     const state = useEditorStore.getState();
     const event = pointer.event as MouseEvent | PointerEvent | undefined;
-    const isToggleSelection = !!event && (event.metaKey || event.ctrlKey);
-    const isAddSelection = !!event && event.shiftKey;
+    const isToggleSelection = !!event?.shiftKey;
     const currentSelection = state.selectedObjectIds.length > 0
       ? state.selectedObjectIds
       : (state.selectedObjectId ? [state.selectedObjectId] : []);
@@ -1478,15 +1498,6 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         : [...currentSelection, objectId];
       state.setActiveHierarchyTab('object');
       state.selectObjects(nextIds, nextIds.includes(objectId) ? objectId : (nextIds[0] ?? null));
-      return;
-    }
-
-    if (isAddSelection) {
-      const nextIds = currentSelection.includes(objectId)
-        ? currentSelection
-        : [...currentSelection, objectId];
-      state.setActiveHierarchyTab('object');
-      state.selectObjects(nextIds, objectId);
       return;
     }
 
@@ -2571,6 +2582,107 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
   const previewComponentName = componentDragPreview
     ? ((project?.components || []).find((candidate) => candidate.id === componentDragPreview.componentId)?.name ?? 'Component')
     : 'Component';
+  const stageReturnToCenterVisible = useMemo(() => {
+    if (
+      isPlaying ||
+      viewMode !== 'editor' ||
+      !project ||
+      !selectedScene ||
+      !editorViewportState
+    ) {
+      return false;
+    }
+
+    const surfaceSize = editorSurfaceSizeRef.current ?? editorHostSizeRef.current;
+    const zoom = Math.max(editorViewportState.zoom, 1e-6);
+    const worldWidth = Math.max(1, surfaceSize.width) / zoom;
+    const worldHeight = Math.max(1, surfaceSize.height) / zoom;
+    const worldView = new Phaser.Geom.Rectangle(
+      editorViewportState.centerX - worldWidth / 2,
+      editorViewportState.centerY - worldHeight / 2,
+      worldWidth,
+      worldHeight,
+    );
+    const userViewport = getUserViewportFromPhaserWorldView(
+      worldView,
+      project.settings.canvasWidth,
+      project.settings.canvasHeight,
+    );
+    const stageBounds = {
+      left: -project.settings.canvasWidth / 2,
+      right: project.settings.canvasWidth / 2,
+      bottom: -project.settings.canvasHeight / 2,
+      top: project.settings.canvasHeight / 2,
+    };
+    const backgroundVisible = selectedScene.background?.type === 'tiled'
+      ? getVisibleTiledBackgroundScreenChunks(
+          selectedScene.background,
+          userViewport,
+          Math.max(1, Math.round(surfaceSize.width)),
+          Math.max(1, Math.round(surfaceSize.height)),
+          1,
+        ).length > 0
+      : boundsIntersect(userViewport, stageBounds);
+
+    const worldBoundaryBounds = getBoundsFromPoints(
+      selectedScene.worldBoundary?.enabled ? (selectedScene.worldBoundary.points || []) : [],
+    );
+    const worldBoundaryVisible = !!worldBoundaryBounds && boundsIntersect(userViewport, worldBoundaryBounds);
+
+    const phaserScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+    let objectVisible = false;
+    if (phaserScene) {
+      phaserScene.children.each((child: Phaser.GameObjects.GameObject) => {
+        if (objectVisible) {
+          return;
+        }
+        if (!(child instanceof Phaser.GameObjects.Container) || !child.getData('objectData') || !child.visible) {
+          return;
+        }
+        const objectHitRect = child.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+        const bounds = objectHitRect ? objectHitRect.getBounds() : child.getBounds();
+        objectVisible = (
+          bounds.right >= worldView.left &&
+          bounds.left <= worldView.right &&
+          bounds.bottom >= worldView.top &&
+          bounds.top <= worldView.bottom
+        );
+      });
+    }
+
+    return shouldShowViewportRecovery({
+      currentCenter: {
+        x: editorViewportState.centerX,
+        y: editorViewportState.centerY,
+      },
+      homeCenter: {
+        x: project.settings.canvasWidth / 2,
+        y: project.settings.canvasHeight / 2,
+      },
+      viewportSize: {
+        width: worldView.width,
+        height: worldView.height,
+      },
+      hasVisibleContent: backgroundVisible || worldBoundaryVisible || objectVisible,
+    });
+  }, [editorViewportState, isPlaying, project, selectedScene, viewMode]);
+
+  const handleStageReturnToCenter = useCallback(() => {
+    if (!project) {
+      return;
+    }
+    const phaserScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+    const controller = phaserScene ? getStageViewportController(phaserScene) : null;
+    if (!controller) {
+      return;
+    }
+    const currentViewport = controller.getEditorViewport();
+    controller.setEditorViewport({
+      ...currentViewport,
+      centerX: project.settings.canvasWidth / 2,
+      centerY: project.settings.canvasHeight / 2,
+    });
+  }, [project]);
 
   return (
     <div
@@ -2587,6 +2699,11 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         data-testid={isPlaying ? 'play-phaser-host' : 'stage-phaser-host'}
         className="relative h-full w-full overflow-hidden"
         style={isPlaying ? undefined : { backgroundColor: editorStageShellColor }}
+      />
+      <ViewportRecoveryPill
+        visible={stageReturnToCenterVisible}
+        onClick={handleStageReturnToCenter}
+        dataTestId="stage-return-to-center"
       />
       {!isPlaying && componentDragPreview ? (
         componentDragPreview.assetId ? (
@@ -2896,7 +3013,7 @@ function createEditorScene(
   let marqueeStartY = 0;
   let marqueeHasMoved = false;
   let marqueePointerId: number | null = null;
-  let marqueeMode: 'replace' | 'add' | 'toggle' = 'replace';
+  let marqueeMode: 'replace' | 'add' = 'replace';
   let activeTranslateDrag: {
     pointerId: number;
     objectIds: string[];
@@ -3364,16 +3481,6 @@ function createEditorScene(
 
     if (marqueeMode === 'add') {
       nextSelection = Array.from(new Set([...currentSelected, ...orderedHitIds]));
-    } else if (marqueeMode === 'toggle') {
-      const toggled = new Set(currentSelected);
-      for (const id of orderedHitIds) {
-        if (toggled.has(id)) {
-          toggled.delete(id);
-        } else {
-          toggled.add(id);
-        }
-      }
-      nextSelection = orderedSceneObjectIds.filter((id) => toggled.has(id));
     }
 
     selectObjects(nextSelection, nextSelection[0] ?? null);
@@ -3676,7 +3783,7 @@ function createEditorScene(
     if (pickedObjectId) {
       onObjectPointerDown(pointer, pickedObjectId);
       const event = pointer.event as MouseEvent | PointerEvent | undefined;
-      const hasSelectionModifier = !!(event?.metaKey || event?.ctrlKey || event?.shiftKey);
+      const hasSelectionModifier = !!event?.shiftKey;
       if (!hasSelectionModifier) {
         beginTranslateDrag(pointer, pickedObjectId);
       }
@@ -3686,16 +3793,14 @@ function createEditorScene(
     const currentMode = stageViewportController.getMode();
     if (currentMode !== 'editor') {
       const event = pointer.event as MouseEvent | PointerEvent | undefined;
-      if (!(event?.metaKey || event?.ctrlKey || event?.shiftKey)) {
+      if (!event?.shiftKey) {
         useEditorStore.getState().clearSelection();
       }
       return;
     }
 
     const event = pointer.event as MouseEvent | PointerEvent | undefined;
-    marqueeMode = event && (event.metaKey || event.ctrlKey)
-      ? 'toggle'
-      : (event?.shiftKey ? 'add' : 'replace');
+    marqueeMode = event?.shiftKey ? 'add' : 'replace';
     marqueeStartX = worldX;
     marqueeStartY = worldY;
     marqueeHasMoved = false;

@@ -259,7 +259,7 @@ export function useCostumeCanvasVectorPathController({
 
   const isPointSelectionToggleModifierPressed = useCallback((eventData: any) => {
     const source = eventData?.e ?? eventData;
-    return !!(source?.shiftKey || source?.metaKey || source?.ctrlKey);
+    return !!source?.shiftKey;
   }, []);
 
   const isPathCurveDragModifierPressed = useCallback((eventData: any) => {

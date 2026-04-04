@@ -1,3 +1,10 @@
+import {
+  panCameraFromDrag,
+  panCameraFromWheel,
+  screenPointToWorldPoint,
+  zoomCameraAtScreenPoint,
+} from '@/lib/viewportNavigation';
+
 export type StageViewMode = 'camera-masked' | 'camera-viewport' | 'editor';
 
 export interface StageSize {
@@ -37,6 +44,8 @@ export interface StageScreenPoint {
 export const DEFAULT_STAGE_EDITOR_ZOOM = 0.5;
 export const MIN_STAGE_EDITOR_ZOOM = 0.1;
 export const MAX_STAGE_EDITOR_ZOOM = 10;
+const MIN_STAGE_EDITOR_SOFT_BOUND_EXTENT = 250_000;
+const STAGE_EDITOR_SOFT_BOUND_MULTIPLIER = 512;
 
 function sanitizeStageSize(size: StageSize): StageSize {
   return {
@@ -74,14 +83,28 @@ export function normalizeStageEditorViewport(
   viewport: StageEditorViewport | null | undefined,
   canvasSize: StageSize,
 ): StageEditorViewport {
-  const fallback = createDefaultStageEditorViewport(canvasSize);
+  const safeCanvasSize = sanitizeStageSize(canvasSize);
+  const fallback = createDefaultStageEditorViewport(safeCanvasSize);
   if (!viewport) {
     return fallback;
   }
 
+  const maxOffsetX = Math.max(
+    MIN_STAGE_EDITOR_SOFT_BOUND_EXTENT,
+    safeCanvasSize.width * STAGE_EDITOR_SOFT_BOUND_MULTIPLIER,
+  );
+  const maxOffsetY = Math.max(
+    MIN_STAGE_EDITOR_SOFT_BOUND_EXTENT,
+    safeCanvasSize.height * STAGE_EDITOR_SOFT_BOUND_MULTIPLIER,
+  );
+
   return {
-    centerX: Number.isFinite(viewport.centerX) ? viewport.centerX : fallback.centerX,
-    centerY: Number.isFinite(viewport.centerY) ? viewport.centerY : fallback.centerY,
+    centerX: Number.isFinite(viewport.centerX)
+      ? Math.max(fallback.centerX - maxOffsetX, Math.min(fallback.centerX + maxOffsetX, viewport.centerX))
+      : fallback.centerX,
+    centerY: Number.isFinite(viewport.centerY)
+      ? Math.max(fallback.centerY - maxOffsetY, Math.min(fallback.centerY + maxOffsetY, viewport.centerY))
+      : fallback.centerY,
     zoom: clampStageEditorZoom(viewport.zoom),
   };
 }
@@ -92,9 +115,16 @@ export function panStageEditorViewport(
   deltaScreenY: number,
 ): StageEditorViewport {
   const zoom = clampStageEditorZoom(viewport.zoom);
+  const camera = panCameraFromDrag(
+    { x: viewport.centerX, y: viewport.centerY },
+    deltaScreenX,
+    deltaScreenY,
+    zoom,
+    'down',
+  );
   return {
-    centerX: viewport.centerX - deltaScreenX / zoom,
-    centerY: viewport.centerY - deltaScreenY / zoom,
+    centerX: camera.x,
+    centerY: camera.y,
     zoom,
   };
 }
@@ -105,9 +135,16 @@ export function scrollStageEditorViewport(
   deltaScreenY: number,
 ): StageEditorViewport {
   const zoom = clampStageEditorZoom(viewport.zoom);
+  const camera = panCameraFromWheel(
+    { x: viewport.centerX, y: viewport.centerY },
+    deltaScreenX,
+    deltaScreenY,
+    zoom,
+    'down',
+  );
   return {
-    centerX: viewport.centerX + deltaScreenX / zoom,
-    centerY: viewport.centerY + deltaScreenY / zoom,
+    centerX: camera.x,
+    centerY: camera.y,
     zoom,
   };
 }
@@ -119,13 +156,13 @@ export function getStageEditorViewportWorldPoint(
 ): StageScreenPoint {
   const safeHostSize = sanitizeStageSize(hostSize);
   const zoom = clampStageEditorZoom(viewport.zoom);
-  const halfWidth = safeHostSize.width / 2;
-  const halfHeight = safeHostSize.height / 2;
-
-  return {
-    x: viewport.centerX + (screenPoint.x - halfWidth) / zoom,
-    y: viewport.centerY + (screenPoint.y - halfHeight) / zoom,
-  };
+  return screenPointToWorldPoint(
+    screenPoint,
+    safeHostSize,
+    { x: viewport.centerX, y: viewport.centerY },
+    zoom,
+    'down',
+  );
 }
 
 export function zoomStageEditorViewportAtScreenPoint(
@@ -136,13 +173,18 @@ export function zoomStageEditorViewportAtScreenPoint(
 ): StageEditorViewport {
   const safeHostSize = sanitizeStageSize(hostSize);
   const clampedNextZoom = clampStageEditorZoom(nextZoom);
-  const worldPoint = getStageEditorViewportWorldPoint(viewport, safeHostSize, screenPoint);
-  const halfWidth = safeHostSize.width / 2;
-  const halfHeight = safeHostSize.height / 2;
+  const camera = zoomCameraAtScreenPoint(
+    screenPoint,
+    safeHostSize,
+    { x: viewport.centerX, y: viewport.centerY },
+    clampStageEditorZoom(viewport.zoom),
+    clampedNextZoom,
+    'down',
+  );
 
   return {
-    centerX: worldPoint.x - (screenPoint.x - halfWidth) / clampedNextZoom,
-    centerY: worldPoint.y - (screenPoint.y - halfHeight) / clampedNextZoom,
+    centerX: camera.x,
+    centerY: camera.y,
     zoom: clampedNextZoom,
   };
 }

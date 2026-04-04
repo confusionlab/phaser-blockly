@@ -83,6 +83,7 @@ import {
   reflectBackgroundVectorObjectsAcrossXAxis,
 } from '@/lib/background/backgroundVectorCoordinateSpace';
 import { clearCanvasInCssPixels, syncCanvasViewportSize } from '@/lib/editor/canvasOverlay';
+import type { FinishPendingEditsOptions } from '@/lib/editor/interactionSurface';
 
 type WorldPoint = { x: number; y: number };
 
@@ -122,7 +123,9 @@ export interface BackgroundVectorCanvasHandle {
   updateShape: (currentWorld: WorldPoint) => void;
   commitShape: () => boolean;
   cancelShape: () => void;
-  flushPendingEdits: () => boolean;
+  flushPendingEdits: (_options?: FinishPendingEditsOptions) => boolean;
+  hasActiveInteraction: () => boolean;
+  isTextEditing: () => boolean;
   awaitIdle: () => Promise<void>;
   undo: () => void;
   redo: () => void;
@@ -140,6 +143,7 @@ export interface BackgroundVectorCanvasHandle {
   rotateSelection: () => void;
   alignSelection: (action: AlignAction) => boolean;
   getSelectionBounds: () => WorldBounds | null;
+  getDocumentBounds: () => WorldBounds | null;
 }
 
 interface BackgroundVectorCanvasProps {
@@ -1987,6 +1991,25 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       }
       return flushed;
     },
+    hasActiveInteraction() {
+      return (
+        !!penAnchorPlacementSessionRef.current ||
+        !!penDraftRef.current ||
+        !!pointSelectionTransformSessionRef.current ||
+        !!pointSelectionMarqueeSessionRef.current ||
+        !!insertedPathAnchorDragSessionRef.current ||
+        !!mirroredPathAnchorDragSessionRef.current ||
+        !!shapeDraftRef.current ||
+        (() => {
+          const activeObject = fabricCanvasRef.current?.getActiveObject() as any;
+          return !!(isTextEditableObject(activeObject) && activeObject?.isEditing);
+        })()
+      );
+    },
+    isTextEditing() {
+      const activeObject = fabricCanvasRef.current?.getActiveObject() as any;
+      return !!(isTextEditableObject(activeObject) && activeObject?.isEditing);
+    },
     awaitIdle() {
       return pendingLoadPromiseRef.current;
     },
@@ -2060,6 +2083,28 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     getSelectionBounds() {
       const selectionBounds = getSelectionBoundsSnapshot()?.bounds ?? null;
       return selectionBounds ? sceneBoundsToWorldBounds(selectionBounds) : null;
+    },
+    getDocumentBounds() {
+      const fabricCanvas = fabricCanvasRef.current;
+      if (!fabricCanvas) {
+        return null;
+      }
+      const objectBounds = fabricCanvas.getObjects()
+        .map((obj) => obj.getBoundingRect() as { left: number; top: number; width: number; height: number })
+        .filter((bounds) => Number.isFinite(bounds.left) && Number.isFinite(bounds.top));
+      if (objectBounds.length === 0) {
+        return null;
+      }
+      const left = Math.min(...objectBounds.map((bounds) => bounds.left));
+      const top = Math.min(...objectBounds.map((bounds) => bounds.top));
+      const right = Math.max(...objectBounds.map((bounds) => bounds.left + bounds.width));
+      const bottom = Math.max(...objectBounds.map((bounds) => bounds.top + bounds.height));
+      return sceneBoundsToWorldBounds({
+        left,
+        top,
+        width: Math.max(1, right - left),
+        height: Math.max(1, bottom - top),
+      });
     },
   }), [
     activeTool,

@@ -8,6 +8,7 @@ import {
   Polygon,
   Rect,
 } from 'fabric';
+import type { BitmapFloatingSelectionBehavior } from '@/lib/editor/interactionSurface';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
 import { applyCanvasCursor } from './costumeCanvasBitmapRuntime';
 import {
@@ -113,7 +114,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   applyVectorPointEditingAppearance: (target: any) => void;
   beginPointSelectionTransformSession: (target: any, hit: any, pointer: Point, eventData?: Record<string, any> | null) => boolean;
   clearSelectedPathAnchors: (target?: any) => void;
-  commitBitmapSelection: () => Promise<boolean>;
+  commitBitmapSelection: (options?: { behavior?: BitmapFloatingSelectionBehavior }) => Promise<boolean>;
   commitCurrentPenPlacement: () => void;
   configureCanvasForTool: () => void;
   drawBitmapSelectionOverlay: () => void;

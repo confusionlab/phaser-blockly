@@ -6,6 +6,7 @@ import {
   clampViewportZoom,
   panCameraFromDrag,
   panCameraFromWheel,
+  zoomCameraAtScreenPoint,
   zoomCameraAtClientPoint,
 } from '@/lib/viewportNavigation';
 import type { CostumeEditorMode } from '@/types';
@@ -125,21 +126,16 @@ export function useCostumeCanvasViewportController({
     }
 
     const currentCamera = cameraCenterRef.current;
-    const beforeScale = BASE_VIEW_SCALE * currentZoom;
-    const afterScale = BASE_VIEW_SCALE * clampedZoom;
-
-    const worldBefore = {
-      x: (screenX - view.width / 2) / beforeScale + currentCamera.x,
-      y: (screenY - view.height / 2) / beforeScale + currentCamera.y,
-    };
-    const worldAfter = {
-      x: (screenX - view.width / 2) / afterScale + currentCamera.x,
-      y: (screenY - view.height / 2) / afterScale + currentCamera.y,
-    };
 
     setCameraCenter(clampCameraCenter({
-      x: currentCamera.x + (worldBefore.x - worldAfter.x),
-      y: currentCamera.y + (worldBefore.y - worldAfter.y),
+      ...zoomCameraAtScreenPoint(
+        { x: screenX, y: screenY },
+        view,
+        currentCamera,
+        BASE_VIEW_SCALE * currentZoom,
+        BASE_VIEW_SCALE * clampedZoom,
+        'down',
+      ),
     }, clampedZoom, view));
     setZoom(clampedZoom);
   }, [clampCameraCenter, clampZoom]);

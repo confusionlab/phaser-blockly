@@ -185,9 +185,9 @@ export function EditorLayout() {
     focusPlayValidationIssue,
     activeObjectTab,
     costumeUndoHandler,
+    backgroundUndoHandler,
     backgroundEditorOpen,
     worldBoundaryEditorOpen,
-    backgroundShortcutHandler,
     cycleViewMode,
     assistantLockRunId,
     assistantLockMessage,
@@ -932,11 +932,11 @@ export function EditorLayout() {
     }
 
     if (backgroundEditorOpen) {
-      if (isTyping) {
+      if (isTyping && e.key !== 'Escape') {
         return;
       }
 
-      const handled = backgroundShortcutHandler?.(e) ?? false;
+      const handled = backgroundUndoHandler?.handleKeyDown?.(e) ?? false;
       if (handled) {
         return;
       }
@@ -953,6 +953,13 @@ export function EditorLayout() {
         e.preventDefault();
       }
       return;
+    }
+
+    if (activeObjectTab === 'costumes') {
+      const handled = costumeUndoHandler?.handleKeyDown?.(e) ?? false;
+      if (handled) {
+        return;
+      }
     }
 
     // Backtick for fullscreen toggle
@@ -1010,6 +1017,10 @@ export function EditorLayout() {
         stopPlaying();
         return;
       }
+      if (isSceneObjectShortcutContext && selectedSceneObjectIds.length > 0) {
+        selectObjects([], null);
+        return;
+      }
     }
 
     // Undo: Cmd+Z or Ctrl+Z
@@ -1046,14 +1057,6 @@ export function EditorLayout() {
         return;
       }
 
-      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
-        e.preventDefault();
-        void Promise.resolve(costumeUndoHandler?.duplicateSelection?.()).catch((error) => {
-          console.error('Failed to duplicate costume selection:', error);
-        });
-        return;
-      }
-
       if (!isSceneObjectShortcutContext || isInBlocklyArea || !selectedSceneId) {
         return;
       }
@@ -1079,14 +1082,6 @@ export function EditorLayout() {
         return;
       }
 
-      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
-        e.preventDefault();
-        void Promise.resolve(costumeUndoHandler?.copySelection?.()).catch((error) => {
-          console.error('Failed to copy costume selection:', error);
-        });
-        return;
-      }
-
       if (!isSceneObjectShortcutContext || isInBlocklyArea || !project || !selectedSceneId || selectedSceneObjectIds.length === 0) {
         return;
       }
@@ -1098,14 +1093,6 @@ export function EditorLayout() {
 
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v' && !e.altKey) {
       if (isTyping) {
-        return;
-      }
-
-      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
-        e.preventDefault();
-        void Promise.resolve(costumeUndoHandler?.pasteSelection?.()).catch((error) => {
-          console.error('Failed to paste costume selection:', error);
-        });
         return;
       }
 
@@ -1129,14 +1116,6 @@ export function EditorLayout() {
 
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'x' && !e.altKey) {
       if (isTyping) {
-        return;
-      }
-
-      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
-        e.preventDefault();
-        void Promise.resolve(costumeUndoHandler?.cutSelection?.()).catch((error) => {
-          console.error('Failed to cut costume selection:', error);
-        });
         return;
       }
 
@@ -1167,12 +1146,6 @@ export function EditorLayout() {
 
     // Delete selected object(s): Delete/Backspace (disabled in Blockly area)
     if ((e.key === 'Delete' || e.key === 'Backspace') && !isTyping && !isInBlocklyArea) {
-      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
-        e.preventDefault();
-        costumeUndoHandler?.deleteSelection?.();
-        return;
-      }
-
       if (!isSceneObjectShortcutContext || !selectedSceneId) {
         return;
       }
@@ -1220,14 +1193,6 @@ export function EditorLayout() {
       }
     }
 
-    if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes' && !isTyping && !isInBlocklyArea) {
-      const nudgeDelta = getSelectionNudgeDelta(e);
-      if (nudgeDelta && costumeUndoHandler?.nudgeSelection?.(nudgeDelta.x, nudgeDelta.y)) {
-        e.preventDefault();
-        return;
-      }
-    }
-
     if (e.key === 'Enter' && activeObjectTab === 'costumes' && costumeUndoHandler?.isTextEditing?.()) {
       return;
     }
@@ -1263,7 +1228,7 @@ export function EditorLayout() {
     activeObjectTab,
     costumeUndoHandler,
     backgroundEditorOpen,
-    backgroundShortcutHandler,
+    backgroundUndoHandler,
     cycleViewMode,
     handleCodeEditorFullscreenChange,
     handleStageCanvasFullscreenChange,

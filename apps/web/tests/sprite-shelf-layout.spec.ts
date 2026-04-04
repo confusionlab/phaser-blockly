@@ -2,11 +2,11 @@ import { expect, test, type Page } from '@playwright/test';
 
 const APP_URL = process.env.PLAYWRIGHT_TEST_BASE_URL ?? 'http://localhost:5173/';
 
-async function bootstrapProjectWithSingleObject(page: Page): Promise<void> {
+async function bootstrapProjectWithSingleObject(page: Page, options?: { visible?: boolean }): Promise<void> {
   await page.goto(APP_URL);
   await page.waitForLoadState('networkidle');
 
-  await page.evaluate(async () => {
+  await page.evaluate(async ({ visible }) => {
     const [{ saveProject }, { useProjectStore }, { useEditorStore }] = await Promise.all([
       import('/src/db/database.ts'),
       import('/src/store/projectStore.ts'),
@@ -26,7 +26,10 @@ async function bootstrapProjectWithSingleObject(page: Page): Promise<void> {
     }
 
     useEditorStore.getState().selectScene(sceneId, { recordHistory: false });
-    projectState.addObject(sceneId, 'Object 1');
+    const object = projectState.addObject(sceneId, 'Object 1');
+    if (visible === false) {
+      projectState.updateObject(sceneId, object.id, { visible: false });
+    }
 
     const latestProject = useProjectStore.getState().project;
     if (!latestProject) {
@@ -37,7 +40,7 @@ async function bootstrapProjectWithSingleObject(page: Page): Promise<void> {
 
     window.history.pushState({}, '', `/project/${latestProject.id}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
-  });
+  }, options ?? {});
 
   await page.waitForLoadState('networkidle');
   await expect(page.getByText(/^Object 1$/)).toBeVisible();
@@ -62,4 +65,11 @@ test('sprite shelf stays non-scrollable until content overflows', async ({ page 
   await page.mouse.wheel(0, 240);
 
   await expect.poll(async () => (await readMetrics()).scrollTop).toBe(beforeWheel.scrollTop);
+});
+
+test('hidden objects show a crossed-eye badge on the shelf thumbnail', async ({ page }) => {
+  await bootstrapProjectWithSingleObject(page, { visible: false });
+
+  const objectRow = page.locator('[data-sprite-shelf-row="true"]', { hasText: 'Object 1' });
+  await expect(objectRow.getByTestId('object-thumbnail-hidden-indicator')).toBeVisible();
 });

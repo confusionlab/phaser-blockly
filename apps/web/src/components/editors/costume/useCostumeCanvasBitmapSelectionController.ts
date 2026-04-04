@@ -1,7 +1,9 @@
 import { useEffect, type MutableRefObject, type RefObject } from 'react';
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
+import type { BitmapFloatingSelectionBehavior } from '@/lib/editor/interactionSurface';
 import { calculateBoundsFromImageData } from '@/utils/imageBounds';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
+import { setBitmapFloatingSelectionOriginalTransform } from './costumeBitmapFloatingSelection';
 import type { DrawingTool } from './CostumeToolbar';
 import { applyUnifiedObjectTransformGizmoAppearance } from './costumeCanvasObjectTransformGizmo';
 
@@ -13,7 +15,7 @@ interface UseCostumeCanvasBitmapSelectionControllerOptions {
   bitmapSelectionCanvasRef: RefObject<HTMLCanvasElement | null>;
   bitmapSelectionDragModeRef: MutableRefObject<'none' | 'marquee'>;
   bitmapSelectionStartRef: MutableRefObject<{ x: number; y: number } | null>;
-  commitBitmapSelection: () => Promise<boolean>;
+  commitBitmapSelection: (options?: { behavior?: BitmapFloatingSelectionBehavior }) => Promise<boolean>;
   configureCanvasForTool: () => void;
   drawBitmapSelectionOverlay: () => void;
   editorModeState: CostumeEditorMode;
@@ -154,6 +156,7 @@ export function useCostumeCanvasBitmapSelectionController({
           lockScalingY: false,
         } as any);
         (floatingImage as any).__bitmapFloatingSelection = true;
+        setBitmapFloatingSelectionOriginalTransform(floatingImage);
         applyUnifiedObjectTransformGizmoAppearance(
           floatingImage as any,
           (metric: number) => metric,

@@ -79,6 +79,13 @@ import {
   mergeCostumeLayers,
   rasterizeCostumeLayer,
 } from '@/lib/costume/costumeLayerOperations';
+import {
+  handleSelectionClipboardShortcuts,
+  handleSelectionDeleteShortcut,
+  handleSelectionNudgeShortcut,
+  handleToolSwitchShortcut,
+} from '@/lib/editor/editorSurfaceShortcuts';
+import type { FinishPendingEditsOptions } from '@/lib/editor/interactionSurface';
 import { useBulkAssetSelection } from './shared/useBulkAssetSelection';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'brush', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
@@ -117,6 +124,12 @@ function arePersistedStatesEqual(
     areCostumeAssetFramesEqual(a.assetFrame, b.assetFrame) &&
     areCostumeDocumentsEqual(a.document, b.document)
   );
+}
+
+function resolveCostumePendingEditOptionsForKey(key: string): FinishPendingEditsOptions {
+  return {
+    bitmapFloatingSelectionBehavior: key === 'Escape' ? 'revert' : 'commit',
+  };
 }
 
 function ensureToolForMode(mode: CostumeEditorMode, tool: DrawingTool): DrawingTool {
@@ -936,6 +949,12 @@ export function CostumeEditor() {
   }, [applyDocumentHistoryState, createPersistedStateFromDocument, syncDocumentHistoryFlags]);
 
   useEffect(() => {
+    const copySelection = () => canvasRef.current?.copySelection() ?? false;
+    const cutSelection = () => canvasRef.current?.cutSelection() ?? false;
+    const deleteSelection = () => canvasRef.current?.deleteSelection() ?? false;
+    const duplicateSelection = () => canvasRef.current?.duplicateSelection() ?? false;
+    const pasteSelection = () => canvasRef.current?.pasteSelection() ?? false;
+    const nudgeSelection = (dx: number, dy: number) => canvasRef.current?.nudgeSelection(dx, dy) ?? false;
     const handler: UndoRedoHandler = {
       undo: () => {
         void navigateDocumentHistory('undo');
@@ -954,17 +973,93 @@ export function CostumeEditor() {
       prepareForPlay: async () => {
         await prepareCostumeStateForPlay();
       },
-      copySelection: () => canvasRef.current?.copySelection() ?? false,
-      cutSelection: () => canvasRef.current?.cutSelection() ?? false,
-      deleteSelection: () => canvasRef.current?.deleteSelection() ?? false,
-      duplicateSelection: () => canvasRef.current?.duplicateSelection() ?? false,
-      pasteSelection: () => canvasRef.current?.pasteSelection() ?? false,
-      nudgeSelection: (dx, dy) => canvasRef.current?.nudgeSelection(dx, dy) ?? false,
+      copySelection,
+      cutSelection,
+      deleteSelection,
+      duplicateSelection,
+      pasteSelection,
+      nudgeSelection,
       isTextEditing: () => canvasRef.current?.isTextEditing() ?? false,
+      handleKeyDown: (event) => {
+        if (!activeLayer || activeLayer.visible === false) {
+          return false;
+        }
+        if (isLoadingRef.current) {
+          return false;
+        }
+        if (canvasRef.current?.isTextEditing()) {
+          if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+            event.preventDefault();
+            void canvasRef.current?.flushPendingEdits(resolveCostumePendingEditOptionsForKey(event.key));
+            return true;
+          }
+          return false;
+        }
+        if (shouldIgnoreGlobalKeyboardEvent(event)) {
+          return false;
+        }
+
+        if (
+          (event.key === 'Escape' || event.key === 'Enter') &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey
+        ) {
+          const canvas = canvasRef.current;
+          if (!canvas) {
+            return false;
+          }
+          if (canvas.hasActiveInteraction()) {
+            event.preventDefault();
+            void canvas.flushPendingEdits(resolveCostumePendingEditOptionsForKey(event.key));
+            return true;
+          }
+          if (event.key === 'Escape') {
+            const didClearSelection = canvas.clearSelection();
+            if (didClearSelection) {
+              event.preventDefault();
+              return true;
+            }
+          }
+          return false;
+        }
+
+        if (handleSelectionClipboardShortcuts(event, {
+          duplicateSelection,
+          copySelection,
+          pasteSelection,
+          cutSelection,
+        }, 'costume')) {
+          return true;
+        }
+
+        if (handleSelectionNudgeShortcut(event, nudgeSelection)) {
+          return true;
+        }
+
+        if (handleSelectionDeleteShortcut(event, deleteSelection)) {
+          return true;
+        }
+
+        if (event.metaKey || event.ctrlKey || event.altKey) {
+          return false;
+        }
+
+        return handleToolSwitchShortcut(
+          event,
+          (key) => resolveCostumeToolShortcut(key, editorMode),
+          (nextTool) => {
+            setActiveTool((prev) => {
+              const resolvedTool = ensureToolForMode(editorMode, nextTool);
+              return prev === resolvedTool ? prev : resolvedTool;
+            });
+          },
+        );
+      },
     };
     registerCostumeUndo(handler);
     return () => registerCostumeUndo(null);
-  }, [navigateDocumentHistory, persistCanvasStateToSession, prepareCostumeStateForPlay, registerCostumeUndo]);
+  }, [activeLayer, editorMode, navigateDocumentHistory, persistCanvasStateToSession, prepareCostumeStateForPlay, registerCostumeUndo]);
 
   const resolvePersistedSessionForObjectOperation = useCallback((): CostumeEditorPersistedSession | undefined => {
     const session = currentSessionRef.current;
@@ -1460,44 +1555,6 @@ export function CostumeEditor() {
     setHasTextSelection(false);
     setActiveTool('select');
   }, [activeLayer]);
-
-  useEffect(() => {
-    if (activeObjectTab !== 'costumes') {
-      return;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!activeLayer || activeLayer.visible === false) {
-        return;
-      }
-      if (isLoadingRef.current) {
-        return;
-      }
-      if (shouldIgnoreGlobalKeyboardEvent(event)) {
-        return;
-      }
-      if (event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
-      if (canvasRef.current?.isTextEditing()) {
-        return;
-      }
-
-      const nextTool = resolveCostumeToolShortcut(event.key, editorMode);
-      if (!nextTool) {
-        return;
-      }
-
-      event.preventDefault();
-      setActiveTool((prev) => {
-        const resolvedTool = ensureToolForMode(editorMode, nextTool);
-        return prev === resolvedTool ? prev : resolvedTool;
-      });
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeLayer, activeObjectTab, editorMode]);
 
   const handleMoveOrder = useCallback((action: MoveOrderAction) => {
     if (isLoadingRef.current) {

@@ -19,6 +19,7 @@ import {
 import { IconButton } from '@/components/ui/icon-button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
+import { ThumbnailVisibilityIndicator } from '@/components/ui/thumbnail-visibility-indicator';
 import { Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Plus, Shapes, Trash2 } from '@/components/ui/icons';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
@@ -126,11 +127,13 @@ function LayerThumbnailPreview({
   isActive,
   thumbnailDataUrl,
   thumbnailTestId,
+  hiddenIndicatorTestId,
 }: {
   layer: LayerPanelLayerShape;
   isActive: boolean;
   thumbnailDataUrl: string | null;
   thumbnailTestId: string;
+  hiddenIndicatorTestId: string;
 }) {
   return (
     <div
@@ -158,6 +161,7 @@ function LayerThumbnailPreview({
           <LayerKindIcon layer={layer} />
         </div>
       )}
+      <ThumbnailVisibilityIndicator visible={layer.visible} testId={hiddenIndicatorTestId} />
     </div>
   );
 }
@@ -603,6 +607,7 @@ export const LayerPanel = memo(({
                         isActive={isActive}
                         thumbnailDataUrl={layerThumbnails[layer.id]?.dataUrl ?? null}
                         thumbnailTestId={thumbnailTestId}
+                        hiddenIndicatorTestId={`${thumbnailTestId}-hidden-indicator`}
                       />
 
                       <div

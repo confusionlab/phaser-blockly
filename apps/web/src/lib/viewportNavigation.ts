@@ -25,6 +25,11 @@ export interface WorldRect {
   height: number;
 }
 
+export interface ViewportPoint {
+  x: number;
+  y: number;
+}
+
 export function clampViewportZoom(value: number, minZoom: number, maxZoom: number): number {
   return Math.max(minZoom, Math.min(maxZoom, value));
 }
@@ -94,15 +99,16 @@ export function screenToWorldPoint(
   pixelsPerWorldUnit: number,
   axis: ViewAxisDirection,
 ): ViewportCamera {
-  const localX = clientX - rect.left;
-  const localY = clientY - rect.top;
-  const deltaX = (localX - rect.width / 2) / pixelsPerWorldUnit;
-  const deltaY = (localY - rect.height / 2) / pixelsPerWorldUnit;
-
-  return {
-    x: camera.x + deltaX,
-    y: axis === 'up' ? camera.y - deltaY : camera.y + deltaY,
-  };
+  return screenPointToWorldPoint(
+    {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    },
+    rect,
+    camera,
+    pixelsPerWorldUnit,
+    axis,
+  );
 }
 
 export function worldToScreenPoint(
@@ -113,13 +119,13 @@ export function worldToScreenPoint(
   pixelsPerWorldUnit: number,
   axis: ViewAxisDirection,
 ): ViewportCamera {
-  return {
-    x: (worldX - camera.x) * pixelsPerWorldUnit + rect.width / 2,
-    y:
-      axis === 'up'
-        ? (camera.y - worldY) * pixelsPerWorldUnit + rect.height / 2
-        : (worldY - camera.y) * pixelsPerWorldUnit + rect.height / 2,
-  };
+  return worldPointToViewportScreenPoint(
+    { x: worldX, y: worldY },
+    rect,
+    camera,
+    pixelsPerWorldUnit,
+    axis,
+  );
 }
 
 export function panCameraFromWheel(
@@ -180,18 +186,68 @@ export function zoomCameraAtClientPoint(
   nextPixelsPerWorldUnit: number,
   axis: ViewAxisDirection,
 ): ViewportCamera {
-  const worldBefore = screenToWorldPoint(
-    clientX,
-    clientY,
+  return zoomCameraAtScreenPoint(
+    {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    },
     rect,
+    camera,
+    currentPixelsPerWorldUnit,
+    nextPixelsPerWorldUnit,
+    axis,
+  );
+}
+
+export function screenPointToWorldPoint(
+  screenPoint: ViewportPoint,
+  viewport: Pick<ViewportRect, 'width' | 'height'>,
+  camera: ViewportCamera,
+  pixelsPerWorldUnit: number,
+  axis: ViewAxisDirection,
+): ViewportCamera {
+  const deltaX = (screenPoint.x - viewport.width / 2) / pixelsPerWorldUnit;
+  const deltaY = (screenPoint.y - viewport.height / 2) / pixelsPerWorldUnit;
+
+  return {
+    x: camera.x + deltaX,
+    y: axis === 'up' ? camera.y - deltaY : camera.y + deltaY,
+  };
+}
+
+export function worldPointToViewportScreenPoint(
+  worldPoint: ViewportPoint,
+  viewport: Pick<ViewportRect, 'width' | 'height'>,
+  camera: ViewportCamera,
+  pixelsPerWorldUnit: number,
+  axis: ViewAxisDirection,
+): ViewportPoint {
+  return {
+    x: (worldPoint.x - camera.x) * pixelsPerWorldUnit + viewport.width / 2,
+    y:
+      axis === 'up'
+        ? (camera.y - worldPoint.y) * pixelsPerWorldUnit + viewport.height / 2
+        : (worldPoint.y - camera.y) * pixelsPerWorldUnit + viewport.height / 2,
+  };
+}
+
+export function zoomCameraAtScreenPoint(
+  screenPoint: ViewportPoint,
+  viewport: Pick<ViewportRect, 'width' | 'height'>,
+  camera: ViewportCamera,
+  currentPixelsPerWorldUnit: number,
+  nextPixelsPerWorldUnit: number,
+  axis: ViewAxisDirection,
+): ViewportCamera {
+  const worldBefore = screenPointToWorldPoint(
+    screenPoint,
+    viewport,
     camera,
     currentPixelsPerWorldUnit,
     axis,
   );
-  const localX = clientX - rect.left;
-  const localY = clientY - rect.top;
-  const screenOffsetX = (localX - rect.width / 2) / nextPixelsPerWorldUnit;
-  const screenOffsetY = (localY - rect.height / 2) / nextPixelsPerWorldUnit;
+  const screenOffsetX = (screenPoint.x - viewport.width / 2) / nextPixelsPerWorldUnit;
+  const screenOffsetY = (screenPoint.y - viewport.height / 2) / nextPixelsPerWorldUnit;
 
   return {
     x: worldBefore.x - screenOffsetX,

@@ -1144,11 +1144,13 @@ test.describe('Costume editor tools', () => {
 
     const layerRow = page.locator('[data-testid="layer-row"]').first();
     await page.getByTestId('layer-add-button').hover();
+    await expect(layerRow.getByTestId('costume-layer-thumbnail-hidden-indicator')).toHaveCount(0);
 
     const visibilityButton = layerRow.getByRole('button', { name: /^hide layer$/i });
     await expect(visibilityButton).toBeVisible();
     await visibilityButton.click();
     await expect(layerRow.getByRole('button', { name: /^show layer$/i })).toBeVisible();
+    await expect(layerRow.getByTestId('costume-layer-thumbnail-hidden-indicator')).toBeVisible();
 
     await layerRow.getByText(/^Layer 1$/i).dblclick();
     const renameInput = layerRow.locator('input');

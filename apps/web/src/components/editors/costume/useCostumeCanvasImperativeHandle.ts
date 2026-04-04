@@ -1,5 +1,6 @@
 import { useImperativeHandle, type ForwardedRef, type MutableRefObject } from 'react';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
+import type { FinishPendingEditsOptions } from '@/lib/editor/interactionSurface';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 import { areHistorySnapshotsEqual } from './costumeCanvasShared';
@@ -8,6 +9,7 @@ import type { CostumeCanvasExportState, CostumeCanvasHandle } from './CostumeCan
 interface UseCostumeCanvasImperativeHandleOptions {
   alignSelection: (action: any) => boolean;
   bitmapRasterCommitQueueRef: MutableRefObject<Promise<void>>;
+  clearSelection: () => boolean;
   configureCanvasForTool: () => void;
   createSnapshot: () => any;
   copySelection: () => Promise<boolean>;
@@ -16,8 +18,9 @@ interface UseCostumeCanvasImperativeHandleOptions {
   duplicateSelection: () => Promise<boolean>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   flipSelection: (axis: any) => boolean;
-  flushPendingEdits: () => Promise<void>;
+  flushPendingEdits: (options?: FinishPendingEditsOptions) => Promise<boolean>;
   getComposedCanvasElement: () => HTMLCanvasElement;
+  hasActiveInteraction: () => boolean;
   isTextEditing: () => boolean;
   lastCommittedSnapshotRef: MutableRefObject<any>;
   loadBitmapLayer: (
@@ -45,6 +48,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
 export function useCostumeCanvasImperativeHandle({
   alignSelection,
   bitmapRasterCommitQueueRef,
+  clearSelection,
   configureCanvasForTool,
   createSnapshot,
   deleteSelection,
@@ -53,6 +57,7 @@ export function useCostumeCanvasImperativeHandle({
   flipSelection,
   flushPendingEdits,
   getComposedCanvasElement,
+  hasActiveInteraction,
   isTextEditing,
   lastCommittedSnapshotRef,
   loadBitmapLayer,
@@ -105,6 +110,8 @@ export function useCostumeCanvasImperativeHandle({
 
     flushPendingEdits,
 
+    hasActiveInteraction,
+
     exportCostumeState,
 
     hasUnsavedChanges: (sessionKey?: string | null) => {
@@ -153,6 +160,8 @@ export function useCostumeCanvasImperativeHandle({
 
     isTextEditing,
 
+    clearSelection,
+
     clear: () => {
       void (async () => {
         loadedSessionKeyRef.current = null;
@@ -175,6 +184,7 @@ export function useCostumeCanvasImperativeHandle({
   }), [
     alignSelection,
     bitmapRasterCommitQueueRef,
+    clearSelection,
     configureCanvasForTool,
     createSnapshot,
     copySelection,
@@ -185,6 +195,7 @@ export function useCostumeCanvasImperativeHandle({
     flipSelection,
     flushPendingEdits,
     getComposedCanvasElement,
+    hasActiveInteraction,
     isTextEditing,
     lastCommittedSnapshotRef,
     loadBitmapLayer,

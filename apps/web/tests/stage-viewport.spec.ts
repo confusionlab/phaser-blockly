@@ -3,6 +3,7 @@ import {
   buildStageProjection,
   createDefaultStageEditorViewport,
   getStageEditorViewportWorldPoint,
+  normalizeStageEditorViewport,
   scrollStageEditorViewport,
   zoomStageEditorViewportAtScreenPoint,
 } from '../src/lib/stageViewport';
@@ -136,5 +137,22 @@ test.describe('stage viewport projection', () => {
 
     expect(worldAfter.x).toBeCloseTo(worldBefore.x, 8);
     expect(worldAfter.y).toBeCloseTo(worldBefore.y, 8);
+  });
+
+  test('normalization only clamps editor camera at very large stability bounds', () => {
+    const normalized = normalizeStageEditorViewport(
+      {
+        centerX: 1_000_000,
+        centerY: -1_000_000,
+        zoom: 1,
+      },
+      { width: 800, height: 600 },
+    );
+
+    expect(normalized).toEqual({
+      centerX: 410_000,
+      centerY: -306_900,
+      zoom: 1,
+    });
   });
 });

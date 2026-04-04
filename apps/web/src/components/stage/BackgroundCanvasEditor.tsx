@@ -3,11 +3,14 @@ import { Check, X } from '@/components/ui/icons';
 import { BitmapBrushCursorOverlay } from '@/components/editors/shared/BitmapBrushCursorOverlay';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
+import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
 import { VectorSelectionContextMenu } from '@/components/editors/shared/VectorSelectionContextMenu';
 import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useModal } from '@/components/ui/modal-provider';
+import type { BitmapFloatingSelectionBehavior } from '@/lib/editor/interactionSurface';
+import { boundsIntersect, getBoundsFromPoints, shouldShowViewportRecovery } from '@/lib/editor/viewportRecovery';
 import { hasVectorClipboardContents } from '@/lib/editor/vectorClipboard';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
@@ -112,13 +115,14 @@ import {
   clampViewportZoom,
   panCameraFromDrag,
   panCameraFromWheel,
+  screenPointToWorldPoint,
   screenToWorldPoint,
-  worldToScreenPoint,
-  zoomCameraAtClientPoint,
+  worldPointToViewportScreenPoint,
+  zoomCameraAtScreenPoint,
 } from '@/lib/viewportNavigation';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import { calculateBoundsFromImageData } from '@/utils/imageBounds';
-import { getSelectionNudgeDelta } from '@/utils/keyboard';
+import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import {
   TRANSFORM_GIZMO_BORDER_COLOR,
   TRANSFORM_GIZMO_FILL_COLOR,
@@ -135,6 +139,12 @@ import {
 } from '@/lib/editor/unifiedTransformGizmo';
 import type { TransformGizmoCorner, TransformGizmoCornerTarget, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
 import { renderScreenSpaceTransformOverlay } from '@/lib/editor/transformOverlayRenderer';
+import {
+  handleSelectionClipboardShortcuts,
+  handleSelectionDeleteShortcut,
+  handleSelectionNudgeShortcut,
+  handleToolSwitchShortcut,
+} from '@/lib/editor/editorSurfaceShortcuts';
 import { BackgroundLayerPanel } from './BackgroundLayerPanel';
 import {
   BackgroundVectorCanvas,
@@ -210,7 +220,15 @@ type BackgroundFloatingSelection = {
   scaleX: number;
   scaleY: number;
   rotation: number;
+  originalTransform: BackgroundFloatingSelectionTransformState;
   pendingMutationSession: MutationSession;
+};
+
+type BackgroundFloatingSelectionTransformState = {
+  centerWorld: WorldPoint;
+  scaleX: number;
+  scaleY: number;
+  rotation: number;
 };
 
 type BackgroundFloatingSelectionTransformSession =
@@ -349,6 +367,54 @@ function getWorldRectFromPoints(start: WorldPoint, end: WorldPoint): WorldRect {
   };
 }
 
+function mergeWorldRects(...rects: Array<WorldRect | null | undefined>): WorldRect | null {
+  const validRects = rects.filter((rect): rect is WorldRect => !!rect);
+  if (validRects.length === 0) {
+    return null;
+  }
+
+  const left = Math.min(...validRects.map((rect) => rect.left));
+  const right = Math.max(...validRects.map((rect) => rect.right));
+  const bottom = Math.min(...validRects.map((rect) => rect.bottom));
+  const top = Math.max(...validRects.map((rect) => rect.top));
+  return {
+    left,
+    right,
+    bottom,
+    top,
+    width: right - left,
+    height: top - bottom,
+  };
+}
+
+function cloneFloatingSelectionTransformState(
+  transform: BackgroundFloatingSelectionTransformState,
+): BackgroundFloatingSelectionTransformState {
+  return {
+    centerWorld: {
+      x: transform.centerWorld.x,
+      y: transform.centerWorld.y,
+    },
+    scaleX: transform.scaleX,
+    scaleY: transform.scaleY,
+    rotation: transform.rotation,
+  };
+}
+
+function getCurrentFloatingSelectionTransformState(
+  selection: BackgroundFloatingSelection,
+): BackgroundFloatingSelectionTransformState {
+  return {
+    centerWorld: {
+      x: selection.centerWorld.x,
+      y: selection.centerWorld.y,
+    },
+    scaleX: selection.scaleX,
+    scaleY: selection.scaleY,
+    rotation: selection.rotation,
+  };
+}
+
 function isBackgroundFloatingSelectionScaleTarget(
   target: BackgroundFloatingSelectionHitTarget,
 ): target is BackgroundFloatingSelectionScaleTarget {
@@ -461,9 +527,12 @@ function traceBackgroundShapePath(
   ctx.closePath();
 }
 
-function getFloatingSelectionWorldCorners(selection: BackgroundFloatingSelection): Array<WorldPoint> {
-  const halfWidth = selection.canvas.width * Math.abs(selection.scaleX) * 0.5;
-  const halfHeight = selection.canvas.height * Math.abs(selection.scaleY) * 0.5;
+function getFloatingSelectionWorldCorners(
+  selection: BackgroundFloatingSelection,
+  transform: BackgroundFloatingSelectionTransformState = getCurrentFloatingSelectionTransformState(selection),
+): Array<WorldPoint> {
+  const halfWidth = selection.canvas.width * Math.abs(transform.scaleX) * 0.5;
+  const halfHeight = selection.canvas.height * Math.abs(transform.scaleY) * 0.5;
   const localCorners: Array<WorldPoint> = [
     { x: -halfWidth, y: halfHeight },
     { x: halfWidth, y: halfHeight },
@@ -472,16 +541,19 @@ function getFloatingSelectionWorldCorners(selection: BackgroundFloatingSelection
   ];
 
   return localCorners.map((corner) => {
-    const rotated = rotatePoint(corner, selection.rotation);
+    const rotated = rotatePoint(corner, transform.rotation);
     return {
-      x: selection.centerWorld.x + rotated.x,
-      y: selection.centerWorld.y + rotated.y,
+      x: transform.centerWorld.x + rotated.x,
+      y: transform.centerWorld.y + rotated.y,
     };
   });
 }
 
-function getFloatingSelectionWorldBounds(selection: BackgroundFloatingSelection): WorldRect {
-  const corners = getFloatingSelectionWorldCorners(selection);
+function getFloatingSelectionWorldBounds(
+  selection: BackgroundFloatingSelection,
+  transform: BackgroundFloatingSelectionTransformState = getCurrentFloatingSelectionTransformState(selection),
+): WorldRect {
+  const corners = getFloatingSelectionWorldCorners(selection, transform);
   const xs = corners.map((point) => point.x);
   const ys = corners.map((point) => point.y);
   const left = Math.min(...xs);
@@ -656,7 +728,6 @@ export function BackgroundCanvasEditor() {
     selectedSceneId,
     closeBackgroundEditor,
     registerBackgroundUndo,
-    registerBackgroundShortcutHandler,
   } = useEditorStore();
 
   const scene = useMemo(() => {
@@ -763,7 +834,13 @@ export function BackgroundCanvasEditor() {
   const worldToScreen = useCallback((worldX: number, worldY: number): { x: number; y: number } => {
     const host = hostRef.current;
     if (!host) return { x: 0, y: 0 };
-    return worldToScreenPoint(worldX, worldY, host.getBoundingClientRect(), camera, zoom, 'up');
+    return worldPointToViewportScreenPoint(
+      { x: worldX, y: worldY },
+      host.getBoundingClientRect(),
+      camera,
+      zoom,
+      'up',
+    );
   }, [camera, zoom]);
 
   const getScreenPoint = useCallback((clientX: number, clientY: number): ScreenPoint => {
@@ -784,7 +861,7 @@ export function BackgroundCanvasEditor() {
       return camera;
     }
     const rect = host.getBoundingClientRect();
-    return screenToWorldPoint(rect.left + screenPoint.x, rect.top + screenPoint.y, rect, camera, zoom, 'up');
+    return screenPointToWorldPoint(screenPoint, rect, camera, zoom, 'up');
   }, [camera, zoom]);
 
   const fitToBounds = useCallback((bounds: { left: number; right: number; bottom: number; top: number }) => {
@@ -832,7 +909,7 @@ export function BackgroundCanvasEditor() {
     syncActiveChunkCount();
   }, [syncActiveChunkCount]);
 
-  const fitToContent = useCallback(() => {
+  const getBitmapContentBounds = useCallback(() => {
     const chunkKeys = new Set<string>();
     if (backgroundDocument) {
       for (const layer of backgroundDocument.layers) {
@@ -844,13 +921,55 @@ export function BackgroundCanvasEditor() {
     } else {
       chunkKeySetRef.current.forEach((key) => chunkKeys.add(key));
     }
-    const contentBounds = getChunkBoundsFromKeys(chunkKeys, chunkSize);
+    return getChunkBoundsFromKeys(chunkKeys, chunkSize);
+  }, [backgroundDocument, chunkSize, renderedLayerChunks]);
+
+  const worldBoundaryContentBounds = useMemo<WorldRect | null>(() => {
+    const bounds = getBoundsFromPoints(scene?.worldBoundary?.enabled ? (scene.worldBoundary.points || []) : []);
+    if (!bounds) {
+      return null;
+    }
+    return {
+      left: bounds.left,
+      right: bounds.right,
+      bottom: bounds.bottom,
+      top: bounds.top,
+      width: bounds.right - bounds.left,
+      height: bounds.top - bounds.bottom,
+    };
+  }, [scene?.worldBoundary?.enabled, scene?.worldBoundary?.points]);
+
+  const fitToContent = useCallback(() => {
+    const contentBounds = mergeWorldRects(
+      getBitmapContentBounds(),
+      vectorCanvasRef.current?.getDocumentBounds() ?? null,
+      worldBoundaryContentBounds,
+    );
     if (contentBounds) {
       fitToBounds(contentBounds);
       return;
     }
     fitToBounds(cameraBounds);
-  }, [backgroundDocument, cameraBounds, chunkSize, fitToBounds, renderedLayerChunks]);
+  }, [cameraBounds, fitToBounds, getBitmapContentBounds, worldBoundaryContentBounds]);
+
+  const showReturnToCenter = useMemo(() => {
+    const hasVisibleContent = [
+      getBitmapContentBounds(),
+      editorMode === 'vector' ? (vectorCanvasRef.current?.getDocumentBounds() ?? null) : null,
+      floatingSelectionRef.current ? getFloatingSelectionWorldBounds(floatingSelectionRef.current) : null,
+      worldBoundaryContentBounds,
+    ].some((bounds) => !!bounds && boundsIntersect(cameraBounds, bounds));
+
+    return shouldShowViewportRecovery({
+      currentCenter: camera,
+      homeCenter: { x: 0, y: 0 },
+      viewportSize: {
+        width: cameraBounds.right - cameraBounds.left,
+        height: cameraBounds.top - cameraBounds.bottom,
+      },
+      hasVisibleContent,
+    });
+  }, [camera, cameraBounds, editorMode, getBitmapContentBounds, worldBoundaryContentBounds]);
 
   const zoomAtClientPoint = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     const clampedZoom = clampViewportZoom(nextZoom, MIN_ZOOM, MAX_ZOOM);
@@ -861,9 +980,8 @@ export function BackgroundCanvasEditor() {
     }
 
     const rect = host.getBoundingClientRect();
-    setCamera((current) => zoomCameraAtClientPoint(
-      clientX,
-      clientY,
+    setCamera((current) => zoomCameraAtScreenPoint(
+      getScreenPoint(clientX, clientY),
       rect,
       current,
       zoom,
@@ -871,7 +989,7 @@ export function BackgroundCanvasEditor() {
       'up',
     ));
     setZoom(clampedZoom);
-  }, [zoom]);
+  }, [getScreenPoint, zoom]);
 
   const zoomAroundViewportCenter = useCallback((nextZoom: number) => {
     const host = hostRef.current;
@@ -887,6 +1005,10 @@ export function BackgroundCanvasEditor() {
   const handleZoomToActualSize = useCallback(() => {
     zoomAroundViewportCenter(1);
   }, [zoomAroundViewportCenter]);
+
+  const handleReturnToCenter = useCallback(() => {
+    setCamera({ x: 0, y: 0 });
+  }, []);
 
   const handleZoomToSelection = useCallback(() => {
     if (editorMode === 'vector') {
@@ -2391,13 +2513,16 @@ export function BackgroundCanvasEditor() {
     return null;
   }, [worldToScreen, zoom]);
 
-  const commitFloatingSelection = useCallback(() => {
+  const commitFloatingSelection = useCallback((options?: { behavior?: BitmapFloatingSelectionBehavior }) => {
     const selection = floatingSelectionRef.current;
     if (!selection || floatingSelectionBusyRef.current) {
       return false;
     }
 
-    const worldBounds = getFloatingSelectionWorldBounds(selection);
+    const transform = options?.behavior === 'revert'
+      ? cloneFloatingSelectionTransformState(selection.originalTransform)
+      : getCurrentFloatingSelectionTransformState(selection);
+    const worldBounds = getFloatingSelectionWorldBounds(selection, transform);
     const bounds = {
       left: Math.floor(worldBounds.left) - 2,
       right: Math.ceil(worldBounds.right) + 2,
@@ -2448,9 +2573,9 @@ export function BackgroundCanvasEditor() {
     }
 
     rasterCtx.save();
-    rasterCtx.translate(selection.centerWorld.x - bounds.left, bounds.top - selection.centerWorld.y);
-    rasterCtx.rotate(-selection.rotation);
-    rasterCtx.scale(selection.scaleX, selection.scaleY);
+    rasterCtx.translate(transform.centerWorld.x - bounds.left, bounds.top - transform.centerWorld.y);
+    rasterCtx.rotate(-transform.rotation);
+    rasterCtx.scale(transform.scaleX, transform.scaleY);
     rasterCtx.drawImage(
       selection.canvas,
       -selection.canvas.width * 0.5,
@@ -2560,6 +2685,15 @@ export function BackgroundCanvasEditor() {
         scaleX: 1,
         scaleY: 1,
         rotation: 0,
+        originalTransform: {
+          centerWorld: {
+            x: normalizedBounds.left + visibleBounds.x + visibleBounds.width * 0.5,
+            y: normalizedBounds.top - visibleBounds.y - visibleBounds.height * 0.5,
+          },
+          scaleX: 1,
+          scaleY: 1,
+          rotation: 0,
+        },
         pendingMutationSession,
       };
       floatingSelectionTransformRef.current = null;
@@ -2627,20 +2761,50 @@ export function BackgroundCanvasEditor() {
     );
   }, [applyDeltaRecord, commitFloatingSelection, editorMode, enqueueBitmapStateTask, syncUndoRedoAvailability]);
 
-  const flushActiveInteraction = useCallback(async () => {
+  const finalizeSelectionMarquee = useCallback(async () => {
+    const marqueeSession = selectionMarqueeRef.current;
+    if (!marqueeSession) {
+      return false;
+    }
+
+    selectionMarqueeRef.current = null;
+    setIsDrawing(false);
+    const marqueeBounds = getWorldRectFromPoints(marqueeSession.startWorld, marqueeSession.currentWorld);
+    if (marqueeBounds.width >= 1 && marqueeBounds.height >= 1) {
+      await enqueueRasterOperation(async (epoch) => {
+        const didExtractSelection = await extractFloatingSelection(epoch, marqueeBounds);
+        if (!didExtractSelection) {
+          setRevision((value) => value + 1);
+        }
+      });
+      return true;
+    }
+
+    setRevision((value) => value + 1);
+    return true;
+  }, [enqueueRasterOperation, extractFloatingSelection]);
+
+  const flushActiveInteraction = useCallback(async (options?: {
+    behavior?: BitmapFloatingSelectionBehavior;
+    reportHandled?: boolean;
+  }) => {
+    let handled = false;
+
     if (editorMode === 'vector' && isShapeTool(tool) && isDrawing) {
       vectorCanvasRef.current?.commitShape();
       setIsDrawing(false);
+      handled = true;
     }
 
     if (editorMode === 'vector') {
-      vectorCanvasRef.current?.flushPendingEdits();
+      handled = (vectorCanvasRef.current?.flushPendingEdits() ?? false) || handled;
       await vectorCanvasRef.current?.awaitIdle();
     }
 
     if (drawingStrokeRef.current) {
       finalizeStroke();
       setIsDrawing(false);
+      handled = true;
     }
 
     if (shapeDraftRef.current) {
@@ -2648,31 +2812,35 @@ export function BackgroundCanvasEditor() {
       shapeDraftRef.current = null;
       setIsDrawing(false);
       setRevision((value) => value + 1);
+      handled = true;
     }
 
     if (selectionMarqueeRef.current) {
-      selectionMarqueeRef.current = null;
-      setIsDrawing(false);
-      setRevision((value) => value + 1);
+      handled = (await finalizeSelectionMarquee()) || handled;
     }
 
+    const shouldRevertBitmapSelection = options?.behavior === 'revert' && !!floatingSelectionRef.current;
     if (floatingSelectionTransformRef.current) {
       floatingSelectionTransformRef.current = null;
       setIsDrawing(false);
+      handled = true;
     }
 
     await awaitBitmapStateTasks();
     await awaitRasterOperations();
 
     if (floatingSelectionRef.current) {
-      const didCommitSelection = commitFloatingSelection();
+      const didCommitSelection = commitFloatingSelection({
+        behavior: shouldRevertBitmapSelection ? 'revert' : 'commit',
+      });
       if (!didCommitSelection) {
         return false;
       }
+      handled = true;
     }
 
-    return true;
-  }, [awaitBitmapStateTasks, awaitRasterOperations, commitFloatingSelection, commitShapeDraft, editorMode, finalizeStroke, isDrawing, tool]);
+    return options?.reportHandled ? handled : true;
+  }, [awaitBitmapStateTasks, awaitRasterOperations, commitFloatingSelection, commitShapeDraft, editorMode, finalizeSelectionMarquee, finalizeStroke, isDrawing, tool]);
 
   const handleSelectLayer = useCallback(async (layerId: string) => {
     if (busy || !backgroundDocumentRef.current || backgroundDocumentRef.current.activeLayerId === layerId) {
@@ -2911,153 +3079,132 @@ export function BackgroundCanvasEditor() {
   }, [closeBackgroundEditor, hasUnsavedBackgroundChanges, showAlert, showConfirm]);
 
   useEffect(() => {
+    const copySelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.copySelection() ?? false) : false;
+    const cutSelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.cutSelection() ?? false) : false;
+    const duplicateSelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.duplicateSelection() ?? false) : false;
+    const pasteSelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.pasteSelection() ?? false) : false;
+    const deleteSelection = () => (
+      editorMode === 'vector'
+        ? (vectorCanvasRef.current?.deleteSelection() ?? false)
+        : deleteFloatingSelection()
+    );
+    const nudgeSelection = (dx: number, dy: number) => (
+      editorMode === 'vector'
+        ? (vectorCanvasRef.current?.nudgeSelection(dx, dy) ?? false)
+        : nudgeFloatingSelection(dx, dy)
+    );
     const handler: UndoRedoHandler = {
       undo,
       redo,
       canUndo: () => (editorMode === 'vector' ? (vectorCanvasRef.current?.canUndo() ?? false) : undoStackRef.current.length > 0),
       canRedo: () => (editorMode === 'vector' ? (vectorCanvasRef.current?.canRedo() ?? false) : redoStackRef.current.length > 0),
+      copySelection,
+      cutSelection,
+      duplicateSelection,
+      pasteSelection,
+      deleteSelection,
+      nudgeSelection,
+      handleKeyDown: (event) => {
+        const plainEscape = event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey;
+        const plainEnter = event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+        const isVectorTextEditing = editorMode === 'vector' && (vectorCanvasRef.current?.isTextEditing() ?? false);
+
+        if (plainEscape && isVectorTextEditing) {
+          event.preventDefault();
+          void flushActiveInteraction({
+            behavior: 'commit',
+            reportHandled: true,
+          });
+          return true;
+        }
+
+        if (shouldIgnoreGlobalKeyboardEvent(event)) {
+          return false;
+        }
+
+        if (editorMode === 'vector' && handleSelectionClipboardShortcuts(event, {
+          duplicateSelection,
+          copySelection,
+          pasteSelection,
+          cutSelection,
+        }, 'background')) {
+          return true;
+        }
+
+        if (handleSelectionNudgeShortcut(event, nudgeSelection)) {
+          return true;
+        }
+
+        if (handleSelectionDeleteShortcut(event, deleteSelection)) {
+          return true;
+        }
+
+        if (handleToolSwitchShortcut(
+          event,
+          (key) => {
+            const shortcutTool = resolveCostumeToolShortcut(key, editorMode);
+            return shortcutTool && isBackgroundToolbarTool(shortcutTool) ? shortcutTool : null;
+          },
+          (shortcutTool) => {
+            setTool(ensureToolForBackgroundMode(editorMode, shortcutTool));
+          },
+        )) {
+          return true;
+        }
+
+        if (event.key === '[' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          event.preventDefault();
+          if (editorMode === 'bitmap') {
+            setBrushSize((value) => Math.max(1, value - 2));
+          } else {
+            setVectorStyle((value) => ({ ...value, strokeWidth: Math.max(1, value.strokeWidth - 1) }));
+          }
+          return true;
+        }
+        if (event.key === ']' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          event.preventDefault();
+          if (editorMode === 'bitmap') {
+            setBrushSize((value) => Math.min(256, value + 2));
+          } else {
+            setVectorStyle((value) => ({ ...value, strokeWidth: Math.min(256, value.strokeWidth + 1) }));
+          }
+          return true;
+        }
+        if (plainEscape) {
+          event.preventDefault();
+          void (async () => {
+            const didResolveInnerInteraction = await flushActiveInteraction({
+              behavior: 'revert',
+              reportHandled: true,
+            });
+            if (!didResolveInnerInteraction) {
+              handleCancel();
+            }
+          })();
+          return true;
+        }
+        if (plainEnter) {
+          if (isVectorTextEditing) {
+            return false;
+          }
+          event.preventDefault();
+          void (async () => {
+            const didResolveInnerInteraction = await flushActiveInteraction({
+              behavior: 'commit',
+              reportHandled: true,
+            });
+            if (!didResolveInnerInteraction) {
+              await handleDone();
+            }
+          })();
+          return true;
+        }
+        return false;
+      },
     };
     registerBackgroundUndo(handler);
     return () => registerBackgroundUndo(null);
-  }, [editorMode, redo, registerBackgroundUndo, undo]);
-
-  useEffect(() => {
-    const shortcutHandler = (event: KeyboardEvent): boolean => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
-        event.preventDefault();
-        if (event.shiftKey) {
-          redo();
-        } else {
-          undo();
-        }
-        return true;
-      }
-
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd' && !event.altKey) {
-        if (editorMode === 'vector') {
-          event.preventDefault();
-          void vectorCanvasRef.current?.duplicateSelection().catch((error) => {
-            console.error('Failed to duplicate background vector selection:', error);
-          });
-          return true;
-        }
-      }
-
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c' && !event.altKey) {
-        if (editorMode === 'vector') {
-          event.preventDefault();
-          void vectorCanvasRef.current?.copySelection().catch((error) => {
-            console.error('Failed to copy background vector selection:', error);
-          });
-          return true;
-        }
-      }
-
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v' && !event.altKey) {
-        if (editorMode === 'vector') {
-          event.preventDefault();
-          void vectorCanvasRef.current?.pasteSelection().catch((error) => {
-            console.error('Failed to paste background vector selection:', error);
-          });
-          return true;
-        }
-      }
-
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'x' && !event.altKey) {
-        if (editorMode === 'vector') {
-          event.preventDefault();
-          void vectorCanvasRef.current?.cutSelection().catch((error) => {
-            console.error('Failed to cut background vector selection:', error);
-          });
-          return true;
-        }
-      }
-
-      if (!event.metaKey && !event.ctrlKey && !event.altKey) {
-        const shortcutTool = resolveCostumeToolShortcut(event.key, editorMode);
-        if (shortcutTool && isBackgroundToolbarTool(shortcutTool)) {
-          event.preventDefault();
-          setTool(ensureToolForBackgroundMode(editorMode, shortcutTool));
-          return true;
-        }
-      }
-
-      const nudgeDelta = getSelectionNudgeDelta(event);
-      if (nudgeDelta) {
-        const didNudge = editorMode === 'vector'
-          ? (vectorCanvasRef.current?.nudgeSelection(nudgeDelta.x, nudgeDelta.y) ?? false)
-          : nudgeFloatingSelection(nudgeDelta.x, nudgeDelta.y);
-        if (didNudge) {
-          event.preventDefault();
-          return true;
-        }
-      }
-
-      if (event.key === '[' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        if (editorMode === 'bitmap') {
-          setBrushSize((value) => Math.max(1, value - 2));
-        } else {
-          setVectorStyle((value) => ({ ...value, strokeWidth: Math.max(1, value.strokeWidth - 1) }));
-        }
-        return true;
-      }
-      if (event.key === ']' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        if (editorMode === 'bitmap') {
-          setBrushSize((value) => Math.min(256, value + 2));
-        } else {
-          setVectorStyle((value) => ({ ...value, strokeWidth: Math.min(256, value.strokeWidth + 1) }));
-        }
-        return true;
-      }
-      if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        if (editorMode === 'vector' && vectorCanvasRef.current?.deleteSelection()) {
-          event.preventDefault();
-          return true;
-        }
-        if (deleteFloatingSelection()) {
-          event.preventDefault();
-          return true;
-        }
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        if (editorMode === 'vector' && isDrawing && isShapeTool(tool)) {
-          vectorCanvasRef.current?.cancelShape();
-          setIsDrawing(false);
-          return true;
-        }
-        if (selectionMarqueeRef.current) {
-          selectionMarqueeRef.current = null;
-          setIsDrawing(false);
-          setRevision((value) => value + 1);
-          return true;
-        }
-        if (floatingSelectionRef.current) {
-          commitFloatingSelection();
-          return true;
-        }
-        if (shapeDraftRef.current) {
-          shapeDraftRef.current = null;
-          setIsDrawing(false);
-          setRevision((value) => value + 1);
-          return true;
-        }
-        handleCancel();
-        return true;
-      }
-      if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
-        event.preventDefault();
-        handleDone();
-        return true;
-      }
-      return false;
-    };
-
-    registerBackgroundShortcutHandler(shortcutHandler);
-    return () => registerBackgroundShortcutHandler(null);
-  }, [commitFloatingSelection, deleteFloatingSelection, editorMode, handleCancel, handleDone, isDrawing, nudgeFloatingSelection, redo, registerBackgroundShortcutHandler, tool, undo]);
+  }, [deleteFloatingSelection, editorMode, flushActiveInteraction, handleCancel, handleDone, nudgeFloatingSelection, redo, registerBackgroundUndo, tool, undo]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -3489,7 +3636,7 @@ export function BackgroundCanvasEditor() {
     if (!stroke || !stroke.lastWorld) return;
     paintSegment(stroke.lastWorld, world, stroke);
     stroke.lastWorld = world;
-  }, [editorMode, getScreenPoint, isDrawing, paintSegment, screenToWorld, screenToWorldFromCanvasPoint, tool, zoom]);
+  }, [editorMode, getScreenPoint, hitTestFloatingSelection, isDrawing, paintSegment, screenToWorld, screenToWorldFromCanvasPoint, tool, zoom]);
 
   const onPointerUp = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
     panSessionRef.current = null;
@@ -3511,17 +3658,7 @@ export function BackgroundCanvasEditor() {
       setRevision((value) => value + 1);
     }
     if (selectionMarqueeRef.current) {
-      const marqueeSession = selectionMarqueeRef.current;
-      selectionMarqueeRef.current = null;
-      setIsDrawing(false);
-      const marqueeBounds = getWorldRectFromPoints(marqueeSession.startWorld, marqueeSession.currentWorld);
-      if (marqueeBounds.width >= 1 && marqueeBounds.height >= 1) {
-        void enqueueRasterOperation(async (epoch) => {
-          await extractFloatingSelection(epoch, marqueeBounds);
-        });
-      } else {
-        setRevision((value) => value + 1);
-      }
+      void finalizeSelectionMarquee();
     }
     if (drawingStrokeRef.current) {
       finalizeStroke();
@@ -3538,7 +3675,7 @@ export function BackgroundCanvasEditor() {
     } catch {
       // Ignore if pointer capture already released.
     }
-  }, [commitShapeDraft, editorMode, enqueueRasterOperation, extractFloatingSelection, finalizeStroke, isDrawing, markActiveLayerDirty, tool]);
+  }, [commitShapeDraft, editorMode, finalizeSelectionMarquee, finalizeStroke, isDrawing, markActiveLayerDirty, tool]);
 
   const onPointerLeave = useCallback(() => {
     pointerWorldRef.current = null;
@@ -3558,9 +3695,8 @@ export function BackgroundCanvasEditor() {
       const zoomDelta = -event.deltaY * 0.01;
       const nextZoom = clampViewportZoom(zoom * (1 + zoomDelta), MIN_ZOOM, MAX_ZOOM);
       setZoom(nextZoom);
-      setCamera(zoomCameraAtClientPoint(
-        event.clientX,
-        event.clientY,
+      setCamera(zoomCameraAtScreenPoint(
+        getScreenPoint(event.clientX, event.clientY),
         rect,
         camera,
         zoom,
@@ -3571,7 +3707,7 @@ export function BackgroundCanvasEditor() {
     }
 
     setCamera((current) => panCameraFromWheel(current, event.deltaX, event.deltaY, zoom, 'up'));
-  }, [camera, zoom]);
+  }, [camera, getScreenPoint, zoom]);
 
   const handleToolbarToolChange = useCallback((nextTool: CostumeDrawingTool) => {
     if (busy || !isBackgroundToolbarTool(nextTool)) {
@@ -3756,6 +3892,11 @@ export function BackgroundCanvasEditor() {
                 </OverlayActionButton>
               </OverlayPill>
             )}
+          />
+          <ViewportRecoveryPill
+            visible={showReturnToCenter}
+            onClick={handleReturnToCenter}
+            dataTestId="background-return-to-center"
           />
           <CostumeToolbar
             editorMode={editorMode}

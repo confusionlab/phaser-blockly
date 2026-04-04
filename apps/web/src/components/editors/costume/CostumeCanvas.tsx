@@ -66,6 +66,7 @@ import { useCostumeCanvasVectorPathController } from './useCostumeCanvasVectorPa
 import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportController';
 import { syncCanvasSelectionGizmoAppearance } from './costumeCanvasSelectionGizmo';
 import { VectorSelectionContextMenu } from '@/components/editors/shared/VectorSelectionContextMenu';
+import type { FinishPendingEditsOptions } from '@/lib/editor/interactionSurface';
 import { hasVectorClipboardContents } from '@/lib/editor/vectorClipboard';
 
 export { DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
@@ -83,7 +84,8 @@ export interface CostumeCanvasHandle {
   loadFromDataURL: (dataUrl: string, sessionKey?: string | null) => Promise<void>;
   loadDocument: (sessionKey: string, document: CostumeDocument) => Promise<void>;
   flushPendingBitmapCommits: () => Promise<void>;
-  flushPendingEdits: () => Promise<void>;
+  flushPendingEdits: (options?: FinishPendingEditsOptions) => Promise<boolean>;
+  hasActiveInteraction: () => boolean;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   hasUnsavedChanges: (sessionKey?: string | null) => boolean;
   markPersisted: (sessionKey?: string | null, state?: ActiveLayerCanvasState | null) => void;
@@ -101,6 +103,7 @@ export interface CostumeCanvasHandle {
   rotateSelection: () => boolean;
   alignSelection: (action: AlignAction) => boolean;
   isTextEditing: () => boolean;
+  clearSelection: () => boolean;
   clear: () => void;
   undo: () => void;
   redo: () => void;
@@ -973,20 +976,38 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncSelectionState,
   });
 
-  const flushPendingEdits = useCallback(async () => {
+  const hasActiveInteraction = useCallback(() => {
+    return (
+      isTextEditing() ||
+      !!penDraftRef.current ||
+      !!penAnchorPlacementSessionRef.current ||
+      !!pointSelectionTransformSessionRef.current ||
+      !!pointSelectionMarqueeSessionRef.current ||
+      !!insertedPathAnchorDragSessionRef.current ||
+      !!mirroredPathAnchorDragSessionRef.current ||
+      !!shapeDraftRef.current ||
+      !!bitmapFloatingObjectRef.current
+    );
+  }, [isTextEditing, penAnchorPlacementSessionRef, penDraftRef]);
+
+  const flushPendingEdits = useCallback(async (options?: FinishPendingEditsOptions) => {
     const fabricCanvas = fabricCanvasRef.current;
+    let handled = false;
 
     if (isTextEditing()) {
       const activeObject = fabricCanvas?.getActiveObject() as { exitEditing?: () => void } | null | undefined;
       activeObject?.exitEditing?.();
       fabricCanvas?.requestRenderAll();
+      handled = true;
     }
 
     if (penDraftRef.current) {
       finalizePenDraft();
+      handled = true;
     } else if (penAnchorPlacementSessionRef.current) {
       commitCurrentPenPlacement();
       fabricCanvas?.requestRenderAll();
+      handled = true;
     }
 
     if (pointSelectionTransformSessionRef.current) {
@@ -995,6 +1016,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (shouldSave) {
         saveHistory();
       }
+      handled = true;
     }
 
     if (pointSelectionMarqueeSessionRef.current && fabricCanvas) {
@@ -1008,11 +1030,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         fabricCanvas.setActiveObject(pointSelectionMarqueeSession.path);
       }
       fabricCanvas.requestRenderAll();
+      handled = true;
     }
 
     if (insertedPathAnchorDragSessionRef.current) {
       insertedPathAnchorDragSessionRef.current = null;
       saveHistory();
+      handled = true;
     }
 
     if (mirroredPathAnchorDragSessionRef.current) {
@@ -1022,6 +1046,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (shouldSave) {
         saveHistory();
       }
+      handled = true;
     }
 
     if (shapeDraftRef.current) {
@@ -1033,13 +1058,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         saveHistory();
       }
       configureCanvasForTool();
+      handled = true;
     }
 
     if (bitmapFloatingObjectRef.current) {
-      await commitBitmapSelection();
+      const didCommitBitmapSelection = await commitBitmapSelection({
+        behavior: options?.bitmapFloatingSelectionBehavior,
+      });
+      handled = didCommitBitmapSelection || handled;
     }
 
     await bitmapRasterCommitQueueRef.current.catch(() => undefined);
+    return handled;
   }, [
     applyPointSelectionMarqueeSession,
     commitBitmapSelection,
@@ -1048,8 +1078,28 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     finalizePenDraft,
     flattenBitmapLayer,
     isTextEditing,
+    penAnchorPlacementSessionRef,
+    penDraftRef,
     saveHistory,
   ]);
+
+  const clearSelection = useCallback(() => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) {
+      return false;
+    }
+
+    const hadSelection = !!fabricCanvas.getActiveObject() || !!vectorPointEditingTargetRef.current;
+    if (!hadSelection) {
+      return false;
+    }
+
+    setVectorPointEditingTarget(null);
+    fabricCanvas.discardActiveObject();
+    fabricCanvas.requestRenderAll();
+    syncSelectionState();
+    return true;
+  }, [setVectorPointEditingTarget, syncSelectionState]);
 
   useEffect(() => {
     if (editorModeState === 'vector' && activeTool === 'pen') {
@@ -1095,6 +1145,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   useCostumeCanvasImperativeHandle({
     alignSelection,
     bitmapRasterCommitQueueRef,
+    clearSelection,
     configureCanvasForTool,
     createSnapshot,
     copySelection,
@@ -1105,6 +1156,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     flipSelection,
     flushPendingEdits,
     getComposedCanvasElement,
+    hasActiveInteraction,
     isTextEditing,
     lastCommittedSnapshotRef,
     loadBitmapLayer,

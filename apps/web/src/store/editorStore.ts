@@ -43,9 +43,8 @@ export type UndoRedoHandler = {
   pasteSelection?: () => boolean | Promise<boolean>;
   nudgeSelection?: (dx: number, dy: number) => boolean;
   isTextEditing?: () => boolean;
+  handleKeyDown?: (event: KeyboardEvent) => boolean;
 };
-
-export type BackgroundEditorShortcutHandler = (event: KeyboardEvent) => boolean;
 
 const DARK_MODE_STORAGE_KEY = 'pochacoding-dark-mode';
 const ADVANCED_BLOCKS_STORAGE_KEY = 'pochacoding-advanced-blocks';
@@ -166,7 +165,6 @@ interface EditorStore {
   costumeUndoHandler: UndoRedoHandler | null;
   codeUndoHandler: UndoRedoHandler | null;
   backgroundUndoHandler: UndoRedoHandler | null;
-  backgroundShortcutHandler: BackgroundEditorShortcutHandler | null;
 
   // Actions
   selectScene: (sceneId: string | null, options?: SelectionHistoryOptions) => void;
@@ -224,7 +222,6 @@ interface EditorStore {
   registerCostumeUndo: (handler: UndoRedoHandler | null) => void;
   registerCodeUndo: (handler: UndoRedoHandler | null) => void;
   registerBackgroundUndo: (handler: UndoRedoHandler | null) => void;
-  registerBackgroundShortcutHandler: (handler: BackgroundEditorShortcutHandler | null) => void;
   prepareForPlay: () => Promise<void>;
 
   // Global undo/redo (routes to active editor)
@@ -258,6 +255,21 @@ function getPrepareForPlayHandlers(state: EditorStore): Array<NonNullable<UndoRe
   ].filter((handler): handler is NonNullable<UndoRedoHandler['prepareForPlay']> => typeof handler === 'function');
 
   return Array.from(new Set(handlers));
+}
+
+function getActiveEditorHandler(
+  state: Pick<EditorStore, 'backgroundEditorOpen' | 'backgroundUndoHandler' | 'activeObjectTab' | 'costumeUndoHandler' | 'codeUndoHandler'>,
+): UndoRedoHandler | null {
+  if (state.backgroundEditorOpen) {
+    return state.backgroundUndoHandler;
+  }
+  if (state.activeObjectTab === 'costumes') {
+    return state.costumeUndoHandler;
+  }
+  if (state.activeObjectTab === 'code') {
+    return state.codeUndoHandler;
+  }
+  return null;
 }
 
 function createEditorStore(): EditorStoreHook {
@@ -326,7 +338,6 @@ function createEditorStore(): EditorStoreHook {
   costumeUndoHandler: null,
   codeUndoHandler: null,
   backgroundUndoHandler: null,
-  backgroundShortcutHandler: null,
 
   // Actions
   selectScene: (sceneId, options) => {
@@ -1070,7 +1081,6 @@ function createEditorStore(): EditorStoreHook {
       backgroundEditorOpen: false,
       backgroundEditorSceneId: null,
       backgroundUndoHandler: null,
-      backgroundShortcutHandler: null,
     });
   },
 
@@ -1186,10 +1196,6 @@ function createEditorStore(): EditorStoreHook {
     set({ backgroundUndoHandler: handler });
   },
 
-  registerBackgroundShortcutHandler: (handler) => {
-    set({ backgroundShortcutHandler: handler });
-  },
-
   prepareForPlay: async () => {
     const handlers = getPrepareForPlayHandlers(useEditorStore.getState());
     for (const handler of handlers) {
@@ -1199,16 +1205,10 @@ function createEditorStore(): EditorStoreHook {
 
   undo: () => {
     const state = useEditorStore.getState();
-    if (state.backgroundEditorOpen && state.backgroundUndoHandler) {
-      if (!state.backgroundUndoHandler.canUndo || state.backgroundUndoHandler.canUndo()) {
-        state.backgroundUndoHandler.undo();
-      }
-      return;
-    }
-
-    if (state.activeObjectTab === 'costumes' && state.costumeUndoHandler) {
-      if (!state.costumeUndoHandler.canUndo || state.costumeUndoHandler.canUndo()) {
-        state.costumeUndoHandler.undo();
+    const activeHandler = getActiveEditorHandler(state);
+    if (activeHandler && activeHandler !== state.codeUndoHandler) {
+      if (!activeHandler.canUndo || activeHandler.canUndo()) {
+        activeHandler.undo();
         return;
       }
     }
@@ -1229,16 +1229,10 @@ function createEditorStore(): EditorStoreHook {
 
   redo: () => {
     const state = useEditorStore.getState();
-    if (state.backgroundEditorOpen && state.backgroundUndoHandler) {
-      if (!state.backgroundUndoHandler.canRedo || state.backgroundUndoHandler.canRedo()) {
-        state.backgroundUndoHandler.redo();
-      }
-      return;
-    }
-
-    if (state.activeObjectTab === 'costumes' && state.costumeUndoHandler) {
-      if (!state.costumeUndoHandler.canRedo || state.costumeUndoHandler.canRedo()) {
-        state.costumeUndoHandler.redo();
+    const activeHandler = getActiveEditorHandler(state);
+    if (activeHandler && activeHandler !== state.codeUndoHandler) {
+      if (!activeHandler.canRedo || activeHandler.canRedo()) {
+        activeHandler.redo();
         return;
       }
     }

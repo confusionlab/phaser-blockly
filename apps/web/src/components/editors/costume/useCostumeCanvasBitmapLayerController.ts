@@ -1,7 +1,13 @@
 import { useCallback, type MutableRefObject } from 'react';
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
 import { renderBitmapAssetToSurfaceCanvas } from '@/lib/costume/costumeBitmapSurface';
+import type { BitmapFloatingSelectionBehavior } from '@/lib/editor/interactionSurface';
 import { extractVisibleCanvasRegion } from './costumeCanvasShared';
+import {
+  applyBitmapFloatingSelectionTransform,
+  captureBitmapFloatingSelectionTransform,
+  getBitmapFloatingSelectionOriginalTransform,
+} from './costumeBitmapFloatingSelection';
 import { normalizeVectorObjectRendering } from './costumeCanvasVectorRuntime';
 import type { BitmapStampBrushCommitPayload } from './costumeCanvasBitmapRuntime';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
@@ -246,16 +252,23 @@ export function useCostumeCanvasBitmapLayerController({
     return applyBitmapLayerSource(surfaceCanvas, selectable);
   }, [applyBitmapLayerSource, isLoadRequestActive, waitForFabricCanvas]);
 
-  const commitBitmapSelection = useCallback(async () => {
+  const commitBitmapSelection = useCallback(async (options?: { behavior?: BitmapFloatingSelectionBehavior }) => {
     const fabricCanvas = fabricCanvasRef.current;
     const floatingObject = getBitmapFloatingSelectionObject();
     if (!fabricCanvas || !floatingObject) return false;
     if (bitmapSelectionBusyRef.current) return false;
 
     bitmapSelectionBusyRef.current = true;
+    const currentTransform = captureBitmapFloatingSelectionTransform(floatingObject);
+    const originalTransform = options?.behavior === 'revert'
+      ? getBitmapFloatingSelectionOriginalTransform(floatingObject)
+      : null;
     try {
       if (fabricCanvas.getActiveObject() === floatingObject) {
         fabricCanvas.discardActiveObject();
+      }
+      if (originalTransform) {
+        applyBitmapFloatingSelectionTransform(floatingObject, originalTransform);
       }
       floatingObject.set({
         selectable: false,
@@ -267,7 +280,19 @@ export function useCostumeCanvasBitmapLayerController({
 
       const raster = fabricCanvas.toCanvasElement(1);
       const applied = applyBitmapLayerSource(raster, false);
-      if (!applied) return false;
+      if (!applied) {
+        if (originalTransform) {
+          applyBitmapFloatingSelectionTransform(floatingObject, currentTransform);
+          floatingObject.set({
+            selectable: true,
+            evented: true,
+            hasControls: true,
+            hasBorders: true,
+          });
+          fabricCanvas.requestRenderAll();
+        }
+        return false;
+      }
       saveHistory();
       return true;
     } finally {

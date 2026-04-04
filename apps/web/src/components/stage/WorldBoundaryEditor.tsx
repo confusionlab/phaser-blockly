@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { Check, Trash2, X } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
+import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
 import { HoverHelp } from '@/components/ui/hover-help';
 import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { OverlayPill } from '@/components/ui/overlay-pill';
@@ -10,9 +11,11 @@ import { runInHistoryTransaction } from '@/store/universalHistory';
 import type { WorldPoint } from '@/types';
 import {
   getSceneBackgroundBaseColor,
+  getVisibleTiledBackgroundScreenChunks,
   getUserSpaceViewportFromCanvasViewBox,
   TiledBackgroundCanvasCompositor,
 } from '@/lib/background/compositor';
+import { boundsIntersect, getBoundsFromPoints, shouldShowViewportRecovery } from '@/lib/editor/viewportRecovery';
 import {
   clampViewportZoom,
 } from '@/lib/viewportNavigation';
@@ -297,22 +300,6 @@ export function WorldBoundaryEditor() {
   }, [canvasHeight, canvasWidth, scene]);
 
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') {
-        return;
-      }
-
-      event.preventDefault();
-      closeWorldBoundaryEditor();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [closeWorldBoundaryEditor]);
-
-  useEffect(() => {
     if (dragIndex === null) return;
 
     const handlePointerMove = (event: PointerEvent) => {
@@ -425,6 +412,95 @@ export function WorldBoundaryEditor() {
   }, [canvasHeight, canvasWidth, panState]);
 
   const viewBox = getViewBox(view, canvasWidth, canvasHeight);
+  const userViewport = useMemo(() => {
+    return getUserSpaceViewportFromCanvasViewBox(viewBox, canvasWidth, canvasHeight);
+  }, [canvasHeight, canvasWidth, viewBox]);
+
+  const handleSave = useCallback(() => {
+    if (!scene) {
+      closeWorldBoundaryEditor();
+      return;
+    }
+    runInHistoryTransaction('scene:world-boundary', () => {
+      updateScene(scene.id, {
+        worldBoundary: {
+          enabled,
+          points,
+        },
+      });
+    });
+    closeWorldBoundaryEditor();
+  }, [closeWorldBoundaryEditor, enabled, points, scene, updateScene]);
+
+  const finishInnerInteraction = useCallback(() => {
+    let handled = false;
+    if (pendingPointDrag) {
+      setPendingPointDrag(null);
+      handled = true;
+    }
+    if (dragIndex !== null) {
+      setDragIndex(null);
+      handled = true;
+    }
+    if (panState) {
+      setPanState(null);
+      handled = true;
+    }
+    return handled;
+  }, [dragIndex, panState, pendingPointDrag]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const plainEscape = event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey;
+      const plainEnter = event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+      if (!plainEscape && !plainEnter) {
+        return;
+      }
+
+      event.preventDefault();
+      if (finishInnerInteraction()) {
+        return;
+      }
+
+      if (plainEscape) {
+        closeWorldBoundaryEditor();
+        return;
+      }
+      handleSave();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closeWorldBoundaryEditor, finishInnerInteraction, handleSave]);
+
+  const showReturnToCenter = useMemo(() => {
+    const stageBounds = {
+      left: -canvasWidth / 2,
+      right: canvasWidth / 2,
+      bottom: -canvasHeight / 2,
+      top: canvasHeight / 2,
+    };
+    const backgroundVisible = scene?.background?.type === 'tiled'
+      ? getVisibleTiledBackgroundScreenChunks(
+          scene.background,
+          userViewport,
+          Math.max(1, Math.round(stageSize.width)),
+          Math.max(1, Math.round(stageSize.height)),
+          1,
+        ).length > 0
+      : boundsIntersect(userViewport, stageBounds);
+    const boundaryBounds = getBoundsFromPoints(points);
+    const boundaryVisible = !!boundaryBounds && boundsIntersect(userViewport, boundaryBounds);
+
+    return shouldShowViewportRecovery({
+      currentCenter: { x: view.centerX, y: view.centerY },
+      homeCenter: { x: canvasWidth / 2, y: canvasHeight / 2 },
+      viewportSize: { width: viewBox.width, height: viewBox.height },
+      hasVisibleContent: backgroundVisible || boundaryVisible,
+    });
+  }, [canvasHeight, canvasWidth, points, scene?.background, stageSize.height, stageSize.width, userViewport, view.centerX, view.centerY, viewBox.height, viewBox.width]);
 
   useEffect(() => {
     const canvas = backgroundCanvasRef.current;
@@ -436,11 +512,11 @@ export function WorldBoundaryEditor() {
     compositor.render({
       canvas,
       background: scene.background ?? null,
-      viewport: getUserSpaceViewportFromCanvasViewBox(viewBox, canvasWidth, canvasHeight),
+      viewport: userViewport,
       pixelWidth: Math.max(1, Math.round(stageSize.width)),
       pixelHeight: Math.max(1, Math.round(stageSize.height)),
     });
-  }, [backgroundRenderRevision, canvasHeight, canvasWidth, scene, stageSize.height, stageSize.width, viewBox]);
+  }, [backgroundRenderRevision, scene, stageSize.height, stageSize.width, userViewport]);
 
   const polygonPoints = points
     .map((point) => {
@@ -625,18 +701,6 @@ export function WorldBoundaryEditor() {
     }));
   };
 
-  const handleSave = () => {
-    runInHistoryTransaction('scene:world-boundary', () => {
-      updateScene(scene.id, {
-        worldBoundary: {
-          enabled,
-          points,
-        },
-      });
-    });
-    closeWorldBoundaryEditor();
-  };
-
   return (
     <div className="fixed inset-0 z-[100001] bg-background flex flex-col overscroll-none">
       <div
@@ -686,6 +750,17 @@ export function WorldBoundaryEditor() {
             </OverlayPill>
           </div>
         </div>
+        <ViewportRecoveryPill
+          visible={showReturnToCenter}
+          onClick={() => {
+            setView((current) => ({
+              ...current,
+              centerX: canvasWidth / 2,
+              centerY: canvasHeight / 2,
+            }));
+          }}
+          dataTestId="world-boundary-return-to-center"
+        />
 
         <canvas
           ref={backgroundCanvasRef}
