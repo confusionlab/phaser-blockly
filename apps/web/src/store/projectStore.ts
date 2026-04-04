@@ -49,6 +49,7 @@ import {
 import { validateProjectName } from '@/lib/projectName';
 import { applyAssistantChangeSetToProject } from '@/lib/assistant/projectState';
 import {
+  type HistoryRecordOptions,
   recordHistoryChange,
   registerProjectHistoryBridge,
   resetHistory,
@@ -106,7 +107,9 @@ interface ProjectStore {
     componentFolders: ComponentFolder[];
   }) => Scene | null;
   removeScene: (sceneId: string) => void;
-  updateScene: (sceneId: string, updates: Partial<Scene>) => void;
+  updateScene: (sceneId: string, updates: Partial<Scene>, options?: {
+    history?: HistoryRecordOptions | false;
+  }) => void;
   reorderScenes: (sceneIds: string[]) => void;
   updateSceneOrganization: (scenes: Scene[], sceneFolders: SceneFolder[]) => void;
 
@@ -117,7 +120,10 @@ interface ProjectStore {
   updateCostumeFromEditor: (
     target: CostumeEditorTarget,
     state: CostumeEditorPersistedState,
-    options?: { recordHistory?: boolean }
+    options?: {
+      recordHistory?: boolean;
+      history?: HistoryRecordOptions;
+    }
   ) => boolean;
   applyCostumeEditorOperation: (
     target: CostumeEditorObjectTarget,
@@ -1247,7 +1253,7 @@ function createProjectStore(): ProjectStoreHook {
     recordHistoryChange({ source: 'project:remove-scene' });
   },
 
-  updateScene: (sceneId: string, updates: Partial<Scene>) => {
+  updateScene: (sceneId: string, updates: Partial<Scene>, options) => {
     set(state => {
       if (!state.project) return state;
 
@@ -1266,7 +1272,10 @@ function createProjectStore(): ProjectStoreHook {
         isDirty: true,
       };
     });
-    recordHistoryChange({ source: 'project:update-scene', allowMerge: true });
+    const historyOptions = options?.history;
+    if (historyOptions !== false) {
+      recordHistoryChange(historyOptions ?? { source: 'project:update-scene', allowMerge: true });
+    }
   },
 
   reorderScenes: (sceneIds: string[]) => {
@@ -1445,7 +1454,7 @@ function createProjectStore(): ProjectStoreHook {
       };
     });
     if (didUpdate && options?.recordHistory !== false) {
-      recordHistoryChange({ source: 'project:update-costume', allowMerge: true });
+      recordHistoryChange(options?.history ?? { source: 'project:update-costume', allowMerge: true });
     }
     return didUpdate;
   },

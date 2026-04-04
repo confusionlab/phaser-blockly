@@ -8,7 +8,13 @@ import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { runInHistoryTransaction } from '@/store/universalHistory';
+import {
+  createHistoryAnchor,
+  hasHistoryChangesSinceAnchor,
+  redoHistory,
+  revertHistoryToAnchor,
+  undoHistory,
+} from '@/store/universalHistory';
 import type { WorldPoint } from '@/types';
 import {
   getSceneBackgroundBaseColor,
@@ -210,6 +216,24 @@ function getScreenSpaceEllipseRadii(
   };
 }
 
+function cloneBoundaryPoints(points: WorldPoint[]): WorldPoint[] {
+  return points.map((point) => ({ ...point }));
+}
+
+function areBoundaryPointsEqual(a: WorldPoint[], b: WorldPoint[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index].x !== b[index].x || a[index].y !== b[index].y) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function WorldBoundaryEditor() {
   const { project, updateScene } = useProjectStore();
   const { isDarkMode, worldBoundaryEditorSceneId, selectedSceneId, closeWorldBoundaryEditor } = useEditorStore();
@@ -247,6 +271,12 @@ export function WorldBoundaryEditor() {
   const stageRef = useRef<SVGSVGElement | null>(null);
   const backgroundCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const backgroundCompositorRef = useRef<TiledBackgroundCanvasCompositor | null>(null);
+  const historyAnchorRef = useRef(createHistoryAnchor());
+  const pointsRef = useRef<WorldPoint[]>([]);
+  const enabledRef = useRef(false);
+  const dragStartPointsRef = useRef<WorldPoint[] | null>(null);
+  const dragHistorySourceRef = useRef('scene:world-boundary:drag-point');
+  const initializedSceneIdRef = useRef<string | null>(null);
   const viewRef = useRef(view);
   const [backgroundRenderRevision, setBackgroundRenderRevision] = useState(0);
 
@@ -261,6 +291,14 @@ export function WorldBoundaryEditor() {
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+
+  useEffect(() => {
+    pointsRef.current = points;
+  }, [points]);
+
+  useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
 
   const {
     animateToCenter: animateViewCenter,
@@ -310,12 +348,34 @@ export function WorldBoundaryEditor() {
   useEffect(() => {
     if (!scene) return;
     setEnabled(!!scene.worldBoundary?.enabled);
-    const savedPoints = (scene.worldBoundary?.points || []).map((point) => ({ ...point }));
+    const savedPoints = cloneBoundaryPoints(scene.worldBoundary?.points || []);
     const nextPoints = savedPoints.length > 0 ? savedPoints : getDefaultBoundaryPoints(canvasWidth, canvasHeight);
     setPoints(nextPoints);
     setHoveredInsertionHandle(null);
-    setView(getInitialView(nextPoints, canvasWidth, canvasHeight));
+    if (initializedSceneIdRef.current !== scene.id) {
+      initializedSceneIdRef.current = scene.id;
+      historyAnchorRef.current = createHistoryAnchor();
+      setView(getInitialView(nextPoints, canvasWidth, canvasHeight));
+    }
   }, [canvasHeight, canvasWidth, scene]);
+
+  const commitWorldBoundaryState = useCallback((nextEnabled: boolean, nextPoints: WorldPoint[], source: string) => {
+    if (!scene) {
+      return;
+    }
+
+    updateScene(scene.id, {
+      worldBoundary: {
+        enabled: nextEnabled,
+        points: cloneBoundaryPoints(nextPoints),
+      },
+    }, {
+      history: {
+        source,
+        allowMerge: false,
+      },
+    });
+  }, [scene, updateScene]);
 
   useEffect(() => {
     if (dragIndex === null) return;
@@ -337,7 +397,13 @@ export function WorldBoundaryEditor() {
     };
 
     const handlePointerUp = () => {
+      const startPoints = dragStartPointsRef.current;
+      const nextPoints = cloneBoundaryPoints(pointsRef.current);
       setDragIndex(null);
+      dragStartPointsRef.current = null;
+      if (startPoints && !areBoundaryPointsEqual(startPoints, nextPoints)) {
+        commitWorldBoundaryState(enabledRef.current, nextPoints, dragHistorySourceRef.current);
+      }
     };
 
     window.addEventListener('pointermove', handlePointerMove);
@@ -346,7 +412,7 @@ export function WorldBoundaryEditor() {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [canvasHeight, canvasWidth, dragIndex]);
+  }, [canvasHeight, canvasWidth, commitWorldBoundaryState, dragIndex]);
 
   useEffect(() => {
     if (dragIndex !== null || pendingPointDrag || panState) {
@@ -382,6 +448,8 @@ export function WorldBoundaryEditor() {
         canvasHeight,
       );
       setPendingPointDrag(null);
+      dragStartPointsRef.current = cloneBoundaryPoints(pointsRef.current);
+      dragHistorySourceRef.current = 'scene:world-boundary:drag-point';
       setDragIndex(pendingPointDrag.index);
       setPoints((current) => current.map((point, index) => (
         index === pendingPointDrag.index ? canvasToUser(nextPoint.x, nextPoint.y, canvasWidth, canvasHeight) : point
@@ -434,29 +502,25 @@ export function WorldBoundaryEditor() {
     return getUserSpaceViewportFromCanvasViewBox(viewBox, canvasWidth, canvasHeight);
   }, [canvasHeight, canvasWidth, viewBox]);
 
-  const handleSave = useCallback(() => {
-    if (!scene) {
-      closeWorldBoundaryEditor();
-      return;
-    }
-    runInHistoryTransaction('scene:world-boundary', () => {
-      updateScene(scene.id, {
-        worldBoundary: {
-          enabled,
-          points,
-        },
-      });
-    });
+  const handleDone = useCallback(() => {
     closeWorldBoundaryEditor();
-  }, [closeWorldBoundaryEditor, enabled, points, scene, updateScene]);
+  }, [closeWorldBoundaryEditor]);
 
-  const finishInnerInteraction = useCallback(() => {
+  const finishInnerInteraction = useCallback((mode: 'commit' | 'revert') => {
     let handled = false;
     if (pendingPointDrag) {
       setPendingPointDrag(null);
       handled = true;
     }
     if (dragIndex !== null) {
+      const startPoints = dragStartPointsRef.current;
+      const nextPoints = cloneBoundaryPoints(pointsRef.current);
+      if (mode === 'revert' && startPoints) {
+        setPoints(cloneBoundaryPoints(startPoints));
+      } else if (mode === 'commit' && startPoints && !areBoundaryPointsEqual(startPoints, nextPoints)) {
+        commitWorldBoundaryState(enabledRef.current, nextPoints, dragHistorySourceRef.current);
+      }
+      dragStartPointsRef.current = null;
       setDragIndex(null);
       handled = true;
     }
@@ -469,29 +533,48 @@ export function WorldBoundaryEditor() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const isUndoShortcut = (event.metaKey || event.ctrlKey) && event.key === 'z' && !event.shiftKey;
+      const isRedoShortcut =
+        ((event.metaKey || event.ctrlKey) && event.key === 'z' && event.shiftKey) ||
+        (event.ctrlKey && event.key.toLowerCase() === 'y');
       const plainEscape = event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey;
       const plainEnter = event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+      if (isUndoShortcut || isRedoShortcut) {
+        event.preventDefault();
+        if (finishInnerInteraction(isUndoShortcut ? 'revert' : 'commit')) {
+          return;
+        }
+        if (isUndoShortcut) {
+          undoHistory();
+        } else {
+          redoHistory();
+        }
+        return;
+      }
       if (!plainEscape && !plainEnter) {
         return;
       }
 
       event.preventDefault();
-      if (finishInnerInteraction()) {
+      if (finishInnerInteraction(plainEscape ? 'revert' : 'commit')) {
         return;
       }
 
       if (plainEscape) {
+        if (hasHistoryChangesSinceAnchor(historyAnchorRef.current)) {
+          revertHistoryToAnchor(historyAnchorRef.current);
+        }
         closeWorldBoundaryEditor();
         return;
       }
-      handleSave();
+      handleDone();
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [closeWorldBoundaryEditor, finishInnerInteraction, handleSave]);
+  }, [closeWorldBoundaryEditor, finishInnerInteraction, handleDone]);
 
   const showReturnToCenter = useMemo(() => {
     const stageBounds = {
@@ -610,7 +693,12 @@ export function WorldBoundaryEditor() {
         canvasWidth,
         canvasHeight,
       );
-      setPoints((current) => [...current, canvasToUser(nextPoint.x, nextPoint.y, canvasWidth, canvasHeight)]);
+      const nextPoints = [
+        ...cloneBoundaryPoints(pointsRef.current),
+        canvasToUser(nextPoint.x, nextPoint.y, canvasWidth, canvasHeight),
+      ];
+      setPoints(nextPoints);
+      commitWorldBoundaryState(enabledRef.current, nextPoints, 'scene:world-boundary:add-point');
     }
   };
 
@@ -651,6 +739,8 @@ export function WorldBoundaryEditor() {
     event.stopPropagation();
     const { insertIndex, midpoint } = hoveredInsertionHandle;
     setHoveredInsertionHandle(null);
+    dragStartPointsRef.current = cloneBoundaryPoints(pointsRef.current);
+    dragHistorySourceRef.current = 'scene:world-boundary:insert-point';
     setPoints((current) => [
       ...current.slice(0, insertIndex),
       midpoint,
@@ -662,12 +752,13 @@ export function WorldBoundaryEditor() {
   const handlePointDoubleClick = (index: number, event: ReactMouseEvent<SVGEllipseElement>) => {
     event.stopPropagation();
     setPendingPointDrag(null);
-    setPoints((current) => {
-      if (current.length <= 3) {
-        return current;
-      }
-      return current.filter((_, pointIndex) => pointIndex !== index);
-    });
+    const nextPoints = cloneBoundaryPoints(pointsRef.current);
+    if (nextPoints.length <= 3) {
+      return;
+    }
+    nextPoints.splice(index, 1);
+    setPoints(nextPoints);
+    commitWorldBoundaryState(enabledRef.current, nextPoints, 'scene:world-boundary:remove-point');
   };
 
   const handlePointPointerDown = (index: number, event: ReactPointerEvent<SVGEllipseElement>) => {
@@ -675,6 +766,8 @@ export function WorldBoundaryEditor() {
       return;
     }
     event.stopPropagation();
+    dragStartPointsRef.current = cloneBoundaryPoints(pointsRef.current);
+    dragHistorySourceRef.current = 'scene:world-boundary:drag-point';
     setPendingPointDrag({
       index,
       startClientX: event.clientX,
@@ -750,7 +843,9 @@ export function WorldBoundaryEditor() {
               className="text-foreground/78 hover:!bg-transparent hover:text-foreground"
               onClick={() => {
                 setHoveredInsertionHandle(null);
-                setPoints(getDefaultBoundaryPoints(canvasWidth, canvasHeight));
+                const nextPoints = getDefaultBoundaryPoints(canvasWidth, canvasHeight);
+                setPoints(nextPoints);
+                commitWorldBoundaryState(enabledRef.current, nextPoints, 'scene:world-boundary:clear');
               }}
             >
               <Trash2 className="size-3.5" />
@@ -762,14 +857,19 @@ export function WorldBoundaryEditor() {
             <OverlayPill tone={overlayPillTone} size="compact">
               <OverlayActionButton
                 label="Cancel"
-                onClick={closeWorldBoundaryEditor}
+                onClick={() => {
+                  if (hasHistoryChangesSinceAnchor(historyAnchorRef.current)) {
+                    revertHistoryToAnchor(historyAnchorRef.current);
+                  }
+                  closeWorldBoundaryEditor();
+                }}
                 tone={overlayPillTone}
               >
                 <X className="size-3.5" />
               </OverlayActionButton>
               <OverlayActionButton
                 label="Done"
-                onClick={handleSave}
+                onClick={handleDone}
                 tone={overlayPillTone}
               >
                 <Check className="size-3.5" />

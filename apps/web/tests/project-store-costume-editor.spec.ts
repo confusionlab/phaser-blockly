@@ -13,6 +13,8 @@ type StoreModules = {
   useProjectStore: typeof import('../src/store/projectStore').useProjectStore;
   useEditorStore: typeof import('../src/store/editorStore').useEditorStore;
   canUndoHistory: typeof import('../src/store/universalHistory').canUndoHistory;
+  undoHistory: typeof import('../src/store/universalHistory').undoHistory;
+  redoHistory: typeof import('../src/store/universalHistory').redoHistory;
 };
 
 function installBrowserShims() {
@@ -65,11 +67,13 @@ async function loadStores(): Promise<StoreModules> {
   installBrowserShims();
   const { useProjectStore } = await import('../src/store/projectStore');
   const { useEditorStore } = await import('../src/store/editorStore');
-  const { canUndoHistory } = await import('../src/store/universalHistory');
+  const { canUndoHistory, undoHistory, redoHistory } = await import('../src/store/universalHistory');
   return {
     useProjectStore,
     useEditorStore,
     canUndoHistory,
+    undoHistory,
+    redoHistory,
   };
 }
 
@@ -408,7 +412,7 @@ test.describe('project store costume editor boundary', () => {
   });
 
   test('persists the active session and renames another costume in one undo step', async () => {
-    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const { useProjectStore, useEditorStore, canUndoHistory, undoHistory, redoHistory } = await loadStores();
     const project = createDefaultProject('Costume rename transaction test');
     const scene = project.scenes[0];
     const object = createObjectWithCostumes('object-a', [
@@ -590,7 +594,7 @@ test.describe('project store costume editor boundary', () => {
   });
 
   test('object selection flushes the active costume edit in the same undo step', async () => {
-    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const { useProjectStore, useEditorStore, canUndoHistory, undoHistory, redoHistory } = await loadStores();
     const project = createDefaultProject('Costume selection transaction test');
     const scene = project.scenes[0];
     const objectA = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
@@ -602,8 +606,12 @@ test.describe('project store costume editor boundary', () => {
     useEditorStore.getState().selectObject(objectA.id, { recordHistory: false });
     useEditorStore.setState({ activeObjectTab: 'costumes' });
     useEditorStore.getState().registerCostumeUndo({
-      undo: () => undefined,
-      redo: () => undefined,
+      undo: () => {
+        undoHistory();
+      },
+      redo: () => {
+        redoHistory();
+      },
       canUndo: () => false,
       canRedo: () => false,
       beforeSelectionChange: ({ recordHistory }) => {
@@ -634,7 +642,7 @@ test.describe('project store costume editor boundary', () => {
   });
 
   test('history-suppressed object selection does not leave a stray costume undo entry', async () => {
-    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const { useProjectStore, useEditorStore, canUndoHistory, undoHistory, redoHistory } = await loadStores();
     const project = createDefaultProject('Costume no-history selection test');
     const scene = project.scenes[0];
     const objectA = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
@@ -646,8 +654,12 @@ test.describe('project store costume editor boundary', () => {
     useEditorStore.getState().selectObject(objectA.id, { recordHistory: false });
     useEditorStore.setState({ activeObjectTab: 'costumes' });
     useEditorStore.getState().registerCostumeUndo({
-      undo: () => undefined,
-      redo: () => undefined,
+      undo: () => {
+        undoHistory();
+      },
+      redo: () => {
+        redoHistory();
+      },
       canUndo: () => false,
       canRedo: () => false,
       beforeSelectionChange: ({ recordHistory }) => {
@@ -673,7 +685,7 @@ test.describe('project store costume editor boundary', () => {
   });
 
   test('re-selecting the same object does not flush the costume editor into history', async () => {
-    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const { useProjectStore, useEditorStore, canUndoHistory, undoHistory, redoHistory } = await loadStores();
     const project = createDefaultProject('Costume same-selection test');
     const scene = project.scenes[0];
     const object = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
@@ -684,8 +696,12 @@ test.describe('project store costume editor boundary', () => {
     useEditorStore.getState().selectObject(object.id, { recordHistory: false });
     useEditorStore.setState({ activeObjectTab: 'costumes' });
     useEditorStore.getState().registerCostumeUndo({
-      undo: () => undefined,
-      redo: () => undefined,
+      undo: () => {
+        undoHistory();
+      },
+      redo: () => {
+        redoHistory();
+      },
       canUndo: () => false,
       canRedo: () => false,
       beforeSelectionChange: ({ recordHistory }) => {
@@ -708,5 +724,86 @@ test.describe('project store costume editor boundary', () => {
     expect(useEditorStore.getState().selectedObjectId).toBe(object.id);
     expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.costumes[0]?.assetId).toBe('data:image/png;base64,AAA');
     expect(canUndoHistory()).toBe(false);
+  });
+
+  test('editor tab changes alone do not create undo entries', async () => {
+    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const project = createDefaultProject('Editor tab history test');
+    const scene = project.scenes[0];
+    const object = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
+    scene.objects = [object];
+
+    useProjectStore.getState().openProject(project);
+    useEditorStore.getState().selectScene(scene.id, { recordHistory: false });
+    useEditorStore.getState().selectObject(object.id, { recordHistory: false });
+
+    expect(canUndoHistory()).toBe(false);
+
+    useEditorStore.getState().setActiveObjectTab('costumes');
+    expect(useEditorStore.getState().activeObjectTab).toBe('costumes');
+    expect(canUndoHistory()).toBe(false);
+
+    useEditorStore.getState().setActiveObjectTab('code');
+    expect(useEditorStore.getState().activeObjectTab).toBe('code');
+    expect(canUndoHistory()).toBe(false);
+  });
+
+  test('undo and redo restore the committed editor tab context instead of passive tab switches', async () => {
+    const { useProjectStore, useEditorStore } = await loadStores();
+    const project = createDefaultProject('Editor tab restore test');
+    const scene = project.scenes[0];
+    const object = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
+    scene.objects = [object];
+
+    useProjectStore.getState().openProject(project);
+    useEditorStore.getState().selectScene(scene.id, { recordHistory: false });
+    useEditorStore.getState().selectObject(object.id, { recordHistory: false });
+
+    const initialBlocklyXml = useProjectStore.getState().project?.scenes[0]?.objects[0]?.blocklyXml ?? '';
+    useProjectStore.getState().updateObject(scene.id, object.id, {
+      blocklyXml: '<xml><block type="motion_movesteps"></block></xml>',
+    });
+
+    expect(useEditorStore.getState().activeObjectTab).toBe('code');
+    expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.blocklyXml).toContain('motion_movesteps');
+
+    useEditorStore.getState().setActiveObjectTab('costumes');
+    expect(useEditorStore.getState().activeObjectTab).toBe('costumes');
+
+    useProjectStore.getState().updateCostumeFromEditor(
+      {
+        sceneId: scene.id,
+        objectId: object.id,
+        costumeId: 'costume-a',
+      },
+      {
+        ...createPersistedCostumeState('data:image/png;base64,EDITED_A'),
+      },
+    );
+
+    expect(useEditorStore.getState().activeObjectTab).toBe('costumes');
+    expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.costumes[0]?.assetId).toBe('data:image/png;base64,EDITED_A');
+
+    useEditorStore.getState().undo();
+
+    expect(useEditorStore.getState().activeObjectTab).toBe('costumes');
+    expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.costumes[0]?.assetId).toBe('data:image/png;base64,AAA');
+    expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.blocklyXml).toContain('motion_movesteps');
+
+    useEditorStore.getState().undo();
+
+    expect(useEditorStore.getState().activeObjectTab).toBe('code');
+    expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.blocklyXml ?? '').toBe(initialBlocklyXml);
+
+    useEditorStore.getState().redo();
+
+    expect(useEditorStore.getState().activeObjectTab).toBe('code');
+    expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.blocklyXml).toContain('motion_movesteps');
+    expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.costumes[0]?.assetId).toBe('data:image/png;base64,AAA');
+
+    useEditorStore.getState().redo();
+
+    expect(useEditorStore.getState().activeObjectTab).toBe('costumes');
+    expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.costumes[0]?.assetId).toBe('data:image/png;base64,EDITED_A');
   });
 });

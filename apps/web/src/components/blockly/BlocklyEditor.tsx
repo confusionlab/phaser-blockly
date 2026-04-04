@@ -44,6 +44,7 @@ import {
 } from './pinnableContinuousToolbox';
 import { POCHA_BLOCKLY_THEME } from './blocklyTheme';
 import type { UndoRedoHandler } from '@/store/editorStore';
+import { redoHistory, undoHistory } from '@/store/universalHistory';
 
 // Register Blockly toolbox plugins once at module load.
 registerPinnableContinuousToolbox();
@@ -730,9 +731,14 @@ export function BlocklyEditor() {
   // Flushing pending persistence keeps history in sync before history-based undo/redo runs.
   useEffect(() => {
     const handler: UndoRedoHandler = {
-      undo: () => workspaceRef.current?.undo(false),
-      redo: () => workspaceRef.current?.undo(true),
-      beforeHistoryUndoRedo: () => flushPendingWorkspacePersist(),
+      undo: () => {
+        flushPendingWorkspacePersist();
+        undoHistory();
+      },
+      redo: () => {
+        flushPendingWorkspacePersist();
+        redoHistory();
+      },
       prepareForPlay: () => {
         commitActiveBlocklyEditing();
       },

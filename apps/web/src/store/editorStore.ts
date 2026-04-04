@@ -9,6 +9,7 @@ import {
   canUndoHistory,
   redoHistory,
   registerSelectionHistoryBridge,
+  registerUiHistoryBridge,
   runInHistoryTransaction,
   syncHistorySnapshot,
   undoHistory,
@@ -241,6 +242,9 @@ function getBeforeSelectionChangeHandler(state: EditorStore): UndoRedoHandler['b
   if (state.backgroundEditorOpen) {
     return state.backgroundUndoHandler?.beforeSelectionChange;
   }
+  if (state.worldBoundaryEditorOpen) {
+    return undefined;
+  }
   if (state.activeObjectTab === 'costumes') {
     return state.costumeUndoHandler?.beforeSelectionChange;
   }
@@ -261,10 +265,16 @@ function getPrepareForPlayHandlers(state: EditorStore): Array<NonNullable<UndoRe
 }
 
 function getActiveEditorHandler(
-  state: Pick<EditorStore, 'backgroundEditorOpen' | 'backgroundUndoHandler' | 'activeObjectTab' | 'costumeUndoHandler' | 'codeUndoHandler'>,
+  state: Pick<
+    EditorStore,
+    'backgroundEditorOpen' | 'backgroundUndoHandler' | 'worldBoundaryEditorOpen' | 'activeObjectTab' | 'costumeUndoHandler' | 'codeUndoHandler'
+  >,
 ): UndoRedoHandler | null {
   if (state.backgroundEditorOpen) {
     return state.backgroundUndoHandler;
+  }
+  if (state.worldBoundaryEditorOpen) {
+    return null;
   }
   if (state.activeObjectTab === 'costumes') {
     return state.costumeUndoHandler;
@@ -277,6 +287,9 @@ function getActiveEditorHandler(
 
 function createEditorStore(): EditorStoreHook {
   const stageEditorViewportBySceneId = new Map<string, StageEditorViewport>();
+  const syncEditorUiHistory = () => {
+    syncHistorySnapshot();
+  };
 
   return create<EditorStore>((set, get) => ({
   // Selection state
@@ -1099,6 +1112,7 @@ function createEditorStore(): EditorStoreHook {
       backgroundEditorOpen: true,
       backgroundEditorSceneId: sceneId,
     });
+    syncEditorUiHistory();
   },
 
   closeBackgroundEditor: () => {
@@ -1109,6 +1123,7 @@ function createEditorStore(): EditorStoreHook {
       backgroundEditorSceneId: null,
       backgroundUndoHandler: null,
     });
+    syncEditorUiHistory();
   },
 
   openWorldBoundaryEditor: (sceneId) => {
@@ -1116,6 +1131,7 @@ function createEditorStore(): EditorStoreHook {
       worldBoundaryEditorOpen: true,
       worldBoundaryEditorSceneId: sceneId,
     });
+    syncEditorUiHistory();
   },
 
   closeWorldBoundaryEditor: () => {
@@ -1125,6 +1141,7 @@ function createEditorStore(): EditorStoreHook {
       worldBoundaryEditorOpen: false,
       worldBoundaryEditorSceneId: null,
     });
+    syncEditorUiHistory();
   },
 
   setActiveInspectorTab: (tab) => {
@@ -1132,6 +1149,7 @@ function createEditorStore(): EditorStoreHook {
       activeInspectorTab: tab,
       activeHierarchyTab: tab,
     });
+    syncEditorUiHistory();
   },
 
   setActiveHierarchyTab: (tab) => {
@@ -1139,6 +1157,7 @@ function createEditorStore(): EditorStoreHook {
       activeHierarchyTab: tab,
       activeInspectorTab: tab,
     });
+    syncEditorUiHistory();
   },
 
   setActiveObjectTab: (tab) => {
@@ -1146,6 +1165,7 @@ function createEditorStore(): EditorStoreHook {
       activeObjectTab: tab,
       costumeColliderEditorRequest: tab === 'costumes' ? state.costumeColliderEditorRequest : null,
     }));
+    syncEditorUiHistory();
   },
 
   openCostumeColliderEditor: (sceneId, objectId) => {
@@ -1156,6 +1176,7 @@ function createEditorStore(): EditorStoreHook {
         objectId,
       },
     });
+    syncEditorUiHistory();
   },
 
   consumeCostumeColliderEditorRequest: (sceneId, objectId) => {
@@ -1233,48 +1254,26 @@ function createEditorStore(): EditorStoreHook {
   undo: () => {
     const state = useEditorStore.getState();
     const activeHandler = getActiveEditorHandler(state);
-    if (activeHandler && activeHandler !== state.codeUndoHandler) {
-      if (!activeHandler.canUndo || activeHandler.canUndo()) {
-        activeHandler.undo();
-        return;
-      }
-    }
-
-    if (state.activeObjectTab === 'code' && state.codeUndoHandler?.beforeHistoryUndoRedo) {
-      state.codeUndoHandler.beforeHistoryUndoRedo();
+    if (activeHandler) {
+      activeHandler.undo();
+      return;
     }
 
     if (canUndoHistory()) {
       undoHistory();
-      return;
-    }
-
-    if (state.activeObjectTab === 'code' && state.codeUndoHandler) {
-      state.codeUndoHandler.undo();
     }
   },
 
   redo: () => {
     const state = useEditorStore.getState();
     const activeHandler = getActiveEditorHandler(state);
-    if (activeHandler && activeHandler !== state.codeUndoHandler) {
-      if (!activeHandler.canRedo || activeHandler.canRedo()) {
-        activeHandler.redo();
-        return;
-      }
-    }
-
-    if (state.activeObjectTab === 'code' && state.codeUndoHandler?.beforeHistoryUndoRedo) {
-      state.codeUndoHandler.beforeHistoryUndoRedo();
+    if (activeHandler) {
+      activeHandler.redo();
+      return;
     }
 
     if (canRedoHistory()) {
       redoHistory();
-      return;
-    }
-
-    if (state.activeObjectTab === 'code' && state.codeUndoHandler) {
-      state.codeUndoHandler.redo();
     }
   },
   }));
@@ -1307,6 +1306,32 @@ registerSelectionHistoryBridge(
       selectedObjectIds: [...selection.selectedObjectIds],
       selectedComponentId: selection.selectedComponentId ?? null,
       selectedComponentIds: [...selection.selectedComponentIds],
+    });
+  },
+);
+
+registerUiHistoryBridge(
+  () => {
+    const state = useEditorStore.getState();
+    return {
+      activeInspectorTab: state.activeInspectorTab,
+      activeHierarchyTab: state.activeHierarchyTab,
+      activeObjectTab: state.activeObjectTab,
+      backgroundEditorOpen: state.backgroundEditorOpen,
+      backgroundEditorSceneId: state.backgroundEditorSceneId,
+      worldBoundaryEditorOpen: state.worldBoundaryEditorOpen,
+      worldBoundaryEditorSceneId: state.worldBoundaryEditorSceneId,
+    };
+  },
+  (ui) => {
+    useEditorStore.setState({
+      activeInspectorTab: ui.activeInspectorTab as InspectorTab,
+      activeHierarchyTab: ui.activeHierarchyTab as HierarchyTab,
+      activeObjectTab: ui.activeObjectTab as ObjectEditorTab,
+      backgroundEditorOpen: ui.backgroundEditorOpen,
+      backgroundEditorSceneId: ui.backgroundEditorSceneId,
+      worldBoundaryEditorOpen: ui.worldBoundaryEditorOpen,
+      worldBoundaryEditorSceneId: ui.worldBoundaryEditorSceneId,
     });
   },
 );

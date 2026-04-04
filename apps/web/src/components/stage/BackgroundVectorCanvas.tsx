@@ -131,6 +131,7 @@ export interface BackgroundVectorCanvasHandle {
   redo: () => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
+  resetHistoryToCurrent: () => void;
   serialize: () => BackgroundVectorDocument | null;
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
@@ -2044,6 +2045,9 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     },
     canRedo() {
       return historyIndexRef.current >= 0 && historyIndexRef.current < historySnapshotsRef.current.length - 1;
+    },
+    resetHistoryToCurrent() {
+      resetHistory();
     },
     serialize() {
       const fabricCanvas = fabricCanvasRef.current;
