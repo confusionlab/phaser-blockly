@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { Point } from 'fabric';
 import {
+  HANDLE_SIZE,
   buildPenDraftPathData,
   createPenDraftAnchor,
+  getPenToolCloseHitRadiusPx,
 } from '../src/components/editors/costume/costumeCanvasShared';
 
 test.describe('pen path close serialization', () => {
@@ -28,5 +30,9 @@ test.describe('pen path close serialization', () => {
     expect(buildPenDraftPathData(anchors, true)).toBe(
       'M 10 10 L 30 10 L 30 30 C 22 38 0 12 10 10 Z',
     );
+  });
+
+  test('pen close hit target is at least as large as the visible anchor handle footprint', () => {
+    expect(getPenToolCloseHitRadiusPx()).toBeGreaterThanOrEqual(HANDLE_SIZE);
   });
 });

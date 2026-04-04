@@ -60,18 +60,16 @@ export function FloatingToolbarColorControl({
         <ColorSwatchButton
           ref={buttonRef}
           value={value}
+          mixed={mixed}
           className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60"
           swatchClassName="size-6 rounded-md"
           onClick={() => onOpenChange(!open)}
-          title={label}
-          aria-label={label}
+          title={mixed ? `${label} (mixed)` : label}
+          aria-label={mixed ? `${label} (mixed)` : label}
           aria-expanded={open}
           aria-haspopup="dialog"
           disabled={disabled}
         />
-        {mixed ? (
-          <span className="whitespace-nowrap text-xs text-muted-foreground">Multiple</span>
-        ) : null}
       </div>
 
       <AnchoredPopupSurface

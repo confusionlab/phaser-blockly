@@ -353,6 +353,8 @@ export function CostumeEditor() {
     supportsFill: true,
   });
   const [vectorStyleMixedState, setVectorStyleMixedState] = useState<VectorToolStyleMixedState>({});
+  const [vectorStyleChangeRevision, setVectorStyleChangeRevision] = useState(0);
+  const [latestVectorStyleUpdates, setLatestVectorStyleUpdates] = useState<Partial<VectorToolStyle>>({});
   const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
   const [hasSelectedVectorPoints, setHasSelectedVectorPoints] = useState(false);
   const [hasTextSelection, setHasTextSelection] = useState(false);
@@ -1548,6 +1550,8 @@ export function CostumeEditor() {
   }, []);
 
   const handleVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
+    setLatestVectorStyleUpdates(updates);
+    setVectorStyleChangeRevision((revision) => revision + 1);
     setVectorStyleMixedState((prev) => clearVectorToolStyleMixedState(prev, updates));
     setVectorStyle((prev) => {
       const next = { ...prev, ...updates };
@@ -1704,6 +1708,8 @@ export function CostumeEditor() {
             vectorHandleMode={vectorHandleMode}
             textStyle={textStyle}
             vectorStyle={vectorStyle}
+            vectorStyleChangeRevision={vectorStyleChangeRevision}
+            latestVectorStyleUpdates={latestVectorStyleUpdates}
             canUndo={canUndo}
             canRedo={canRedo}
             onUndo={handleUndo}

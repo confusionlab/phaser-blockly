@@ -2,7 +2,6 @@ import { useCallback, useRef, type MutableRefObject } from 'react';
 import { Path, Point, type Canvas as FabricCanvas } from 'fabric';
 import {
   HANDLE_SIZE,
-  PEN_TOOL_CLOSE_HIT_RADIUS_PX,
   PEN_TOOL_DRAG_THRESHOLD_PX,
   VECTOR_POINT_HANDLE_GUIDE_STROKE,
   VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH,
@@ -11,6 +10,7 @@ import {
   clonePenDraftAnchor,
   cloneScenePoint,
   createPenDraftAnchor,
+  getPenToolCloseHitRadiusPx,
   mirrorPointAcrossAnchor,
   type PenDraftAnchor,
 } from './costumeCanvasShared';
@@ -307,7 +307,7 @@ export function useCostumeCanvasPenController({
 
     if (draft.anchors.length >= 2) {
       const firstAnchor = draft.anchors[0]?.point ?? null;
-      const closeRadius = getZoomInvariantMetric(PEN_TOOL_CLOSE_HIT_RADIUS_PX);
+      const closeRadius = getZoomInvariantMetric(getPenToolCloseHitRadiusPx());
       if (
         firstAnchor &&
         Math.hypot(pointer.x - firstAnchor.x, pointer.y - firstAnchor.y) <= closeRadius

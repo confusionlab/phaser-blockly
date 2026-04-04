@@ -92,6 +92,37 @@ interface UseCostumeCanvasCommandControllerOptions {
   waitForFabricCanvas: (requestId?: number) => Promise<FabricCanvas | null>;
 }
 
+function getChangedVectorStyleUpdates(
+  previous: VectorToolStyle,
+  next: VectorToolStyle,
+): Partial<VectorToolStyle> {
+  const updates: Partial<VectorToolStyle> = {};
+
+  if (previous.fillColor !== next.fillColor) {
+    updates.fillColor = next.fillColor;
+  }
+  if (previous.fillTextureId !== next.fillTextureId) {
+    updates.fillTextureId = next.fillTextureId;
+  }
+  if (previous.fillOpacity !== next.fillOpacity) {
+    updates.fillOpacity = next.fillOpacity;
+  }
+  if (previous.strokeColor !== next.strokeColor) {
+    updates.strokeColor = next.strokeColor;
+  }
+  if (previous.strokeOpacity !== next.strokeOpacity) {
+    updates.strokeOpacity = next.strokeOpacity;
+  }
+  if (previous.strokeWidth !== next.strokeWidth) {
+    updates.strokeWidth = next.strokeWidth;
+  }
+  if (previous.strokeBrushId !== next.strokeBrushId) {
+    updates.strokeBrushId = next.strokeBrushId;
+  }
+
+  return updates;
+}
+
 export function useCostumeCanvasCommandController({
   activeDocumentLayerId,
   activeLayerOpacity,
@@ -611,7 +642,10 @@ export function useCostumeCanvasCommandController({
     waitForFabricCanvas,
   ]);
 
-  const syncActiveVectorStyle = useCallback(() => {
+  const syncActiveVectorStyle = useCallback((
+    explicitVectorStyleUpdates?: Partial<VectorToolStyle>,
+    previousVectorStyle?: VectorToolStyle,
+  ) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas || editorModeRef.current !== 'vector') return;
     if (skipNextSelectionSyncedVectorStyleApplyRef.current) {
@@ -643,30 +677,64 @@ export function useCostumeCanvasCommandController({
         opacity: textStyle.opacity,
       });
     } else {
-      const strokeWidth = Math.max(0, vectorStyle.strokeWidth);
+      const vectorStyleUpdates =
+        explicitVectorStyleUpdates && Object.keys(explicitVectorStyleUpdates).length > 0
+          ? explicitVectorStyleUpdates
+          : previousVectorStyle
+            ? getChangedVectorStyleUpdates(previousVectorStyle, vectorStyle)
+            : vectorStyle;
+      if (Object.keys(vectorStyleUpdates).length === 0) {
+        return;
+      }
+
+      const fillStyleUpdates: Partial<Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>> = {};
+      const strokeStyleUpdates: Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>> = {};
+
+      if ('fillColor' in vectorStyleUpdates) {
+        fillStyleUpdates.fillColor = vectorStyleUpdates.fillColor;
+      }
+      if ('fillOpacity' in vectorStyleUpdates) {
+        fillStyleUpdates.fillOpacity = vectorStyleUpdates.fillOpacity;
+      }
+      if ('fillTextureId' in vectorStyleUpdates) {
+        fillStyleUpdates.fillTextureId = vectorStyleUpdates.fillTextureId;
+      }
+      if ('strokeColor' in vectorStyleUpdates) {
+        strokeStyleUpdates.strokeColor = vectorStyleUpdates.strokeColor;
+      }
+      if ('strokeOpacity' in vectorStyleUpdates) {
+        strokeStyleUpdates.strokeOpacity = vectorStyleUpdates.strokeOpacity;
+      }
+      if ('strokeWidth' in vectorStyleUpdates) {
+        strokeStyleUpdates.strokeWidth = vectorStyleUpdates.strokeWidth;
+      }
+      if ('strokeBrushId' in vectorStyleUpdates) {
+        strokeStyleUpdates.strokeBrushId = vectorStyleUpdates.strokeBrushId;
+      }
+
+      const nextStrokeWidth = 'strokeWidth' in strokeStyleUpdates && typeof strokeStyleUpdates.strokeWidth === 'number'
+        ? Math.max(0, strokeStyleUpdates.strokeWidth)
+        : Math.max(0, vectorStyle.strokeWidth);
       const vectorTargets = getVectorStyleTargets(activeObject);
       if (!vectorTargets.length) return;
 
       vectorTargets.forEach((target) => {
+        const groupedByActiveSelection =
+          !!target.group &&
+          isActiveSelectionObject(target.group);
         const shouldPreserveCenter =
-          target.strokeUniform !== true ||
-          target.strokeWidth !== strokeWidth;
+          !groupedByActiveSelection &&
+          (
+            target.strokeUniform !== true ||
+            ('strokeWidth' in strokeStyleUpdates && target.strokeWidth !== nextStrokeWidth)
+          );
         const centerPoint = shouldPreserveCenter && typeof target.getCenterPoint === 'function'
           ? target.getCenterPoint()
           : null;
         const fillChanged = vectorObjectSupportsFill(target)
-          ? applyVectorFillStyleToObject(target, {
-              fillColor: vectorStyle.fillColor,
-              fillOpacity: vectorStyle.fillOpacity,
-              fillTextureId: vectorStyle.fillTextureId,
-            })
+          ? applyVectorFillStyleToObject(target, fillStyleUpdates)
           : false;
-        const strokeChanged = applyVectorStrokeStyleToObject(target, {
-          strokeColor: vectorStyle.strokeColor,
-          strokeOpacity: vectorStyle.strokeOpacity,
-          strokeWidth,
-          strokeBrushId: vectorStyle.strokeBrushId,
-        });
+        const strokeChanged = applyVectorStrokeStyleToObject(target, strokeStyleUpdates);
         changed = changed || fillChanged;
         changed = changed || strokeChanged;
         if (strokeChanged && centerPoint && typeof target.setPositionByOrigin === 'function') {

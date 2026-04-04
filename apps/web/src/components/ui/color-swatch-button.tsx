@@ -155,6 +155,7 @@ function assignButtonRef(
 }
 
 export interface ColorSwatchButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  mixed?: boolean;
   swatchClassName?: string;
   value: string;
 }
@@ -163,6 +164,7 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
   function ColorSwatchButton(
     {
       className,
+      mixed = false,
       style,
       swatchClassName,
       type = 'button',
@@ -268,14 +270,23 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
         {...props}
       >
         <span
-          className={cn('block size-full rounded-md', swatchClassName)}
+          className={cn('relative block size-full rounded-md', swatchClassName)}
           style={{
             backgroundColor: value,
             boxShadow: outlineState.visible ? `inset 0 0 0 1px ${outlineState.color}` : undefined,
           }}
           data-outline-visible={outlineState.visible ? 'true' : 'false'}
           aria-hidden="true"
-        />
+        >
+          {mixed ? (
+            <span
+              className="absolute inset-0 flex items-center justify-center text-[13px] font-semibold leading-none text-foreground"
+              aria-hidden="true"
+            >
+              ?
+            </span>
+          ) : null}
+        </span>
       </button>
     );
   },

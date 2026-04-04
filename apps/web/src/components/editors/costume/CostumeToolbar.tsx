@@ -669,8 +669,8 @@ export const CostumeToolbar = memo(({
   const showVectorFillControl =
     showVectorStyleControls &&
     (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line' && activeTool !== 'brush');
-  const hasMixedVectorStrokeColor = vectorStyleMixedState.strokeColor === true || vectorStyleMixedState.strokeOpacity === true;
-  const hasMixedVectorFillColor = vectorStyleMixedState.fillColor === true || vectorStyleMixedState.fillOpacity === true;
+  const hasMixedVectorStrokeColor = vectorStyleMixedState.strokeColor === true;
+  const hasMixedVectorFillColor = vectorStyleMixedState.fillColor === true;
   const hasMixedVectorStrokeBrush = vectorStyleMixedState.strokeBrushId === true;
   const hasMixedVectorFillTexture = vectorStyleMixedState.fillTextureId === true;
   const showTextToolbarControls = editorMode === 'vector' && showTextControls;

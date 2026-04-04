@@ -571,6 +571,11 @@ export function createPenDraftAnchor(point: Point): PenDraftAnchor {
   };
 }
 
+export function getPenToolCloseHitRadiusPx() {
+  // Match the visible anchor handle footprint so closing feels as forgiving as clicking the gizmo itself.
+  return Math.max(PEN_TOOL_CLOSE_HIT_RADIUS_PX, HANDLE_SIZE);
+}
+
 export function buildPenDraftPathData(
   anchors: PenDraftAnchor[],
   closed: boolean,

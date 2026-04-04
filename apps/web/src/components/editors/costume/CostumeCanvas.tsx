@@ -115,6 +115,8 @@ interface CostumeCanvasProps {
   vectorHandleMode: VectorHandleMode;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
+  vectorStyleChangeRevision: number;
+  latestVectorStyleUpdates: Partial<VectorToolStyle>;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -148,6 +150,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   vectorHandleMode,
   textStyle,
   vectorStyle,
+  vectorStyleChangeRevision,
+  latestVectorStyleUpdates,
   canUndo,
   canRedo,
   onUndo,
@@ -259,6 +263,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const vectorStyleRef = useRef(vectorStyle);
   vectorStyleRef.current = vectorStyle;
+  const previousVectorStyleRef = useRef(vectorStyle);
+  const previousVectorStyleChangeRevisionRef = useRef(vectorStyleChangeRevision);
 
   const onHistoryChangeRef = useRef(onHistoryChange);
   onHistoryChangeRef.current = onHistoryChange;
@@ -928,8 +934,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   });
 
   useEffect(() => {
-    syncActiveVectorStyle();
-  }, [brushColor, textStyle, vectorStyle, syncActiveVectorStyle]);
+    const explicitVectorStyleUpdates = previousVectorStyleChangeRevisionRef.current !== vectorStyleChangeRevision
+      ? latestVectorStyleUpdates
+      : undefined;
+    syncActiveVectorStyle(explicitVectorStyleUpdates, previousVectorStyleRef.current);
+    previousVectorStyleRef.current = vectorStyle;
+    previousVectorStyleChangeRevisionRef.current = vectorStyleChangeRevision;
+  }, [brushColor, latestVectorStyleUpdates, textStyle, vectorStyle, vectorStyleChangeRevision, syncActiveVectorStyle]);
 
   useCostumeCanvasBitmapSelectionController({
     activeTool,

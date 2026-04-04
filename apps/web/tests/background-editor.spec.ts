@@ -243,6 +243,42 @@ async function readSavedBackgroundVectorObjectColors(page: Page): Promise<Array<
   });
 }
 
+async function readSavedBackgroundVectorObjectPaintStyles(page: Page): Promise<Array<{
+  fillTextureId: string | null;
+  strokeBrushId: string | null;
+  strokeWidth: number | null;
+}>> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const vectorLayer = project?.scenes[0]?.background?.document?.layers?.find(
+      (layer: { kind: string }) => layer.kind === 'vector',
+    ) as { vector?: { fabricJson?: string } } | undefined;
+    if (!vectorLayer?.vector?.fabricJson) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{
+          vectorFillTextureId?: unknown;
+          vectorStrokeBrushId?: unknown;
+          strokeWidth?: unknown;
+        }>;
+      };
+      return Array.isArray(parsed.objects)
+        ? parsed.objects.map((object) => ({
+          fillTextureId: typeof object.vectorFillTextureId === 'string' ? object.vectorFillTextureId : null,
+          strokeBrushId: typeof object.vectorStrokeBrushId === 'string' ? object.vectorStrokeBrushId : null,
+          strokeWidth: typeof object.strokeWidth === 'number' ? object.strokeWidth : null,
+        }))
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 async function readBackgroundEditorCompositePixel(
   page: Page,
   sample: { x: number; y: number },
@@ -329,6 +365,34 @@ async function setToolbarColorOpacity(page: Page, label: 'Fill' | 'Stroke', opac
     },
   });
   await button.click();
+}
+
+async function setToolbarHexColor(page: Page, label: 'Fill' | 'Stroke', hex: string): Promise<void> {
+  const button = page.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }).first();
+  await button.click();
+  const hexInput = page.getByTestId('compact-color-picker-hex-input');
+  await expect(hexInput).toBeVisible();
+  await hexInput.fill(hex);
+  await hexInput.press('Enter');
+  await button.click();
+}
+
+async function setVectorStrokeWidth(page: Page, widthPercent: number): Promise<void> {
+  const slider = page.getByTestId('costume-toolbar-properties').getByRole('slider').first();
+  await expect(slider).toBeVisible();
+  const box = await slider.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) {
+    throw new Error('Missing vector stroke width slider bounds.');
+  }
+
+  const clampedPercent = Math.max(0, Math.min(100, widthPercent));
+  await slider.click({
+    position: {
+      x: (box.width * clampedPercent) / 100,
+      y: box.height / 2,
+    },
+  });
 }
 
 async function addVectorLayer(page: Page): Promise<void> {
@@ -831,7 +895,8 @@ test.describe('Background editor', () => {
     });
     await page.keyboard.up('Shift');
 
-    await expect(propertyBar.getByText('Multiple')).toBeVisible();
+    await expect(propertyBar.getByText('Multiple')).toHaveCount(0);
+    await expect(propertyBar.getByRole('button', { name: /stroke \(mixed\)/i }).getByText('?')).toBeVisible();
 
     await page.getByRole('button', { name: /done/i }).first().click();
     await expect(editor.root).toBeHidden();
@@ -843,6 +908,207 @@ test.describe('Background editor', () => {
     expect(new Set(strokeColors).size).toBe(2);
     expect(strokeColors).toContain('#FF0000');
     expect(strokeColors).toContain('#0000FF');
+  });
+
+  test('explicitly choosing the first mixed texture and brush still applies across the selection', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+    const propertyBar = page.getByTestId('costume-toolbar-properties');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    await page.getByRole('button', { name: /^solid$/i }).first().click();
+    await page.getByRole('menuitemradio', { name: /^paper$/i }).click();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.34, editor.box.y + editor.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.48, editor.box.y + editor.box.height * 0.5, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^solid$/i }).nth(1).click();
+    await page.getByRole('menuitemradio', { name: /^marker$/i }).click();
+    await page.getByRole('button', { name: /^paper$/i }).click();
+    await page.getByRole('menuitemradio', { name: /^grain$/i }).click();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.36);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.72, editor.box.y + editor.box.height * 0.54, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.41), y: Math.round(editor.box.height * 0.42) },
+    });
+    await page.keyboard.down('Shift');
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.64), y: Math.round(editor.box.height * 0.45) },
+    });
+    await page.keyboard.up('Shift');
+
+    await expect(propertyBar.getByText('Multiple')).toHaveCount(2);
+
+    await page.getByRole('button', { name: /^multiple$/i }).first().click();
+    await page.getByRole('menuitemradio', { name: /^solid$/i }).click();
+    await page.getByRole('button', { name: /^multiple$/i }).nth(1).click();
+    await page.getByRole('menuitemradio', { name: /^paper$/i }).click();
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectPaintStyles(page), { timeout: 10000 }).toHaveLength(2);
+    const savedStyles = await readSavedBackgroundVectorObjectPaintStyles(page);
+
+    expect(savedStyles.map((style) => style.strokeBrushId)).toEqual(['solid', 'solid']);
+    expect(savedStyles.map((style) => style.fillTextureId)).toEqual(['paper', 'paper']);
+  });
+
+  test('editing multi-selection fill preserves each object stroke style', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+    const propertyBar = page.getByTestId('costume-toolbar-properties');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    await setToolbarHexColor(page, 'Fill', '#FF0000');
+    await setToolbarHexColor(page, 'Stroke', '#00AA00');
+    await page.mouse.move(editor.box.x + editor.box.width * 0.34, editor.box.y + editor.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.48, editor.box.y + editor.box.height * 0.5, { steps: 8 });
+    await page.mouse.up();
+
+    await setToolbarHexColor(page, 'Fill', '#0000FF');
+    await setToolbarHexColor(page, 'Stroke', '#FFAA00');
+    await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.36);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.72, editor.box.y + editor.box.height * 0.54, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.41), y: Math.round(editor.box.height * 0.42) },
+    });
+    await page.keyboard.down('Shift');
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.64), y: Math.round(editor.box.height * 0.45) },
+    });
+    await page.keyboard.up('Shift');
+
+    await expect(propertyBar.getByText('Multiple')).toHaveCount(2);
+
+    await setToolbarHexColor(page, 'Fill', '#FFFFFF');
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectColors(page), { timeout: 10000 }).toHaveLength(2);
+    const savedColors = await readSavedBackgroundVectorObjectColors(page);
+    const fillColors = savedColors.map((object) => object.fillColor).filter((color): color is string => !!color);
+    const strokeColors = savedColors.map((object) => object.strokeColor).filter((color): color is string => !!color);
+
+    expect(fillColors).toHaveLength(2);
+    expect(fillColors.every((color) => color === '#FFFFFF')).toBe(true);
+    expect(new Set(strokeColors).size).toBe(2);
+    expect(strokeColors).toContain('#00AA00');
+    expect(strokeColors).toContain('#FFAA00');
+  });
+
+  test('editing multi-selection stroke preserves each object fill style', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+    const propertyBar = page.getByTestId('costume-toolbar-properties');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    await setToolbarHexColor(page, 'Fill', '#FF0000');
+    await setToolbarHexColor(page, 'Stroke', '#00AA00');
+    await page.mouse.move(editor.box.x + editor.box.width * 0.34, editor.box.y + editor.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.48, editor.box.y + editor.box.height * 0.5, { steps: 8 });
+    await page.mouse.up();
+
+    await setToolbarHexColor(page, 'Fill', '#0000FF');
+    await setToolbarHexColor(page, 'Stroke', '#FFAA00');
+    await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.36);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.72, editor.box.y + editor.box.height * 0.54, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.41), y: Math.round(editor.box.height * 0.42) },
+    });
+    await page.keyboard.down('Shift');
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.64), y: Math.round(editor.box.height * 0.45) },
+    });
+    await page.keyboard.up('Shift');
+
+    await expect(propertyBar.getByText('Multiple')).toHaveCount(2);
+
+    await setToolbarHexColor(page, 'Stroke', '#111111');
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectColors(page), { timeout: 10000 }).toHaveLength(2);
+    const savedColors = await readSavedBackgroundVectorObjectColors(page);
+    const fillColors = savedColors.map((object) => object.fillColor).filter((color): color is string => !!color);
+    const strokeColors = savedColors.map((object) => object.strokeColor).filter((color): color is string => !!color);
+
+    expect(new Set(fillColors).size).toBe(2);
+    expect(fillColors).toContain('#FF0000');
+    expect(fillColors).toContain('#0000FF');
+    expect(strokeColors).toHaveLength(2);
+    expect(strokeColors.every((color) => color === '#111111')).toBe(true);
+  });
+
+  test('editing multi-selection stroke width keeps objects visible and updates both', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    await setVectorStrokeWidth(page, 20);
+    await page.mouse.move(editor.box.x + editor.box.width * 0.34, editor.box.y + editor.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.48, editor.box.y + editor.box.height * 0.5, { steps: 8 });
+    await page.mouse.up();
+
+    await setVectorStrokeWidth(page, 70);
+    await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.36);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.72, editor.box.y + editor.box.height * 0.54, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.41), y: Math.round(editor.box.height * 0.42) },
+    });
+    await page.keyboard.down('Shift');
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.64), y: Math.round(editor.box.height * 0.45) },
+    });
+    await page.keyboard.up('Shift');
+
+    await setVectorStrokeWidth(page, 50);
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectPaintStyles(page), { timeout: 10000 }).toHaveLength(2);
+    const savedStyles = await readSavedBackgroundVectorObjectPaintStyles(page);
+
+    expect(savedStyles.every((style) => typeof style.strokeWidth === 'number' && style.strokeWidth > 0)).toBe(true);
   });
 
   test('recovers from malformed saved vector documents and keeps them editable', async ({ page }) => {

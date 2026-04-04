@@ -390,6 +390,13 @@ export interface VectorBrushStylableObject {
   vectorStrokeOpacity?: number;
 }
 
+function hasOwnVectorStyleUpdate<Key extends PropertyKey>(
+  updates: object,
+  key: Key,
+): updates is Record<Key, unknown> {
+  return Object.prototype.hasOwnProperty.call(updates, key);
+}
+
 export function getVectorObjectFillTextureId(obj: unknown): VectorFillTextureId {
   const textureId = (obj as VectorBrushStylableObject | null | undefined)?.vectorFillTextureId;
   return typeof textureId === 'string' ? (textureId as VectorFillTextureId) : DEFAULT_VECTOR_FILL_TEXTURE_ID;
@@ -513,25 +520,40 @@ export function getFabricFillValueForVectorTexture(
 
 export function applyVectorFillStyleToObject(
   obj: VectorBrushStylableObject | null | undefined,
-  style: Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>,
+  style: Partial<Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>>,
 ): boolean {
   if (!obj || typeof obj.set !== 'function') {
+    return false;
+  }
+  const hasFillColorUpdate = hasOwnVectorStyleUpdate(style, 'fillColor');
+  const hasFillOpacityUpdate = hasOwnVectorStyleUpdate(style, 'fillOpacity');
+  const hasFillTextureUpdate = hasOwnVectorStyleUpdate(style, 'fillTextureId');
+  if (!hasFillColorUpdate && !hasFillOpacityUpdate && !hasFillTextureUpdate) {
     return false;
   }
 
   const updates: Record<string, unknown> = {};
   migrateLegacySharedOpacity(obj, updates);
-  if (obj.vectorFillTextureId !== style.fillTextureId) {
-    updates.vectorFillTextureId = style.fillTextureId;
+  const nextFillTextureId = hasFillTextureUpdate && typeof style.fillTextureId === 'string'
+    ? style.fillTextureId
+    : getVectorObjectFillTextureId(obj);
+  if (obj.vectorFillTextureId !== nextFillTextureId) {
+    updates.vectorFillTextureId = nextFillTextureId;
   }
-  if (obj.vectorFillColor !== style.fillColor) {
-    updates.vectorFillColor = style.fillColor;
+  const nextFillColor = hasFillColorUpdate && typeof style.fillColor === 'string' && style.fillColor.length > 0
+    ? normalizeOpaqueColor(style.fillColor)
+    : (getVectorObjectFillColor(obj) ?? '#000000');
+  if (obj.vectorFillColor !== nextFillColor) {
+    updates.vectorFillColor = nextFillColor;
   }
-  const normalizedFillOpacity = clampUnit(style.fillOpacity);
+  const nextFillOpacity = hasFillOpacityUpdate && typeof style.fillOpacity === 'number' && Number.isFinite(style.fillOpacity)
+    ? style.fillOpacity
+    : getVectorObjectFillOpacity(obj);
+  const normalizedFillOpacity = normalizeVectorPartOpacity(nextFillOpacity);
   if (obj.vectorFillOpacity !== normalizedFillOpacity) {
     updates.vectorFillOpacity = normalizedFillOpacity;
   }
-  const renderFill = getFabricFillValueForVectorTexture(style.fillTextureId, style.fillColor, normalizedFillOpacity);
+  const renderFill = getFabricFillValueForVectorTexture(nextFillTextureId, nextFillColor, normalizedFillOpacity);
   if (obj.fill !== renderFill) {
     updates.fill = renderFill;
   }
@@ -545,31 +567,53 @@ export function applyVectorFillStyleToObject(
 
 export function applyVectorStrokeStyleToObject(
   obj: VectorBrushStylableObject | null | undefined,
-  style: Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>,
+  style: Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>>,
 ): boolean {
   if (!obj || typeof obj.set !== 'function') {
     return false;
   }
+  const hasStrokeBrushUpdate = hasOwnVectorStyleUpdate(style, 'strokeBrushId');
+  const hasStrokeColorUpdate = hasOwnVectorStyleUpdate(style, 'strokeColor');
+  const hasStrokeOpacityUpdate = hasOwnVectorStyleUpdate(style, 'strokeOpacity');
+  const hasStrokeWidthUpdate = hasOwnVectorStyleUpdate(style, 'strokeWidth');
+  if (!hasStrokeBrushUpdate && !hasStrokeColorUpdate && !hasStrokeOpacityUpdate && !hasStrokeWidthUpdate) {
+    return false;
+  }
 
-  const strokeWidth = Math.max(0, style.strokeWidth);
+  const nextStrokeWidth = hasStrokeWidthUpdate && typeof style.strokeWidth === 'number' && Number.isFinite(style.strokeWidth)
+    ? Math.max(0, style.strokeWidth)
+    : Math.max(0, typeof obj.strokeWidth === 'number' && Number.isFinite(obj.strokeWidth) ? obj.strokeWidth : 0);
   const updates: Record<string, unknown> = {};
   migrateLegacySharedOpacity(obj, updates);
-  if (obj.vectorStrokeBrushId !== style.strokeBrushId) {
-    updates.vectorStrokeBrushId = style.strokeBrushId;
+  const nextStrokeBrushId = hasStrokeBrushUpdate && typeof style.strokeBrushId === 'string'
+    ? style.strokeBrushId
+    : getVectorObjectStrokeBrushId(obj);
+  if (obj.vectorStrokeBrushId !== nextStrokeBrushId) {
+    updates.vectorStrokeBrushId = nextStrokeBrushId;
   }
-  if (obj.vectorStrokeColor !== style.strokeColor) {
-    updates.vectorStrokeColor = style.strokeColor;
+  const nextStrokeColor = hasStrokeColorUpdate && typeof style.strokeColor === 'string' && style.strokeColor.length > 0
+    ? normalizeOpaqueColor(style.strokeColor)
+    : (getVectorObjectStrokeColor(obj) ?? '#000000');
+  if (obj.vectorStrokeColor !== nextStrokeColor) {
+    updates.vectorStrokeColor = nextStrokeColor;
   }
-  const normalizedStrokeOpacity = clampUnit(style.strokeOpacity);
+  const nextStrokeOpacity = hasStrokeOpacityUpdate && typeof style.strokeOpacity === 'number' && Number.isFinite(style.strokeOpacity)
+    ? style.strokeOpacity
+    : getVectorObjectStrokeOpacity(obj);
+  const normalizedStrokeOpacity = normalizeVectorPartOpacity(nextStrokeOpacity);
   if (obj.vectorStrokeOpacity !== normalizedStrokeOpacity) {
     updates.vectorStrokeOpacity = normalizedStrokeOpacity;
   }
-  const renderStroke = getFabricStrokeValueForVectorBrush(style.strokeBrushId, style.strokeColor, normalizedStrokeOpacity);
+  const renderStroke = getFabricStrokeValueForVectorBrush(
+    nextStrokeBrushId,
+    nextStrokeColor,
+    normalizedStrokeOpacity,
+  );
   if (obj.stroke !== renderStroke) {
     updates.stroke = renderStroke;
   }
-  if (obj.strokeWidth !== strokeWidth) {
-    updates.strokeWidth = strokeWidth;
+  if (obj.strokeWidth !== nextStrokeWidth) {
+    updates.strokeWidth = nextStrokeWidth;
   }
   if (obj.strokeUniform !== true) {
     updates.strokeUniform = true;
