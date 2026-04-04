@@ -1260,13 +1260,14 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     if (!stageEditorContext) {
       return;
     }
+    cancelStageViewportCenterAnimation();
 
     const currentViewport = stageEditorContext.controller.getEditorViewport();
     stageEditorContext.controller.setEditorViewport({
       ...currentViewport,
       zoom: 1,
     });
-  }, [getActiveStageEditorContext]);
+  }, [cancelStageViewportCenterAnimation, getActiveStageEditorContext]);
 
   const handleStageZoomToFit = useCallback(() => {
     if (!project || !selectedScene) {
@@ -3516,6 +3517,7 @@ function createEditorScene(
     // Middle mouse (button 1) or right mouse (button 2) starts panning (only in editor mode)
     const currentMode = stageViewportController.getMode();
     if (currentMode === 'editor' && (pointer.middleButtonDown() || pointer.rightButtonDown())) {
+      cancelStageViewportCenterAnimation();
       isPanning = true;
       panStartX = pointer.x;
       panStartY = pointer.y;
