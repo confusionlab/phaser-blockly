@@ -57,7 +57,6 @@ interface UseCostumeCanvasCommandControllerOptions {
   hostedLayerIdRef: MutableRefObject<string | null>;
   isLoadRequestActive: (requestId?: number) => boolean;
   isHostedLayerReadyRef: MutableRefObject<boolean>;
-  lastCommittedSnapshotRef: MutableRefObject<any>;
   layerSurfaceRefs: MutableRefObject<Map<string, HTMLCanvasElement>>;
   loadBitmapAsSingleVectorImage: (bitmapCanvas: HTMLCanvasElement, requestId?: number) => Promise<boolean>;
   loadBitmapLayer: (
@@ -68,12 +67,12 @@ interface UseCostumeCanvasCommandControllerOptions {
   ) => Promise<boolean>;
   loadRequestIdRef: MutableRefObject<number>;
   loadedSessionKeyRef: MutableRefObject<string | null>;
-  markCurrentSnapshotPersisted: (sessionKey?: string | null) => void;
   normalizeCanvasVectorStrokeUniform: () => boolean;
   onTextSelectionChangeRef: MutableRefObject<((hasTextSelection: boolean) => void) | undefined>;
   onTextStyleSyncRef: MutableRefObject<((updates: Partial<TextToolStyle>) => void) | undefined>;
   onVectorStyleCapabilitiesSyncRef: MutableRefObject<((capabilities: VectorStyleCapabilities) => void) | undefined>;
   onVectorStyleSyncRef: MutableRefObject<((snapshot: VectorToolStyleSelectionSnapshot) => boolean) | undefined>;
+  rebaseHistoryToCurrentSnapshot: (sessionKey?: string | null) => void;
   renderVectorBrushStrokeOverlay: (ctx: CanvasRenderingContext2D, options?: { clear?: boolean }) => void;
   resolveBitmapFillTextureSource: (textureId: BitmapFillStyle['textureId']) => CanvasImageSource | null;
   restoreCanvasSelection: (selectedObjects: any[]) => void;
@@ -143,18 +142,17 @@ export function useCostumeCanvasCommandController({
   hostedLayerIdRef,
   isLoadRequestActive,
   isHostedLayerReadyRef,
-  lastCommittedSnapshotRef,
   layerSurfaceRefs,
   loadBitmapAsSingleVectorImage,
   loadBitmapLayer,
   loadRequestIdRef,
   loadedSessionKeyRef,
-  markCurrentSnapshotPersisted,
   normalizeCanvasVectorStrokeUniform,
   onTextSelectionChangeRef,
   onTextStyleSyncRef,
   onVectorStyleCapabilitiesSyncRef,
   onVectorStyleSyncRef,
+  rebaseHistoryToCurrentSnapshot,
   renderVectorBrushStrokeOverlay,
   resolveBitmapFillTextureSource,
   restoreCanvasSelection,
@@ -588,21 +586,17 @@ export function useCostumeCanvasCommandController({
     setHostedLayerId(nextHostedLayerId);
     setHostedLayerReady(true);
     loadedSessionKeyRef.current = sessionKey;
-    lastCommittedSnapshotRef.current = null;
-    saveHistory();
-    markCurrentSnapshotPersisted(sessionKey);
+    rebaseHistoryToCurrentSnapshot(sessionKey);
   }, [
     activeDocumentLayerId,
     commitHostedLayerSurfaceSnapshot,
     hostedLayerIdRef,
     isLoadRequestActive,
-    lastCommittedSnapshotRef,
     loadBitmapLayer,
     loadRequestIdRef,
     loadedSessionKeyRef,
-    markCurrentSnapshotPersisted,
     normalizeCanvasVectorStrokeUniform,
-    saveHistory,
+    rebaseHistoryToCurrentSnapshot,
     setEditorMode,
     setHostedLayerId,
     setHostedLayerReady,

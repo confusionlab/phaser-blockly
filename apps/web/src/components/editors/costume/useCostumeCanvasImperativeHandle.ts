@@ -22,7 +22,6 @@ interface UseCostumeCanvasImperativeHandleOptions {
   getComposedCanvasElement: () => HTMLCanvasElement;
   hasActiveInteraction: () => boolean;
   isTextEditing: () => boolean;
-  lastCommittedSnapshotRef: MutableRefObject<any>;
   loadBitmapLayer: (
     dataUrl: string,
     selectable: boolean,
@@ -38,6 +37,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
   pasteSelection: () => Promise<boolean>;
   persistedSnapshotRef: MutableRefObject<any>;
   ref: ForwardedRef<CostumeCanvasHandle>;
+  rebaseHistoryToCurrentSnapshot: (sessionKey?: string | null) => void;
   rotateSelection: () => boolean;
   saveHistory: () => void;
   setEditorMode: (mode: CostumeEditorMode) => void;
@@ -59,7 +59,6 @@ export function useCostumeCanvasImperativeHandle({
   getComposedCanvasElement,
   hasActiveInteraction,
   isTextEditing,
-  lastCommittedSnapshotRef,
   loadBitmapLayer,
   loadDocument,
   loadedSessionKeyRef,
@@ -72,8 +71,8 @@ export function useCostumeCanvasImperativeHandle({
   pasteSelection,
   persistedSnapshotRef,
   ref,
+  rebaseHistoryToCurrentSnapshot,
   rotateSelection,
-  saveHistory,
   setEditorMode,
   switchEditorMode,
   editorModeRef,
@@ -97,9 +96,7 @@ export function useCostumeCanvasImperativeHandle({
       await loadBitmapLayer(dataUrl, false);
       setEditorMode('bitmap');
       loadedSessionKeyRef.current = sessionKey ?? null;
-      lastCommittedSnapshotRef.current = null;
-      saveHistory();
-      markCurrentSnapshotPersisted(sessionKey ?? null);
+      rebaseHistoryToCurrentSnapshot(sessionKey ?? null);
     },
 
     loadDocument,
@@ -167,7 +164,7 @@ export function useCostumeCanvasImperativeHandle({
         loadedSessionKeyRef.current = null;
         await loadBitmapLayer('', false);
         setEditorMode('bitmap');
-        saveHistory();
+        rebaseHistoryToCurrentSnapshot(null);
       })();
     },
 
@@ -197,7 +194,6 @@ export function useCostumeCanvasImperativeHandle({
     getComposedCanvasElement,
     hasActiveInteraction,
     isTextEditing,
-    lastCommittedSnapshotRef,
     loadBitmapLayer,
     loadDocument,
     loadedSessionKeyRef,
@@ -208,8 +204,8 @@ export function useCostumeCanvasImperativeHandle({
     pasteSelection,
     persistedSnapshotRef,
     ref,
+    rebaseHistoryToCurrentSnapshot,
     rotateSelection,
-    saveHistory,
     setEditorMode,
     switchEditorMode,
     editorModeRef,

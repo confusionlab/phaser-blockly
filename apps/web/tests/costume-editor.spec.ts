@@ -1202,6 +1202,55 @@ test.describe('Costume editor tools', () => {
     expect(invalidSnapshot).toBeUndefined();
   });
 
+  test('adding bitmap and vector layers each undo and redo in a single history step', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i }).first();
+    const redoButton = page.getByRole('button', { name: /^redo$/i }).first();
+    const baseLayerButton = page.getByRole('button', { name: /^layer 1 bitmap$/i });
+
+    const assertSingleStepLayerAddUndoRedo = async (
+      addLayer: () => Promise<void>,
+      addedLayerName: RegExp,
+    ) => {
+      const addedLayerButton = page.getByRole('button', { name: addedLayerName });
+
+      await addLayer();
+      await waitForCostumeCanvasReady(page);
+      await expect(addedLayerButton).toBeVisible({ timeout: 10000 });
+      await expect(addedLayerButton).toHaveAttribute('aria-pressed', 'true');
+
+      await expect(undoButton).toBeEnabled({ timeout: 10000 });
+      await undoButton.click();
+      await waitForCostumeCanvasReady(page);
+      await expect(addedLayerButton).toHaveCount(0);
+      await expect(baseLayerButton).toHaveAttribute('aria-pressed', 'true');
+
+      await expect(redoButton).toBeEnabled({ timeout: 10000 });
+      await redoButton.click();
+      await waitForCostumeCanvasReady(page);
+      await expect(addedLayerButton).toBeVisible({ timeout: 10000 });
+      await expect(addedLayerButton).toHaveAttribute('aria-pressed', 'true');
+
+      await expect(undoButton).toBeEnabled({ timeout: 10000 });
+      await undoButton.click();
+      await waitForCostumeCanvasReady(page);
+      await expect(addedLayerButton).toHaveCount(0);
+      await expect(baseLayerButton).toHaveAttribute('aria-pressed', 'true');
+    };
+
+    await assertSingleStepLayerAddUndoRedo(
+      async () => addBitmapLayer(page),
+      /^layer 2 bitmap$/i,
+    );
+    await assertSingleStepLayerAddUndoRedo(
+      async () => addVectorLayer(page),
+      /^layer 2 vector$/i,
+    );
+  });
+
   test('shared layer hover keeps visibility toggle and inline rename interactive', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');
