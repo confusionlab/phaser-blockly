@@ -6,6 +6,8 @@ export interface EditorSelectionShortcutCommands {
   copySelection?: () => boolean | Promise<boolean>;
   cutSelection?: () => boolean | Promise<boolean>;
   pasteSelection?: () => boolean | Promise<boolean>;
+  groupSelection?: () => boolean;
+  ungroupSelection?: () => boolean;
   nudgeSelection?: (dx: number, dy: number) => boolean;
 }
 
@@ -87,6 +89,26 @@ export function handleSelectionNudgeShortcut(
   }
 
   const handled = nudgeSelection(nudgeDelta.x, nudgeDelta.y);
+  if (handled) {
+    event.preventDefault();
+  }
+  return handled;
+}
+
+export function handleSelectionGroupingShortcuts(
+  event: KeyboardEvent,
+  commands: Pick<EditorSelectionShortcutCommands, 'groupSelection' | 'ungroupSelection'>,
+): boolean {
+  if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'g' || event.shiftKey) {
+    return false;
+  }
+
+  const command = event.altKey ? commands.ungroupSelection : commands.groupSelection;
+  if (!command) {
+    return false;
+  }
+
+  const handled = command();
   if (handled) {
     event.preventDefault();
   }

@@ -152,6 +152,7 @@ import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens
 import {
   handleSelectionClipboardShortcuts,
   handleSelectionDeleteShortcut,
+  handleSelectionGroupingShortcuts,
   handleSelectionNudgeShortcut,
   handleToolSwitchShortcut,
 } from '@/lib/editor/editorSurfaceShortcuts';
@@ -726,6 +727,8 @@ export function BackgroundCanvasEditor() {
   const [backgroundDocument, setBackgroundDocumentState] = useState<BackgroundDocument | null>(null);
   const [renderedLayerChunks, setRenderedLayerChunks] = useState<Record<string, ChunkDataMap>>({});
   const [hasVectorSelection, setHasVectorSelection] = useState(false);
+  const [canGroupVectorSelection, setCanGroupVectorSelection] = useState(false);
+  const [canUngroupVectorSelection, setCanUngroupVectorSelection] = useState(false);
   const [vectorContextMenuPosition, setVectorContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [canZoomToVectorSelection, setCanZoomToVectorSelection] = useState(false);
   const [hasVectorTextSelection, setHasVectorTextSelection] = useState(false);
@@ -816,6 +819,8 @@ export function BackgroundCanvasEditor() {
       return;
     }
     setHasVectorSelection(false);
+    setCanGroupVectorSelection(false);
+    setCanUngroupVectorSelection(false);
     setCanZoomToVectorSelection(false);
     setHasVectorTextSelection(false);
     setIsVectorPointEditing(false);
@@ -3108,6 +3113,8 @@ export function BackgroundCanvasEditor() {
     const cutSelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.cutSelection() ?? false) : false;
     const duplicateSelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.duplicateSelection() ?? false) : false;
     const pasteSelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.pasteSelection() ?? false) : false;
+    const groupSelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.groupSelection() ?? false) : false;
+    const ungroupSelection = () => editorMode === 'vector' ? (vectorCanvasRef.current?.ungroupSelection() ?? false) : false;
     const deleteSelection = () => (
       editorMode === 'vector'
         ? (vectorCanvasRef.current?.deleteSelection() ?? false)
@@ -3172,6 +3179,13 @@ export function BackgroundCanvasEditor() {
           pasteSelection,
           cutSelection,
         }, 'background')) {
+          return true;
+        }
+
+        if (editorMode === 'vector' && handleSelectionGroupingShortcuts(event, {
+          groupSelection,
+          ungroupSelection,
+        })) {
           return true;
         }
 
@@ -3298,6 +3312,16 @@ export function BackgroundCanvasEditor() {
     void vectorCanvasRef.current?.duplicateSelection().catch((error) => {
       console.error('Failed to duplicate background vector selection:', error);
     });
+  }, [closeVectorContextMenu]);
+
+  const handleVectorContextMenuGroup = useCallback(() => {
+    closeVectorContextMenu();
+    vectorCanvasRef.current?.groupSelection();
+  }, [closeVectorContextMenu]);
+
+  const handleVectorContextMenuUngroup = useCallback(() => {
+    closeVectorContextMenu();
+    vectorCanvasRef.current?.ungroupSelection();
   }, [closeVectorContextMenu]);
 
   const handleVectorContextMenuDelete = useCallback(() => {
@@ -3751,6 +3775,18 @@ export function BackgroundCanvasEditor() {
     }
     vectorCanvasRef.current?.moveSelectionOrder(action);
   }, [editorMode]);
+  const handleToolbarGroupSelection = useCallback(() => {
+    if (editorMode !== 'vector') {
+      return;
+    }
+    vectorCanvasRef.current?.groupSelection();
+  }, [editorMode]);
+  const handleToolbarUngroupSelection = useCallback(() => {
+    if (editorMode !== 'vector') {
+      return;
+    }
+    vectorCanvasRef.current?.ungroupSelection();
+  }, [editorMode]);
   const handleToolbarFlipSelection = useCallback((axis: SelectionFlipAxis) => {
     if (editorMode !== 'vector') {
       return;
@@ -3802,6 +3838,10 @@ export function BackgroundCanvasEditor() {
         Object.keys(previous).length === 0 ? previous : {}
       ));
     }
+  }, []);
+  const handleVectorGroupingStateChange = useCallback((state: { canGroup: boolean; canUngroup: boolean }) => {
+    setCanGroupVectorSelection(state.canGroup);
+    setCanUngroupVectorSelection(state.canUngroup);
   }, []);
   const handleVectorTextSelectionChange = useCallback((hasTextSelection: boolean) => {
     setHasVectorTextSelection(hasTextSelection);
@@ -3971,8 +4011,12 @@ export function BackgroundCanvasEditor() {
             previewScale={zoom}
             onToolChange={handleToolbarToolChange}
             onMoveOrder={handleToolbarMoveOrder}
+            canGroupSelection={canGroupVectorSelection}
+            canUngroupSelection={canUngroupVectorSelection}
+            onGroupSelection={handleToolbarGroupSelection}
             onFlipSelection={handleToolbarFlipSelection}
             onRotateSelection={handleToolbarRotateSelection}
+            onUngroupSelection={handleToolbarUngroupSelection}
             vectorHandleMode={vectorHandleMode}
             onVectorHandleModeChange={handleToolbarVectorHandleModeChange}
             onAlign={handleToolbarAlign}
@@ -4028,6 +4072,7 @@ export function BackgroundCanvasEditor() {
               onDirty={handleVectorDocumentCommit}
               onHistoryStateChange={handleVectorHistoryStateChange}
               onSelectionChange={handleVectorSelectionChange}
+              onVectorGroupingStateChange={handleVectorGroupingStateChange}
               onTextSelectionChange={handleVectorTextSelectionChange}
               onTextStyleSync={handleVectorTextStyleSync}
               vectorHandleMode={vectorHandleMode}
@@ -4071,13 +4116,17 @@ export function BackgroundCanvasEditor() {
         <VectorSelectionContextMenu
           canCopy={hasVectorSelection}
           canDelete={hasVectorSelection}
+          canGroup={canGroupVectorSelection}
           canPaste={hasVectorClipboardContents()}
+          canUngroup={canUngroupVectorSelection}
           onClose={closeVectorContextMenu}
           onCopy={handleVectorContextMenuCopy}
           onCut={handleVectorContextMenuCut}
           onDelete={handleVectorContextMenuDelete}
           onDuplicate={handleVectorContextMenuDuplicate}
+          onGroup={handleVectorContextMenuGroup}
           onPaste={handleVectorContextMenuPaste}
+          onUngroup={handleVectorContextMenuUngroup}
           position={vectorContextMenuPosition}
         />
       ) : null}

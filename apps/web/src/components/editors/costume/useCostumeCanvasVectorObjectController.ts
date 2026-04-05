@@ -1,6 +1,7 @@
 import { useCallback, type MutableRefObject } from 'react';
 import { Path, Point, controlsUtils, type Canvas as FabricCanvas, type Control } from 'fabric';
 import type { CostumeEditorMode } from '@/types';
+import { fabricCanvasContainsObject } from '@/lib/editor/fabricVectorSelection';
 import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   type TransformGizmoCorner,
@@ -94,6 +95,7 @@ interface UseCostumeCanvasVectorObjectControllerOptions {
   toCanvasPoint: (obj: any, x: number, y: number) => Point;
   vectorGuideCtxRef: MutableRefObject<CanvasRenderingContext2D | null>;
   vectorHandleModeRef: MutableRefObject<VectorHandleMode>;
+  hoveredVectorTargetRef?: MutableRefObject<any | null>;
   vectorPointEditingTargetRef: MutableRefObject<any | null>;
 }
 
@@ -142,6 +144,7 @@ export function useCostumeCanvasVectorObjectController({
   toCanvasPoint,
   vectorGuideCtxRef,
   vectorHandleModeRef,
+  hoveredVectorTargetRef,
   vectorPointEditingTargetRef,
 }: UseCostumeCanvasVectorObjectControllerOptions) {
   const isVectorHandleIndependenceModifierPressed = useCallback((eventData: any) => {
@@ -587,6 +590,50 @@ export function useCostumeCanvasVectorObjectController({
     });
   }, [mapFabricOverlayPoint, vectorPointEditingTargetRef]);
 
+  const renderHoveredObjectOutline = useCallback((ctx: CanvasRenderingContext2D, fabricCanvas: FabricCanvas) => {
+    const hoveredTarget = hoveredVectorTargetRef?.current as any;
+    if (!hoveredTarget || hoveredTarget === vectorPointEditingTargetRef.current) {
+      return;
+    }
+    if (!fabricCanvasContainsObject(fabricCanvas, hoveredTarget)) {
+      return;
+    }
+
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    if (activeObject === hoveredTarget) {
+      return;
+    }
+    if (isActiveSelectionObject(activeObject) && typeof activeObject.getObjects === 'function') {
+      const selectedObjects = activeObject.getObjects() as any[];
+      if (selectedObjects.includes(hoveredTarget)) {
+        return;
+      }
+    }
+
+    const coords = typeof hoveredTarget.getCoords === 'function'
+      ? hoveredTarget.getCoords() as Array<{ x: number; y: number }> | undefined
+      : null;
+    if (!Array.isArray(coords) || coords.length < 4) {
+      return;
+    }
+
+    renderScreenSpaceTransformOverlay(ctx, {
+      nw: mapFabricOverlayPoint(new Point(coords[0].x, coords[0].y)),
+      ne: mapFabricOverlayPoint(new Point(coords[1].x, coords[1].y)),
+      se: mapFabricOverlayPoint(new Point(coords[2].x, coords[2].y)),
+      sw: mapFabricOverlayPoint(new Point(coords[3].x, coords[3].y)),
+    }, {
+      showFill: false,
+      showHandles: false,
+      strokeWidth: getZoomInvariantMetric(1.5),
+    });
+  }, [
+    getZoomInvariantMetric,
+    hoveredVectorTargetRef,
+    mapFabricOverlayPoint,
+    vectorPointEditingTargetRef,
+  ]);
+
   const renderVectorPointEditingGuide = useCallback(() => {
     const ctx = vectorGuideCtxRef.current;
     const fabricCanvas = fabricCanvasRef.current;
@@ -595,6 +642,7 @@ export function useCostumeCanvasVectorObjectController({
     clearOverlayContext(ctx);
     if (editorModeRef.current === 'bitmap') {
       renderActiveObjectTransformOverlay(ctx, fabricCanvas);
+      renderHoveredObjectOutline(ctx, fabricCanvas);
       return;
     }
     if (editorModeRef.current !== 'vector') return;
@@ -608,7 +656,7 @@ export function useCostumeCanvasVectorObjectController({
       }
       return;
     }
-    if (activeToolRef.current === 'select' && target && fabricCanvas.getObjects().includes(target)) {
+    if (activeToolRef.current === 'select' && target && fabricCanvasContainsObject(fabricCanvas, target)) {
       ctx.save();
       try {
         applyOverlaySceneTransform(ctx, fabricCanvas);
@@ -632,6 +680,7 @@ export function useCostumeCanvasVectorObjectController({
     }
 
     renderActiveObjectTransformOverlay(ctx, fabricCanvas);
+    renderHoveredObjectOutline(ctx, fabricCanvas);
   }, [
     activeToolRef,
     applyOverlaySceneTransform,
@@ -641,6 +690,7 @@ export function useCostumeCanvasVectorObjectController({
     getZoomInvariantMetric,
     renderPenDraftGuide,
     renderActiveObjectTransformOverlay,
+    renderHoveredObjectOutline,
     renderVectorPointControlOverlay,
     renderPointSelectionMarquee,
     renderPointSelectionTransformGuides,

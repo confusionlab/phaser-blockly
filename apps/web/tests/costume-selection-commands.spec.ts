@@ -4,8 +4,10 @@ import {
   copyActiveCanvasSelectionToClipboard,
   deleteActiveCanvasSelection,
   duplicateActiveCanvasSelection,
+  groupActiveCanvasSelection,
   nudgeActiveCanvasSelection,
   pasteVectorClipboardIntoCanvas,
+  ungroupActiveCanvasSelection,
 } from '../src/components/editors/shared/fabricSelectionCommands';
 import { getVectorClipboard, setVectorClipboard } from '../src/lib/editor/vectorClipboard';
 
@@ -27,21 +29,25 @@ type FakeObject = {
 
 type FakeCanvas = {
   activeObject: FakeObject | null;
+  objects: FakeObject[];
   operations: string[];
   removedObjects: FakeObject[];
   addedObjects: FakeObject[];
   getActiveObject: () => FakeObject | null;
   discardActiveObject: () => void;
+  getObjects: () => FakeObject[];
   remove: (...objects: FakeObject[]) => void;
   add: (object: FakeObject) => void;
+  insertAt: (index: number, ...objects: FakeObject[]) => void;
   setActiveObject: (object: FakeObject) => void;
   requestRenderAll: () => void;
   fire: (eventName: string, payload?: unknown) => void;
 };
 
-function createCanvas(activeObject: FakeObject | null): FakeCanvas {
+function createCanvas(activeObject: FakeObject | null, objects: FakeObject[] = []): FakeCanvas {
   return {
     activeObject,
+    objects,
     operations: [],
     removedObjects: [],
     addedObjects: [],
@@ -53,13 +59,23 @@ function createCanvas(activeObject: FakeObject | null): FakeCanvas {
       this.operations.push('discardActiveObject');
       this.activeObject = null;
     },
+    getObjects() {
+      return this.objects;
+    },
     remove(...objects: FakeObject[]) {
       this.operations.push(`remove:${objects.map((object) => object.id).join(',')}`);
+      this.objects = this.objects.filter((existingObject) => !objects.includes(existingObject));
       this.removedObjects.push(...objects);
     },
     add(object) {
       this.operations.push(`add:${object.id}`);
+      this.objects.push(object);
       this.addedObjects.push(object);
+    },
+    insertAt(index, ...objects) {
+      this.operations.push(`insertAt:${index}:${objects.map((object) => object.id ?? object.type ?? 'group').join(',')}`);
+      this.objects.splice(index, 0, ...objects);
+      this.addedObjects.push(...objects);
     },
     setActiveObject(object) {
       this.operations.push(`setActiveObject:${object.id ?? object.type ?? 'selection'}`);
@@ -332,5 +348,56 @@ test.describe('costume selection commands', () => {
       left: 472,
       top: 492,
     });
+  });
+
+  test('groups an active multi-selection into a single group object', () => {
+    const rectA = new Rect({ left: 10, top: 20, width: 30, height: 40 }) as unknown as FakeObject;
+    rectA.id = 'rect-a';
+    const rectB = new Rect({ left: 70, top: 80, width: 20, height: 25 }) as unknown as FakeObject;
+    rectB.id = 'rect-b';
+    const activeSelection = {
+      id: 'selection-1',
+      type: 'activeSelection',
+      getObjects: () => [rectA, rectB],
+    };
+    const canvas = createCanvas(activeSelection, [rectA, rectB]);
+
+    expect(groupActiveCanvasSelection(canvas as any)).toBe(true);
+    expect(canvas.operations).toContain('discardActiveObject');
+    expect(canvas.operations).toContain('remove:rect-a,rect-b');
+    expect(canvas.operations).toContain('insertAt:0:group');
+    expect(canvas.operations).toContain('setActiveObject:group');
+    expect(canvas.operations).toContain('requestRenderAll');
+    expect(canvas.objects).toHaveLength(1);
+    expect(canvas.objects[0]?.type).toBe('group');
+    expect(canvas.activeObject?.type).toBe('group');
+  });
+
+  test('ungroups a selected group back into its children', () => {
+    const rectA = new Rect({ left: 10, top: 20, width: 30, height: 40 }) as unknown as FakeObject;
+    rectA.id = 'rect-a';
+    const rectB = new Rect({ left: 70, top: 80, width: 20, height: 25 }) as unknown as FakeObject;
+    rectB.id = 'rect-b';
+    const activeSelection = {
+      id: 'selection-1',
+      type: 'activeSelection',
+      getObjects: () => [rectA, rectB],
+    };
+    const canvas = createCanvas(activeSelection, [rectA, rectB]);
+
+    expect(groupActiveCanvasSelection(canvas as any)).toBe(true);
+    const groupedObject = canvas.activeObject;
+    expect(groupedObject?.type).toBe('group');
+    canvas.operations = [];
+
+    expect(ungroupActiveCanvasSelection(canvas as any)).toBe(true);
+    expect(canvas.operations).toContain('discardActiveObject');
+    expect(canvas.operations).toContain('insertAt:0:rect-a,rect-b');
+    expect(canvas.operations).toContain('requestRenderAll');
+    expect(canvas.operations.some((operation) => operation.startsWith('remove:'))).toBe(true);
+    expect(canvas.operations.some((operation) => operation.startsWith('setActiveObject:'))).toBe(true);
+    expect(canvas.objects).toHaveLength(2);
+    expect(canvas.objects).toEqual([rectA, rectB]);
+    expect(String(canvas.activeObject?.type).toLowerCase()).toContain('active');
   });
 });

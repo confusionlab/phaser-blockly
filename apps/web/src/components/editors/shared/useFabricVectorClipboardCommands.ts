@@ -24,6 +24,7 @@ interface UseFabricVectorClipboardCommandsOptions<T extends FabricVectorObject =
   normalizeCanvasVectorStrokeUniform?: () => boolean;
   pasteMoveOffset?: number;
   pasteTargetCenter?: { x: number; y: number };
+  resolveInsertionParent?: () => { add?: (...objects: T[]) => unknown; getObjects: () => T[]; insertAt?: (index: number, ...objects: T[]) => unknown; remove?: (...objects: T[]) => unknown } | null;
   saveHistory: () => void;
   syncSelectionState?: () => void;
 }
@@ -39,6 +40,7 @@ export function useFabricVectorClipboardCommands<T extends FabricVectorObject = 
   normalizeCanvasVectorStrokeUniform,
   pasteMoveOffset,
   pasteTargetCenter,
+  resolveInsertionParent,
   saveHistory,
   syncSelectionState,
 }: UseFabricVectorClipboardCommandsOptions<T>) {
@@ -49,10 +51,11 @@ export function useFabricVectorClipboardCommands<T extends FabricVectorObject = 
     }
 
     beforeDuplicate?.();
-    const duplicated = await duplicateActiveCanvasSelection(fabricCanvas, {
+    const duplicated = await duplicateActiveCanvasSelection(fabricCanvas as any, {
       cloneObject,
       moveOffset: duplicateMoveOffset,
-    });
+      resolveInsertionParent,
+    } as any);
     if (!duplicated) {
       return false;
     }
@@ -66,6 +69,7 @@ export function useFabricVectorClipboardCommands<T extends FabricVectorObject = 
     cloneObject,
     duplicateMoveOffset,
     fabricCanvasRef,
+    resolveInsertionParent,
     saveHistory,
     syncSelectionState,
   ]);
@@ -76,9 +80,9 @@ export function useFabricVectorClipboardCommands<T extends FabricVectorObject = 
       return false;
     }
 
-    return await copyActiveCanvasSelectionToClipboard(fabricCanvas, {
+    return await copyActiveCanvasSelectionToClipboard(fabricCanvas as any, {
       cloneObject,
-    });
+    } as any);
   }, [canRun, cloneObject, fabricCanvasRef]);
 
   const cutSelection = useCallback(async (): Promise<boolean> => {
@@ -101,11 +105,12 @@ export function useFabricVectorClipboardCommands<T extends FabricVectorObject = 
     }
 
     beforePaste?.();
-    const pasted = await pasteVectorClipboardIntoCanvas(fabricCanvas, {
+    const pasted = await pasteVectorClipboardIntoCanvas(fabricCanvas as any, {
       cloneObject,
       moveOffset: pasteMoveOffset,
+      resolveInsertionParent,
       targetCenter: pasteTargetCenter,
-    });
+    } as any);
     if (!pasted) {
       return false;
     }
@@ -122,6 +127,7 @@ export function useFabricVectorClipboardCommands<T extends FabricVectorObject = 
     normalizeCanvasVectorStrokeUniform,
     pasteMoveOffset,
     pasteTargetCenter,
+    resolveInsertionParent,
     saveHistory,
     syncSelectionState,
   ]);

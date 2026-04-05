@@ -27,7 +27,7 @@ import {
 } from './backgroundDocument';
 import {
   normalizeVectorObjectRendering,
-  renderVectorTextureOverlayForFabricCanvas,
+  renderComposedVectorSceneForFabricCanvas,
 } from '@/lib/costume/costumeVectorTextureRenderer';
 import {
   getBackgroundVectorChunkViewportTransform,
@@ -393,12 +393,9 @@ export async function renderBackgroundVectorLayerToChunkData(
         vectorCanvas.viewportTransform = getBackgroundVectorChunkViewportTransform(chunkBounds, coordinateSpace);
         vectorCanvas.renderAll();
 
-        snapshotCtx.clearRect(0, 0, chunkSize, chunkSize);
-        snapshotCtx.drawImage(vectorCanvasElement, 0, 0, chunkSize, chunkSize);
-        renderVectorTextureOverlayForFabricCanvas(snapshotCtx, vectorCanvas, {
+        renderComposedVectorSceneForFabricCanvas(snapshotCtx, vectorCanvas, {
           canvasWidth: chunkSize,
           canvasHeight: chunkSize,
-          clear: false,
         });
 
         if (!isChunkCanvasTransparent(snapshotCanvas)) {

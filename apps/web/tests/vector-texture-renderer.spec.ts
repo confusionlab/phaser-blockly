@@ -47,12 +47,10 @@ test.describe('vector texture renderer', () => {
       renderVectorTextureOverlayForObjects(baseCtx, [createPathObject(0)], {
         canvasWidth: width,
         canvasHeight: height,
-        stabilizeMotion: true,
       });
       renderVectorTextureOverlayForObjects(translatedCtx, [createPathObject(translationX)], {
         canvasWidth: width,
         canvasHeight: height,
-        stabilizeMotion: true,
       });
 
       const alignedCanvas = document.createElement('canvas');
@@ -94,6 +92,98 @@ test.describe('vector texture renderer', () => {
     expect(result.opaqueUnion).toBeGreaterThan(1800);
     expect(result.opaqueIntersection / result.opaqueUnion).toBeGreaterThan(0.92);
     expect(result.averageAlphaDifference).toBeLessThan(5);
+  });
+
+  test('keeps early textured stroke dabs anchored when the path extends', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 320;
+      const height = 220;
+      const createOverlayContext = () => {
+        const overlayCanvas = document.createElement('canvas');
+        overlayCanvas.width = width;
+        overlayCanvas.height = height;
+        return overlayCanvas.getContext('2d', { willReadFrequently: true });
+      };
+      const baseCtx = createOverlayContext();
+      const extendedCtx = createOverlayContext();
+      if (!baseCtx || !extendedCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      const createPathObject = (extendTail: boolean) => ({
+        type: 'path',
+        path: extendTail
+          ? [
+              ['M', 52, 112],
+              ['C', 90, 62, 132, 58, 172, 102],
+              ['L', 214, 132],
+              ['L', 260, 146],
+            ]
+          : [
+              ['M', 52, 112],
+              ['C', 90, 62, 132, 58, 172, 102],
+              ['L', 214, 132],
+            ],
+        pathOffset: { x: 0, y: 0 },
+        fill: null,
+        opacity: 1,
+        stroke: 'rgba(37, 99, 235, 0)',
+        strokeWidth: 20,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+        vectorStrokeBrushId: 'marker',
+        vectorStrokeColor: '#2563eb',
+        vectorStrokeOpacity: 1,
+        calcTransformMatrix: () => [1, 0, 0, 1, 0, 0],
+      });
+
+      renderVectorTextureOverlayForObjects(baseCtx, [createPathObject(false)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+      renderVectorTextureOverlayForObjects(extendedCtx, [createPathObject(true)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const compareLeft = 28;
+      const compareTop = 52;
+      const compareWidth = 188;
+      const compareHeight = 116;
+      const basePixels = baseCtx.getImageData(compareLeft, compareTop, compareWidth, compareHeight).data;
+      const extendedPixels = extendedCtx.getImageData(compareLeft, compareTop, compareWidth, compareHeight).data;
+
+      let opaqueUnion = 0;
+      let opaqueIntersection = 0;
+      let alphaDifference = 0;
+      for (let index = 3; index < basePixels.length; index += 4) {
+        const baseAlpha = basePixels[index] ?? 0;
+        const extendedAlpha = extendedPixels[index] ?? 0;
+        const baseOpaque = baseAlpha > 16;
+        const extendedOpaque = extendedAlpha > 16;
+        if (baseOpaque || extendedOpaque) {
+          opaqueUnion += 1;
+        }
+        if (baseOpaque && extendedOpaque) {
+          opaqueIntersection += 1;
+        }
+        alphaDifference += Math.abs(baseAlpha - extendedAlpha);
+      }
+
+      return {
+        opaqueIntersection,
+        opaqueUnion,
+        averageAlphaDifference: alphaDifference / (compareWidth * compareHeight),
+      };
+    });
+
+    expect(result.opaqueUnion).toBeGreaterThan(2200);
+    expect(result.opaqueIntersection / result.opaqueUnion).toBeGreaterThan(0.93);
+    expect(result.averageAlphaDifference).toBeLessThan(4);
   });
 
   test('applies the fabric viewport transform before drawing textured overlays', async ({ page }) => {
@@ -234,6 +324,122 @@ test.describe('vector texture renderer', () => {
 
     expect(result.insidePixels).toBeGreaterThan(600);
     expect(result.outsidePixels).toBe(0);
+  });
+
+  test('preserves object stacking when a textured fill sits behind a later solid object', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderComposedVectorSceneForFabricCanvas } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 220;
+      const height = 220;
+
+      const createRectObject = (options: {
+        fill: string;
+        height: number;
+        left: number;
+        top: number;
+        vectorFillColor: string;
+        vectorFillTextureId: string;
+        width: number;
+      }) => ({
+        type: 'rect',
+        width: options.width,
+        height: options.height,
+        strokeWidth: 0,
+        fill: options.fill,
+        opacity: 1,
+        vectorFillTextureId: options.vectorFillTextureId,
+        vectorFillColor: options.vectorFillColor,
+        vectorFillOpacity: 1,
+        vectorStrokeBrushId: 'solid',
+        vectorStrokeColor: options.vectorFillColor,
+        vectorStrokeOpacity: 1,
+        calcTransformMatrix: () => [
+          1,
+          0,
+          0,
+          1,
+          options.left + options.width / 2,
+          options.top + options.height / 2,
+        ] as [number, number, number, number, number, number],
+        render: (ctx: CanvasRenderingContext2D) => {
+          ctx.save();
+          ctx.translate(options.left + options.width / 2, options.top + options.height / 2);
+          ctx.beginPath();
+          ctx.rect(-options.width / 2, -options.height / 2, options.width, options.height);
+          ctx.fillStyle = options.fill;
+          ctx.fill();
+          ctx.restore();
+        },
+      });
+
+      const fabricCanvas = {
+        getObjects: () => [
+          createRectObject({
+            left: 36,
+            top: 36,
+            width: 132,
+            height: 132,
+            fill: 'rgba(34, 197, 94, 0)',
+            vectorFillTextureId: 'grain',
+            vectorFillColor: '#22c55e',
+          }),
+          createRectObject({
+            left: 84,
+            top: 84,
+            width: 84,
+            height: 84,
+            fill: '#ef4444',
+            vectorFillTextureId: 'solid',
+            vectorFillColor: '#ef4444',
+          }),
+        ],
+      };
+
+      const composedCanvas = document.createElement('canvas');
+      composedCanvas.width = width;
+      composedCanvas.height = height;
+      const composedCtx = composedCanvas.getContext('2d', { willReadFrequently: true });
+      if (!composedCtx) {
+        throw new Error('Failed to acquire composed vector scene context.');
+      }
+
+      renderComposedVectorSceneForFabricCanvas(composedCtx, fabricCanvas, {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const readPixel = (x: number, y: number) => {
+        const data = composedCtx.getImageData(x, y, 1, 1).data;
+        return {
+          r: data[0] ?? 0,
+          g: data[1] ?? 0,
+          b: data[2] ?? 0,
+          a: data[3] ?? 0,
+        };
+      };
+      const countOpaquePixelsInRect = (left: number, top: number, rectWidth: number, rectHeight: number) => {
+        const imageData = composedCtx.getImageData(left, top, rectWidth, rectHeight).data;
+        let count = 0;
+        for (let index = 3; index < imageData.length; index += 4) {
+          if ((imageData[index] ?? 0) > 0) {
+            count += 1;
+          }
+        }
+        return count;
+      };
+
+      return {
+        overlap: readPixel(120, 120),
+        texturedOnlyOpaquePixels: countOpaquePixelsInRect(48, 48, 32, 32),
+      };
+    });
+
+    expect(result.overlap.a).toBeGreaterThan(200);
+    expect(result.overlap.r).toBeGreaterThan(result.overlap.g * 1.5);
+    expect(result.texturedOnlyOpaquePixels).toBeGreaterThan(20);
   });
 
   test('renders transient textured preview paths passed as additional overlay objects', async ({ page }) => {

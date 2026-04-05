@@ -2,11 +2,14 @@ import { useCallback, type MutableRefObject } from 'react';
 import { Point, util, type Canvas as FabricCanvas } from 'fabric';
 import {
   deleteActiveCanvasSelection,
+  groupActiveCanvasSelection,
   nudgeActiveCanvasSelection,
+  ungroupActiveCanvasSelection,
 } from '@/components/editors/shared/fabricSelectionCommands';
 import type { AlignAction, MoveOrderAction, SelectionFlipAxis } from './CostumeToolbar';
 import { normalizeDegrees, type CanvasSelectionBoundsSnapshot } from './costumeCanvasShared';
 import { isActiveSelectionObject, isTextObject } from './costumeCanvasVectorRuntime';
+import { getSelectionSharedParentGroup } from '@/lib/editor/fabricVectorSelection';
 
 interface UseCostumeCanvasSelectionTransformCommandsOptions {
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
@@ -94,7 +97,15 @@ export function useCostumeCanvasSelectionTransformCommands({
       : [activeObject];
     if (selectedObjects.length === 0) return false;
 
-    const stack = fabricCanvas.getObjects();
+    const parentGroup = getSelectionSharedParentGroup(selectedObjects) as {
+      bringObjectForward?: (object: any, intersecting?: boolean) => unknown;
+      bringObjectToFront?: (object: any) => unknown;
+      getObjects: () => any[];
+      sendObjectBackwards?: (object: any, intersecting?: boolean) => unknown;
+      sendObjectToBack?: (object: any) => unknown;
+    } | null | undefined;
+    const container = parentGroup ?? fabricCanvas;
+    const stack = container.getObjects();
     const withIndices = selectedObjects
       .map((obj) => ({ obj, index: stack.indexOf(obj) }))
       .filter((entry) => entry.index >= 0)
@@ -103,19 +114,19 @@ export function useCostumeCanvasSelectionTransformCommands({
 
     if (action === 'forward') {
       for (const entry of [...withIndices].reverse()) {
-        fabricCanvas.bringObjectForward(entry.obj, false);
+        container.bringObjectForward?.(entry.obj, false);
       }
     } else if (action === 'backward') {
       for (const entry of withIndices) {
-        fabricCanvas.sendObjectBackwards(entry.obj, false);
+        container.sendObjectBackwards?.(entry.obj, false);
       }
     } else if (action === 'front') {
       for (const entry of withIndices) {
-        fabricCanvas.bringObjectToFront(entry.obj);
+        container.bringObjectToFront?.(entry.obj);
       }
     } else {
       for (const entry of [...withIndices].reverse()) {
-        fabricCanvas.sendObjectToBack(entry.obj);
+        container.sendObjectToBack?.(entry.obj);
       }
     }
 
@@ -130,6 +141,30 @@ export function useCostumeCanvasSelectionTransformCommands({
 
     const changed = nudgeActiveCanvasSelection(fabricCanvas, { x: dx, y: dy });
     if (!changed) return false;
+
+    syncSelectionState();
+    saveHistory();
+    return true;
+  }, [fabricCanvasRef, saveHistory, syncSelectionState]);
+
+  const groupSelection = useCallback((): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+
+    const grouped = groupActiveCanvasSelection(fabricCanvas as any);
+    if (!grouped) return false;
+
+    syncSelectionState();
+    saveHistory();
+    return true;
+  }, [fabricCanvasRef, saveHistory, syncSelectionState]);
+
+  const ungroupSelection = useCallback((): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+
+    const ungrouped = ungroupActiveCanvasSelection(fabricCanvas as any);
+    if (!ungrouped) return false;
 
     syncSelectionState();
     saveHistory();
@@ -275,9 +310,11 @@ export function useCostumeCanvasSelectionTransformCommands({
   return {
     alignSelection,
     deleteSelection,
+    flipSelection,
+    groupSelection,
     moveSelectionOrder,
     nudgeSelection,
-    flipSelection,
     rotateSelection,
+    ungroupSelection,
   };
 }

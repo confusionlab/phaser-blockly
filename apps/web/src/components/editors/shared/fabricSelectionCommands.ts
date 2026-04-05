@@ -1,10 +1,16 @@
-import { ActiveSelection } from 'fabric';
+import { ActiveSelection, Group } from 'fabric';
 import {
   getVectorClipboard,
   markVectorClipboardPaste,
   setVectorClipboard,
   type VectorClipboardEntry,
 } from '@/lib/editor/vectorClipboard';
+import {
+  getSelectionSharedParentGroup,
+  getVectorGroupingAvailability,
+  isFabricGroupObject,
+  type VectorGroupingAvailability,
+} from '@/lib/editor/fabricVectorSelection';
 
 type FabricSelectionObject = {
   type?: string;
@@ -13,6 +19,8 @@ type FabricSelectionObject = {
   top?: number;
   width?: number;
   height?: number;
+  group?: unknown;
+  parent?: unknown;
   getObjects?: () => FabricSelectionObject[];
   clone?: (() => Promise<FabricSelectionObject>) | ((callback: (cloned: FabricSelectionObject) => void) => void);
   getBoundingRect?: () => { left?: number; top?: number; width?: number; height?: number };
@@ -20,9 +28,17 @@ type FabricSelectionObject = {
   setCoords?: () => void;
 };
 
+type FabricSelectionContainer<T extends FabricSelectionObject> = {
+  add?: (...objects: T[]) => unknown;
+  getObjects: () => T[];
+  insertAt?: (index: number, ...objects: T[]) => unknown;
+  remove?: (...objects: T[]) => unknown;
+};
+
 type FabricDeleteSelectionCanvas<T extends FabricSelectionObject> = {
   getActiveObject: () => T | null | undefined;
   discardActiveObject: () => void;
+  getObjects: () => T[];
   remove: (...objects: T[]) => unknown;
   requestRenderAll: () => void;
 };
@@ -30,6 +46,8 @@ type FabricDeleteSelectionCanvas<T extends FabricSelectionObject> = {
 type FabricDuplicateSelectionCanvas<T extends FabricSelectionObject> = {
   getActiveObject: () => T | null | undefined;
   add: (object: T) => unknown;
+  getObjects: () => T[];
+  insertAt?: (index: number, ...objects: T[]) => unknown;
   setActiveObject: (object: T) => unknown;
   requestRenderAll: () => void;
 };
@@ -37,6 +55,7 @@ type FabricDuplicateSelectionCanvas<T extends FabricSelectionObject> = {
 type FabricNudgeSelectionCanvas<T extends FabricSelectionObject> = {
   getActiveObject: () => T | null | undefined;
   discardActiveObject: () => void;
+  getObjects: () => T[];
   setActiveObject: (object: T) => unknown;
   requestRenderAll: () => void;
 };
@@ -45,6 +64,10 @@ type CloneableFabricSelectionObject = FabricSelectionObject & {
   clone?: (() => Promise<CloneableFabricSelectionObject>) | ((callback: (cloned: CloneableFabricSelectionObject) => void) => void);
   setCoords?: () => void;
 };
+
+type FabricGroupingCanvas<T extends FabricSelectionObject> =
+  & FabricDeleteSelectionCanvas<T>
+  & FabricDuplicateSelectionCanvas<T>;
 
 function getObjectBounds(object: CloneableFabricSelectionObject): {
   left: number;
@@ -158,6 +181,43 @@ function restoreActiveCanvasSelection<T extends CloneableFabricSelectionObject>(
   canvas.setActiveObject(new ActiveSelection(nextObjects as any[], { canvas: canvas as any }) as unknown as T);
 }
 
+function getSelectionContainer<T extends FabricSelectionObject>(
+  canvas: Pick<FabricGroupingCanvas<T>, 'getObjects'>,
+  selectedObjects: T[],
+  explicitParent?: FabricSelectionContainer<T> | null,
+): FabricSelectionContainer<T> {
+  if (explicitParent) {
+    return explicitParent;
+  }
+  return (getSelectionSharedParentGroup(selectedObjects) as FabricSelectionContainer<T> | null | undefined) ?? canvas;
+}
+
+function addObjectsToContainer<T extends FabricSelectionObject>(
+  canvas: FabricDuplicateSelectionCanvas<T>,
+  container: FabricSelectionContainer<T>,
+  objects: T[],
+): void {
+  if (objects.length === 0) {
+    return;
+  }
+
+  if (container === canvas) {
+    objects.forEach((object) => {
+      canvas.add(object);
+    });
+    return;
+  }
+
+  if (typeof container.add === 'function') {
+    container.add(...objects);
+    return;
+  }
+
+  if (typeof container.insertAt === 'function') {
+    container.insertAt(container.getObjects().length, ...objects);
+  }
+}
+
 export function deleteActiveCanvasSelection<T extends FabricSelectionObject>(canvas: FabricDeleteSelectionCanvas<T>): boolean {
   const activeObject = canvas.getActiveObject();
   if (!activeObject || isTextEditingObject(activeObject)) {
@@ -172,10 +232,13 @@ export function deleteActiveCanvasSelection<T extends FabricSelectionObject>(can
     return false;
   }
 
-  // Detach ActiveSelection members back onto the canvas before removing them,
-  // otherwise Fabric can reinsert marquee-selected objects during deselection.
   canvas.discardActiveObject();
-  canvas.remove(...objectsToRemove);
+  const container = getSelectionSharedParentGroup(objectsToRemove) as FabricSelectionContainer<T> | null | undefined;
+  if (container && typeof container.remove === 'function') {
+    container.remove(...objectsToRemove);
+  } else {
+    canvas.remove(...objectsToRemove);
+  }
   canvas.requestRenderAll();
   return true;
 }
@@ -226,6 +289,7 @@ export async function duplicateActiveCanvasSelection<T extends FabricSelectionOb
   options?: {
     cloneObject?: (object: T) => Promise<T>;
     moveOffset?: number;
+    resolveInsertionParent?: () => FabricSelectionContainer<T> | null;
   },
 ): Promise<boolean> {
   const activeObject = canvas.getActiveObject();
@@ -243,6 +307,11 @@ export async function duplicateActiveCanvasSelection<T extends FabricSelectionOb
     return false;
   }
 
+  const insertionParent = getSelectionContainer(
+    canvas,
+    sourceObjects,
+    options?.resolveInsertionParent?.() ?? null,
+  );
   const clones: T[] = [];
   for (const sourceObject of sourceObjects) {
     const cloned = await cloneObject(sourceObject);
@@ -250,13 +319,14 @@ export async function duplicateActiveCanvasSelection<T extends FabricSelectionOb
       left: (typeof cloned.left === 'number' ? cloned.left : 0) + moveOffset,
       top: (typeof cloned.top === 'number' ? cloned.top : 0) + moveOffset,
     });
-    canvas.add(cloned);
     clones.push(cloned);
   }
 
   if (clones.length === 0) {
     return false;
   }
+
+  addObjectsToContainer(canvas, insertionParent, clones);
 
   if (clones.length === 1) {
     canvas.setActiveObject(clones[0]);
@@ -298,6 +368,7 @@ export async function pasteVectorClipboardIntoCanvas<T extends CloneableFabricSe
   options?: {
     cloneObject?: (object: T) => Promise<T>;
     moveOffset?: number;
+    resolveInsertionParent?: () => FabricSelectionContainer<T> | null;
     targetCenter?: { x: number; y: number };
   },
 ): Promise<boolean> {
@@ -317,7 +388,6 @@ export async function pasteVectorClipboardIntoCanvas<T extends CloneableFabricSe
       top: (typeof cloned.top === 'number' ? cloned.top : 0) + moveOffset,
     });
     cloned.setCoords?.();
-    canvas.add(cloned);
     clones.push(cloned);
   }
 
@@ -340,6 +410,13 @@ export async function pasteVectorClipboardIntoCanvas<T extends CloneableFabricSe
     }
   }
 
+  const insertionParent = getSelectionContainer(
+    canvas,
+    clones,
+    options?.resolveInsertionParent?.() ?? null,
+  );
+  addObjectsToContainer(canvas, insertionParent, clones);
+
   if (clones.length === 1) {
     canvas.setActiveObject(clones[0]);
   } else {
@@ -348,5 +425,126 @@ export async function pasteVectorClipboardIntoCanvas<T extends CloneableFabricSe
 
   canvas.requestRenderAll();
   markVectorClipboardPaste();
+  return true;
+}
+
+export function getActiveCanvasGroupingCapabilities<T extends FabricSelectionObject>(
+  canvas: { getActiveObject: () => T | null | undefined },
+): VectorGroupingAvailability {
+  return getVectorGroupingAvailability(canvas.getActiveObject());
+}
+
+export function groupActiveCanvasSelection<T extends FabricSelectionObject>(
+  canvas: FabricGroupingCanvas<T>,
+): boolean {
+  const activeObject = canvas.getActiveObject();
+  if (!activeObject || isTextEditingObject(activeObject)) {
+    return false;
+  }
+
+  const selectedObjects = getActiveCanvasSelectionObjects(canvas);
+  if (selectedObjects.length < 2) {
+    return false;
+  }
+
+  const parentGroup = getSelectionSharedParentGroup(selectedObjects) as FabricSelectionContainer<T> | null | undefined;
+  if (typeof parentGroup === 'undefined') {
+    return false;
+  }
+
+  const container = (parentGroup ?? canvas) as FabricSelectionContainer<T>;
+  const stack = container.getObjects();
+  const indexedSelection = selectedObjects
+    .map((object) => ({ object, index: stack.indexOf(object) }))
+    .filter((entry) => entry.index >= 0)
+    .sort((left, right) => left.index - right.index);
+  if (indexedSelection.length < 2) {
+    return false;
+  }
+
+  const orderedSelection = indexedSelection.map((entry) => entry.object);
+  const insertIndex = indexedSelection[0].index;
+
+  canvas.discardActiveObject();
+  if (parentGroup && typeof parentGroup.remove === 'function') {
+    parentGroup.remove(...orderedSelection);
+  } else {
+    canvas.remove(...orderedSelection);
+  }
+
+  const nextGroup = new Group(orderedSelection as any[], {
+    interactive: false,
+    subTargetCheck: true,
+  }) as unknown as T;
+
+  if (container === canvas) {
+    if (typeof canvas.insertAt === 'function') {
+      canvas.insertAt(insertIndex, nextGroup);
+    } else {
+      canvas.add(nextGroup);
+    }
+  } else if (typeof container.insertAt === 'function') {
+    container.insertAt(insertIndex, nextGroup);
+  } else if (typeof container.add === 'function') {
+    container.add(nextGroup);
+  } else {
+    return false;
+  }
+
+  nextGroup.setCoords?.();
+  canvas.setActiveObject(nextGroup);
+  canvas.requestRenderAll();
+  return true;
+}
+
+export function ungroupActiveCanvasSelection<T extends FabricSelectionObject>(
+  canvas: FabricGroupingCanvas<T>,
+): boolean {
+  const activeObject = canvas.getActiveObject();
+  if (!activeObject || isTextEditingObject(activeObject) || !isFabricGroupObject(activeObject)) {
+    return false;
+  }
+
+  const group = activeObject as unknown as Group & T;
+  const parentGroup = getSelectionSharedParentGroup([group]) as FabricSelectionContainer<T> | null | undefined;
+  const container = (parentGroup ?? canvas) as FabricSelectionContainer<T>;
+  const stack = container.getObjects();
+  const insertIndex = stack.indexOf(group);
+  if (insertIndex < 0) {
+    return false;
+  }
+
+  canvas.discardActiveObject();
+  const children = group.removeAll() as unknown as T[];
+  if (children.length === 0) {
+    return false;
+  }
+
+  if (parentGroup && typeof parentGroup.remove === 'function') {
+    parentGroup.remove(group);
+  } else {
+    canvas.remove(group);
+  }
+
+  if (container === canvas) {
+    if (typeof canvas.insertAt === 'function') {
+      canvas.insertAt(insertIndex, ...children);
+    } else {
+      children.forEach((child) => canvas.add(child));
+    }
+  } else if (typeof container.insertAt === 'function') {
+    container.insertAt(insertIndex, ...children);
+  } else if (typeof container.add === 'function') {
+    container.add(...children);
+  } else {
+    return false;
+  }
+
+  if (children.length === 1) {
+    canvas.setActiveObject(children[0]);
+  } else {
+    canvas.setActiveObject(new ActiveSelection(children as any[], { canvas: canvas as any }) as unknown as T);
+  }
+  canvas.requestRenderAll();
   return true;
 }

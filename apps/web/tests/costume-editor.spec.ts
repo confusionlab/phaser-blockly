@@ -387,6 +387,50 @@ async function readOverlayOpaqueSampleCount(page: Page, selector: string): Promi
   }, selector);
 }
 
+async function readCostumeEditorCompositePixel(
+  page: Page,
+  sample: { x: number; y: number },
+): Promise<{ r: number; g: number; b: number; a: number } | null> {
+  return await page.evaluate(({ sample }) => {
+    const surface = document.querySelector('[data-testid="costume-canvas-surface"]');
+    if (!(surface instanceof HTMLElement)) {
+      return null;
+    }
+
+    const width = Math.max(1, Math.round(surface.clientWidth));
+    const height = Math.max(1, Math.round(surface.clientHeight));
+    const probe = document.createElement('canvas');
+    probe.width = width;
+    probe.height = height;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return null;
+    }
+
+    const canvases = Array.from(surface.querySelectorAll('canvas'));
+    for (const canvas of canvases) {
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        continue;
+      }
+      const style = window.getComputedStyle(canvas);
+      if (style.visibility === 'hidden' || style.display === 'none' || Number.parseFloat(style.opacity || '1') <= 0) {
+        continue;
+      }
+      ctx.drawImage(canvas, 0, 0, width, height);
+    }
+
+    const px = Math.max(0, Math.min(width - 1, Math.round(sample.x)));
+    const py = Math.max(0, Math.min(height - 1, Math.round(sample.y)));
+    const data = ctx.getImageData(px, py, 1, 1).data;
+    return {
+      r: data[0] ?? 0,
+      g: data[1] ?? 0,
+      b: data[2] ?? 0,
+      a: data[3] ?? 0,
+    };
+  }, { sample });
+}
+
 async function setVectorStrokeBrush(page: Page, label: 'Marker' | 'Ink' | 'Chalk') {
   const properties = page.getByTestId('costume-toolbar-properties');
   await properties.getByRole('button', { name: /^solid$/i }).first().click();
@@ -795,6 +839,119 @@ test.describe('Costume editor tools', () => {
       async () => readOverlayOpaqueSampleCount(page, '[data-testid="costume-vector-texture-overlay"]'),
       { timeout: 10000 },
     ).toBeGreaterThan(10);
+  });
+
+  test('costume editor preserves object stacking when a textured fill sits behind a later solid shape', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await addVectorLayer(page);
+
+    await page.evaluate(async () => {
+      const { useProjectStore } = await import('/src/store/projectStore.ts');
+      const project = useProjectStore.getState().project;
+      const scene = project?.scenes?.[0];
+      const object = scene?.objects?.[0];
+      const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+      if (!scene || !object || !costume?.id || !costume.assetId) {
+        throw new Error('Missing scene object costume for vector stacking test.');
+      }
+
+      const fabricJson = JSON.stringify({
+        version: '7.0.0',
+        objects: [
+          {
+            type: 'rect',
+            version: '7.0.0',
+            originX: 'left',
+            originY: 'top',
+            left: 180,
+            top: 180,
+            width: 420,
+            height: 420,
+            fill: 'rgba(34, 197, 94, 0)',
+            stroke: 'rgba(34, 197, 94, 0)',
+            strokeWidth: 0,
+            vectorFillTextureId: 'grain',
+            vectorFillColor: '#22C55E',
+            vectorFillOpacity: 1,
+            vectorStrokeBrushId: 'solid',
+            vectorStrokeColor: '#22C55E',
+            vectorStrokeOpacity: 1,
+          },
+          {
+            type: 'rect',
+            version: '7.0.0',
+            originX: 'left',
+            originY: 'top',
+            left: 360,
+            top: 360,
+            width: 280,
+            height: 280,
+            fill: '#EF4444',
+            stroke: 'rgba(239, 68, 68, 0)',
+            strokeWidth: 0,
+            vectorFillTextureId: 'solid',
+            vectorFillColor: '#EF4444',
+            vectorFillOpacity: 1,
+            vectorStrokeBrushId: 'solid',
+            vectorStrokeColor: '#EF4444',
+            vectorStrokeOpacity: 1,
+          },
+        ],
+      });
+
+      useProjectStore.getState().updateCostumeFromEditor(
+        {
+          sceneId: scene.id,
+          objectId: object.id,
+          costumeId: costume.id,
+        },
+        {
+          assetId: costume.assetId,
+          bounds: costume.bounds,
+          assetFrame: costume.assetFrame,
+          document: {
+            version: 1,
+            activeLayerId: 'stacking-vector-layer',
+            layers: [
+              {
+                id: 'stacking-vector-layer',
+                name: 'Vector Layer',
+                kind: 'vector',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                mask: null,
+                effects: [],
+                vector: {
+                  engine: 'fabric',
+                  version: 1,
+                  fabricJson,
+                },
+              },
+            ],
+          },
+        },
+      );
+    });
+
+    await roundTripThroughCodeTab(page);
+
+    const box = await getCostumeCanvasBox(page);
+    const overlapSample = {
+      x: Math.round(box.width * 0.50),
+      y: Math.round(box.height * 0.50),
+    };
+
+    await expect.poll(async () => {
+      const overlap = await readCostumeEditorCompositePixel(page, overlapSample);
+      if (!overlap) {
+        return false;
+      }
+      return overlap.a > 0 && overlap.r > overlap.g * 1.4;
+    }, { timeout: 10000 }).toBe(true);
   });
 
   test('triangle shapes draw where the gesture starts in the costume editor', async ({ page }) => {

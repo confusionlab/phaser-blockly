@@ -29,8 +29,10 @@ import {
   AlignCenter,
   AlignRight,
   FlipHorizontal2,
+  Layers3,
   FlipVertical2,
   RotateCw,
+  Unlink,
 } from '@/components/ui/icons';
 import {
   DropdownMenu,
@@ -40,6 +42,7 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
+  dropdownMenuContentClassName,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { CostumeEditorMode } from '@/types';
@@ -554,8 +557,12 @@ interface CostumeToolbarProps {
   previewScale?: number;
   onToolChange: (tool: DrawingTool) => void;
   onMoveOrder: (action: MoveOrderAction) => void;
+  canGroupSelection?: boolean;
+  canUngroupSelection?: boolean;
+  onGroupSelection?: () => void;
   onFlipSelection: (axis: SelectionFlipAxis) => void;
   onRotateSelection: () => void;
+  onUngroupSelection?: () => void;
   vectorHandleMode: VectorHandleMode;
   onVectorHandleModeChange: (mode: EditableVectorHandleMode) => void;
   onAlign: (action: AlignAction) => void;
@@ -684,8 +691,12 @@ export const CostumeToolbar = memo(({
   previewScale = 1,
   onToolChange,
   onMoveOrder,
+  canGroupSelection = false,
+  canUngroupSelection = false,
+  onGroupSelection,
   onFlipSelection,
   onRotateSelection,
+  onUngroupSelection,
   vectorHandleMode,
   onVectorHandleModeChange,
   onAlign,
@@ -880,6 +891,30 @@ export const CostumeToolbar = memo(({
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}
+                      {editorMode === 'vector' && onGroupSelection ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1.5 px-3 text-xs"
+                          onClick={onGroupSelection}
+                          disabled={!canGroupSelection}
+                        >
+                          <Layers3 className="size-3.5" />
+                          Group
+                        </Button>
+                      ) : null}
+                      {editorMode === 'vector' && onUngroupSelection ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1.5 px-3 text-xs"
+                          onClick={onUngroupSelection}
+                          disabled={!canUngroupSelection}
+                        >
+                          <Unlink className="size-3.5" />
+                          Ungroup
+                        </Button>
+                      ) : null}
                       <DropdownMenu
                         open={openMenu === 'align'}
                         onOpenChange={(open) => handleMenuOpenChange('align', open)}

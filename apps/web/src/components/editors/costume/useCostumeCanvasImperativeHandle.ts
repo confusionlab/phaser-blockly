@@ -33,6 +33,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
   markActiveLayerCanvasStatePersisted: (state: ActiveLayerCanvasState | null | undefined, sessionKey?: string | null) => void;
   markCurrentSnapshotPersisted: (sessionKey?: string | null) => void;
   moveSelectionOrder: (action: any) => boolean;
+  groupSelection: () => boolean;
   nudgeSelection: (dx: number, dy: number) => boolean;
   pasteSelection: () => Promise<boolean>;
   persistedSnapshotRef: MutableRefObject<any>;
@@ -42,6 +43,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
   saveHistory: () => void;
   setEditorMode: (mode: CostumeEditorMode) => void;
   switchEditorMode: (mode: CostumeEditorMode) => Promise<void>;
+  ungroupSelection: () => boolean;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
 }
 
@@ -65,6 +67,7 @@ export function useCostumeCanvasImperativeHandle({
   markActiveLayerCanvasStatePersisted,
   markCurrentSnapshotPersisted,
   moveSelectionOrder,
+  groupSelection,
   nudgeSelection,
   copySelection,
   cutSelection,
@@ -75,6 +78,7 @@ export function useCostumeCanvasImperativeHandle({
   rotateSelection,
   setEditorMode,
   switchEditorMode,
+  ungroupSelection,
   editorModeRef,
 }: UseCostumeCanvasImperativeHandleOptions) {
   useImperativeHandle(ref, () => ({
@@ -147,6 +151,10 @@ export function useCostumeCanvasImperativeHandle({
 
     moveSelectionOrder,
 
+    groupSelection,
+
+    ungroupSelection,
+
     nudgeSelection,
 
     flipSelection,
@@ -200,6 +208,7 @@ export function useCostumeCanvasImperativeHandle({
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
     moveSelectionOrder,
+    groupSelection,
     nudgeSelection,
     pasteSelection,
     persistedSnapshotRef,
@@ -208,6 +217,7 @@ export function useCostumeCanvasImperativeHandle({
     rotateSelection,
     setEditorMode,
     switchEditorMode,
+    ungroupSelection,
     editorModeRef,
   ]);
 }

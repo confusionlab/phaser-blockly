@@ -8,6 +8,12 @@ import {
   DEFAULT_VECTOR_STROKE_BRUSH_ID,
   type VectorStrokeBrushId,
 } from '@/lib/vector/vectorStrokeBrushCore';
+import {
+  getFabricChildObjects,
+  getFabricObjectType as getSharedFabricObjectType,
+  isActiveSelectionObject as isSharedActiveSelectionObject,
+  isFabricGroupObject,
+} from '@/lib/editor/fabricVectorSelection';
 import type {
   VectorPathNodeHandleType,
   VectorStyleCapabilities,
@@ -416,14 +422,11 @@ const getColorAlpha = (value: unknown): number | undefined => {
 };
 
 export function getFabricObjectType(obj: unknown): string {
-  if (!obj || typeof obj !== 'object') return '';
-  const maybe = obj as { type?: unknown };
-  return typeof maybe.type === 'string' ? maybe.type.trim().toLowerCase() : '';
+  return getSharedFabricObjectType(obj);
 }
 
 export function isActiveSelectionObject(obj: unknown): obj is ActiveSelection {
-  const type = getFabricObjectType(obj);
-  return type === 'activeselection' || type === 'active_selection';
+  return isSharedActiveSelectionObject(obj);
 }
 
 export function isTextObject(obj: unknown): obj is {
@@ -448,17 +451,36 @@ export function getSelectedObjects(obj: unknown): any[] {
   return [obj];
 }
 
+function collectVectorStyleTargets(target: unknown, into: any[]) {
+  if (!target) {
+    return;
+  }
+
+  if (isActiveSelectionObject(target) || isFabricGroupObject(target)) {
+    for (const child of getFabricChildObjects(target)) {
+      collectVectorStyleTargets(child, into);
+    }
+    return;
+  }
+
+  if (
+    target &&
+    !isImageObject(target) &&
+    !isTextObject(target) &&
+    !isActiveSelectionObject(target)
+  ) {
+    into.push(target);
+  }
+}
+
 export function isDirectlyEditablePathObject(obj: unknown): obj is { type: 'path' } {
   return getFabricObjectType(obj) === 'path';
 }
 
 export function getVectorStyleTargets(obj: unknown): any[] {
-  return getSelectedObjects(obj).filter((candidate) => (
-    !!candidate &&
-    !isImageObject(candidate) &&
-    !isTextObject(candidate) &&
-    !isActiveSelectionObject(candidate)
-  ));
+  const targets: any[] = [];
+  collectVectorStyleTargets(obj, targets);
+  return targets;
 }
 
 export interface VectorBrushStylableObject {
@@ -797,6 +819,26 @@ export function normalizeVectorObjectRendering(obj: unknown): boolean {
     return false;
   }
 
+  if (isFabricGroupObject(obj)) {
+    let changed = false;
+    const group = obj as {
+      set?: (props: Record<string, unknown>) => void;
+      setCoords?: () => void;
+      subTargetCheck?: boolean;
+    };
+    if (group.subTargetCheck !== true) {
+      group.set?.({ subTargetCheck: true });
+      changed = true;
+    }
+    for (const child of getFabricChildObjects(obj)) {
+      changed = normalizeVectorObjectRendering(child) || changed;
+    }
+    if (changed) {
+      group.setCoords?.();
+    }
+    return changed;
+  }
+
   const candidate = obj as {
     path?: unknown;
     nodeHandleTypes?: unknown;
@@ -970,7 +1012,7 @@ export function getVectorStyleSelectionSnapshot(obj: unknown): VectorToolStyleSe
 
 export function isVectorPointSelectableObject(obj: unknown): obj is Record<string, any> {
   if (!obj || typeof obj !== 'object') return false;
-  if (isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) return false;
+  if (isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj) || isFabricGroupObject(obj)) return false;
   return true;
 }
 

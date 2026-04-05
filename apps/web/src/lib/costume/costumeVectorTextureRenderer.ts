@@ -547,14 +547,8 @@ function sampleAngleAlongPolyline(
   return Math.atan2(nextPoint.y - previousPoint.y, nextPoint.x - previousPoint.x);
 }
 
-function transformVectorLocalPointToScene(obj: any, x: number, y: number, pathOffset?: Point | null) {
-  const offsetX = pathOffset?.x ?? 0;
-  const offsetY = pathOffset?.y ?? 0;
-  return new Point(x - offsetX, y - offsetY).transform(obj.calcTransformMatrix());
-}
-
-function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points: Point[] }> {
-  if (!obj || typeof obj.calcTransformMatrix !== 'function') {
+function getVectorObjectLocalContourPaths(obj: any): Array<{ closed: boolean; points: Point[] }> {
+  if (!obj) {
     return [];
   }
 
@@ -562,17 +556,14 @@ function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points:
   const strokeSampleSpacing = getVectorStrokeSampleSpacing(
     typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1,
   );
-  const transformPoint = (x: number, y: number, pathOffset?: Point | null) => (
-    transformVectorLocalPointToScene(obj, x, y, pathOffset)
-  );
 
   if (objectType === 'line' && typeof obj.calcLinePoints === 'function') {
     const points = obj.calcLinePoints();
     return [{
       closed: false,
       points: [
-        transformPoint(points.x1, points.y1),
-        transformPoint(points.x2, points.y2),
+        new Point(points.x1, points.y1),
+        new Point(points.x2, points.y2),
       ],
     }];
   }
@@ -583,10 +574,10 @@ function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points:
     return [{
       closed: true,
       points: [
-        transformPoint(-halfWidth, -halfHeight),
-        transformPoint(halfWidth, -halfHeight),
-        transformPoint(halfWidth, halfHeight),
-        transformPoint(-halfWidth, halfHeight),
+        new Point(-halfWidth, -halfHeight),
+        new Point(halfWidth, -halfHeight),
+        new Point(halfWidth, halfHeight),
+        new Point(-halfWidth, halfHeight),
       ],
     }];
   }
@@ -599,7 +590,7 @@ function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points:
     const points: Point[] = [];
     for (let index = 0; index < segments; index += 1) {
       const angle = (index / segments) * Math.PI * 2;
-      points.push(transformPoint(Math.cos(angle) * radiusX, Math.sin(angle) * radiusY));
+      points.push(new Point(Math.cos(angle) * radiusX, Math.sin(angle) * radiusY));
     }
     return [{ closed: true, points }];
   }
@@ -608,7 +599,7 @@ function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points:
     const pathOffset = obj.pathOffset instanceof Point ? obj.pathOffset : new Point(obj.pathOffset?.x ?? 0, obj.pathOffset?.y ?? 0);
     return [{
       closed: objectType === 'polygon',
-      points: obj.points.map((point: { x: number; y: number }) => transformPoint(point.x, point.y, pathOffset)),
+      points: obj.points.map((point: { x: number; y: number }) => new Point(point.x - pathOffset.x, point.y - pathOffset.y)),
     }];
   }
 
@@ -629,7 +620,7 @@ function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points:
     for (const command of obj.path) {
       const commandType = getPathCommandType(command);
       if (commandType === 'M') {
-        currentPoint = transformPoint(command[1], command[2], pathOffset);
+        currentPoint = new Point(command[1] - pathOffset.x, command[2] - pathOffset.y);
         subpathStart = currentPoint;
         appendPoint(currentPoint);
         continue;
@@ -638,14 +629,14 @@ function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points:
         continue;
       }
       if (commandType === 'L') {
-        const endPoint = transformPoint(command[1], command[2], pathOffset);
+        const endPoint = new Point(command[1] - pathOffset.x, command[2] - pathOffset.y);
         appendPoint(endPoint);
         currentPoint = endPoint;
         continue;
       }
       if (commandType === 'Q') {
-        const control = transformPoint(command[1], command[2], pathOffset);
-        const endPoint = transformPoint(command[3], command[4], pathOffset);
+        const control = new Point(command[1] - pathOffset.x, command[2] - pathOffset.y);
+        const endPoint = new Point(command[3] - pathOffset.x, command[4] - pathOffset.y);
         const estimatedLength =
           getDistanceBetweenPoints(currentPoint, control) +
           getDistanceBetweenPoints(control, endPoint);
@@ -657,9 +648,9 @@ function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points:
         continue;
       }
       if (commandType === 'C') {
-        const control1 = transformPoint(command[1], command[2], pathOffset);
-        const control2 = transformPoint(command[3], command[4], pathOffset);
-        const endPoint = transformPoint(command[5], command[6], pathOffset);
+        const control1 = new Point(command[1] - pathOffset.x, command[2] - pathOffset.y);
+        const control2 = new Point(command[3] - pathOffset.x, command[4] - pathOffset.y);
+        const endPoint = new Point(command[5] - pathOffset.x, command[6] - pathOffset.y);
         const estimatedLength =
           getDistanceBetweenPoints(currentPoint, control1) +
           getDistanceBetweenPoints(control1, control2) +
@@ -685,14 +676,49 @@ function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points:
   return [];
 }
 
+function getVectorObjectContourPaths(obj: any): Array<{ closed: boolean; points: Point[] }> {
+  if (!obj || typeof obj.calcTransformMatrix !== 'function') {
+    return [];
+  }
+
+  const localContours = getVectorObjectLocalContourPaths(obj);
+  if (localContours.length === 0) {
+    return [];
+  }
+
+  const transform = obj.calcTransformMatrix();
+  return localContours.map((contour) => ({
+    closed: contour.closed,
+    points: contour.points.map((point) => point.transform(transform)),
+  }));
+}
+
+function getStableContourSeed(
+  localPoints: Point[],
+  closed: boolean,
+  contourIndex: number,
+) {
+  const start = localPoints[0];
+  if (!start) {
+    return hashNumberTriplet(contourIndex, closed ? 1 : 0, 0);
+  }
+  const nextDistinctPoint = localPoints.find((point, index) => (
+    index > 0 && getDistanceBetweenPoints(point, start) > 0.0001
+  )) ?? start;
+  return hashNumberTriplet(
+    start.x + contourIndex * 0.131,
+    start.y + (closed ? 0.733 : 0.271),
+    nextDistinctPoint.x * 0.071 + nextDistinctPoint.y * 0.047,
+  );
+}
+
 function drawVectorStrokeBrushPath(
   ctx: CanvasRenderingContext2D,
   points: Point[],
   closed: boolean,
   renderStyle: VectorStrokeBrushRenderStyle,
   options: {
-    motionOffsetX?: number;
-    motionOffsetY?: number;
+    contourSeed?: number;
   } = {},
 ) {
   if (renderStyle.kind !== 'bitmap-dab' || renderStyle.dabs.length === 0 || points.length < 2) {
@@ -709,13 +735,9 @@ function drawVectorStrokeBrushPath(
   }
 
   const tangentWindow = Math.max(1, renderStyle.spacing * 0.85);
-  const contourSeed = hashNumberTriplet(
-    totalLength,
-    pathPoints.length,
-    closed ? 1 : 0,
-  );
-  const motionOffsetX = Number.isFinite(options.motionOffsetX) ? Number(options.motionOffsetX) : 0;
-  const motionOffsetY = Number.isFinite(options.motionOffsetY) ? Number(options.motionOffsetY) : 0;
+  const contourSeed = Number.isFinite(options.contourSeed)
+    ? Number(options.contourSeed)
+    : hashNumberTriplet(pathPoints[0]?.x ?? 0, pathPoints[0]?.y ?? 0, closed ? 1 : 0);
 
   const renderDabAt = (distanceAlongPath: number, dabIndex: number) => {
     const point = samplePointAlongPolyline(
@@ -734,7 +756,7 @@ function drawVectorStrokeBrushPath(
       tangentWindow,
     );
     const dab = renderStyle.dabs[dabIndex % renderStyle.dabs.length];
-    const dabPositionSeed = distanceAlongPath / Math.max(0.0001, renderStyle.spacing);
+    const dabPositionSeed = dabIndex + 1;
     const scaleRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.17);
     const opacityRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.23);
     const rotationRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.41);
@@ -745,8 +767,8 @@ function drawVectorStrokeBrushPath(
     const jitterOpacity = clampUnit(1 + (((opacityRandom * 2) - 1) * renderStyle.opacityJitter));
     const scatterAngle = scatterAngleRandom * Math.PI * 2;
     const scatterRadius = renderStyle.scatter > 0 ? scatterRadiusRandom * renderStyle.scatter : 0;
-    const renderX = point.x + Math.cos(scatterAngle) * scatterRadius + motionOffsetX;
-    const renderY = point.y + Math.sin(scatterAngle) * scatterRadius + motionOffsetY;
+    const renderX = point.x + Math.cos(scatterAngle) * scatterRadius;
+    const renderY = point.y + Math.sin(scatterAngle) * scatterRadius;
     const drawWidth = Math.max(1, dab.width * jitterScale);
     const drawHeight = Math.max(1, dab.height * jitterScale);
 
@@ -949,17 +971,6 @@ function traceScenePolylinePath(
   return true;
 }
 
-function resolveMotionStabilizationOffset(points: Point[]) {
-  const anchorPoint = points[0];
-  if (!anchorPoint) {
-    return { x: 0, y: 0 };
-  }
-  return {
-    x: (Math.round(anchorPoint.x * 2) / 2) - anchorPoint.x,
-    y: (Math.round(anchorPoint.y * 2) / 2) - anchorPoint.y,
-  };
-}
-
 function cutOutSolidStrokeFromTexturedFill(ctx: CanvasRenderingContext2D, obj: any): void {
   const brushId = getVectorObjectStrokeBrushId(obj);
   const strokeWidth = typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 0;
@@ -992,6 +1003,159 @@ function cutOutSolidStrokeFromTexturedFill(ctx: CanvasRenderingContext2D, obj: a
   ctx.restore();
 }
 
+function objectHasVectorTextureDecorations(obj: any): boolean {
+  if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
+    return false;
+  }
+
+  const fillTextureId = getVectorObjectFillTextureId(obj);
+  const hasTexturedFill = (
+    vectorObjectSupportsFill(obj)
+    && fillTextureId !== DEFAULT_VECTOR_FILL_TEXTURE_ID
+    && !!getVectorObjectFillColor(obj)
+  );
+
+  const brushId = getVectorObjectStrokeBrushId(obj);
+  const strokeColor = getVectorObjectStrokeColor(obj);
+  const strokeWidth = typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 0;
+  const hasTexturedStroke = brushId !== DEFAULT_VECTOR_STROKE_BRUSH_ID && !!strokeColor && strokeWidth > 0;
+
+  return hasTexturedFill || hasTexturedStroke;
+}
+
+function applyContextTransform(
+  ctx: CanvasRenderingContext2D,
+  contextTransform?: number[] | null,
+) {
+  if (!contextTransform) {
+    return;
+  }
+
+  ctx.transform(
+    contextTransform[0] ?? 1,
+    contextTransform[1] ?? 0,
+    contextTransform[2] ?? 0,
+    contextTransform[3] ?? 1,
+    contextTransform[4] ?? 0,
+    contextTransform[5] ?? 0,
+  );
+}
+
+function renderVectorObjectBaseToContext(
+  ctx: CanvasRenderingContext2D,
+  obj: any,
+  options: {
+    contextTransform?: number[] | null;
+  } = {},
+): boolean {
+  if (!obj || isActiveSelectionObject(obj) || typeof obj.render !== 'function') {
+    return false;
+  }
+
+  ctx.save();
+  applyContextTransform(ctx, options.contextTransform);
+  obj.render(ctx);
+  ctx.restore();
+  return true;
+}
+
+function renderVectorTextureDecorationsForObject(
+  ctx: CanvasRenderingContext2D,
+  obj: any,
+  options: {
+    canvasSize?: number;
+    canvasWidth?: number;
+    canvasHeight?: number;
+    contextTransform?: number[] | null;
+    onTextureSourceReady?: (() => void) | null;
+  } = {},
+): boolean {
+  if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
+    return false;
+  }
+
+  const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  const canvasHeight = options.canvasHeight ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+
+  ctx.save();
+  applyContextTransform(ctx, options.contextTransform);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.setLineDash([]);
+
+  let rendered = false;
+
+  const fillTextureId = getVectorObjectFillTextureId(obj);
+  const fillColor = getVectorObjectFillColor(obj);
+  if (vectorObjectSupportsFill(obj) && fillTextureId !== DEFAULT_VECTOR_FILL_TEXTURE_ID && fillColor) {
+    const textureTile = createVectorFillTextureTile(
+      fillTextureId,
+      fillColor,
+      resolveVectorFillTextureSource(fillTextureId, options.onTextureSourceReady),
+    );
+    if (textureTile && typeof obj.calcTransformMatrix === 'function') {
+      ctx.save();
+      const transform = obj.calcTransformMatrix();
+      ctx.transform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
+      if (traceVectorObjectLocalPath(ctx, obj)) {
+        const pattern = ctx.createPattern(textureTile, 'repeat');
+        if (pattern) {
+          ctx.fillStyle = pattern;
+          ctx.globalAlpha = getVectorObjectFillOpacity(obj) ?? 1;
+          ctx.clip();
+          ctx.fillRect(-canvasWidth, -canvasHeight, canvasWidth * 3, canvasHeight * 3);
+          rendered = true;
+        }
+      }
+      ctx.restore();
+      // Remove the fill under a solid stroke so the object's base stroke remains visible.
+      cutOutSolidStrokeFromTexturedFill(ctx, obj);
+    }
+  }
+
+  const brushId = getVectorObjectStrokeBrushId(obj);
+  if (brushId !== DEFAULT_VECTOR_STROKE_BRUSH_ID) {
+    const strokeColor = getVectorObjectStrokeColor(obj);
+    const strokeWidth = typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 0;
+    if (strokeColor && strokeWidth > 0) {
+      const renderStyle = resolveVectorStrokeBrushRenderStyle(
+        brushId,
+        strokeColor,
+        strokeWidth,
+        options.onTextureSourceReady,
+      );
+      if (renderStyle && renderStyle.kind === 'bitmap-dab') {
+        const objectOpacity = getVectorObjectStrokeOpacity(obj) ?? 1;
+        const resolvedRenderStyle = objectOpacity === 1
+          ? renderStyle
+          : {
+              ...renderStyle,
+              dabs: renderStyle.dabs.map((dab) => ({
+                ...dab,
+                opacity: dab.opacity * objectOpacity,
+              })),
+            };
+
+        const localContourPaths = getVectorObjectLocalContourPaths(obj);
+        const contourPaths = getVectorObjectContourPaths(obj);
+        if (contourPaths.length === localContourPaths.length) {
+          for (let contourIndex = 0; contourIndex < contourPaths.length; contourIndex += 1) {
+            const contour = contourPaths[contourIndex];
+            const localContour = localContourPaths[contourIndex];
+            drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, resolvedRenderStyle, {
+              contourSeed: getStableContourSeed(localContour.points, localContour.closed, contourIndex),
+            });
+            rendered = true;
+          }
+        }
+      }
+    }
+  }
+
+  ctx.restore();
+  return rendered;
+}
+
 export function renderVectorTextureOverlayForObjects(
   ctx: CanvasRenderingContext2D,
   objects: readonly any[],
@@ -1002,7 +1166,6 @@ export function renderVectorTextureOverlayForObjects(
     clear?: boolean;
     contextTransform?: number[] | null;
     onTextureSourceReady?: (() => void) | null;
-    stabilizeMotion?: boolean;
   } = {},
 ) {
   const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
@@ -1019,103 +1182,76 @@ export function renderVectorTextureOverlayForObjects(
     return;
   }
 
-  overlayCtx.save();
-  const contextTransform = options.contextTransform;
-  if (contextTransform) {
-    overlayCtx.transform(
-      contextTransform[0] ?? 1,
-      contextTransform[1] ?? 0,
-      contextTransform[2] ?? 0,
-      contextTransform[3] ?? 1,
-      contextTransform[4] ?? 0,
-      contextTransform[5] ?? 0,
-    );
+  for (const obj of objects) {
+    if (!objectHasVectorTextureDecorations(obj)) {
+      continue;
+    }
+    renderVectorTextureDecorationsForObject(overlayCtx, obj, options);
   }
-  overlayCtx.lineCap = 'round';
-  overlayCtx.lineJoin = 'round';
-  overlayCtx.setLineDash([]);
+
+  ctx.drawImage(overlayCanvas, 0, 0, canvasWidth, canvasHeight);
+}
+
+export function renderComposedVectorSceneForObjects(
+  ctx: CanvasRenderingContext2D,
+  objects: readonly any[],
+  options: {
+    canvasSize?: number;
+    canvasWidth?: number;
+    canvasHeight?: number;
+    clear?: boolean;
+    contextTransform?: number[] | null;
+    onTextureSourceReady?: (() => void) | null;
+    motionSnapshot?: {
+      canvas: CanvasImageSource;
+      drawOffsetX: number;
+      drawOffsetY: number;
+      target: any;
+    } | null;
+  } = {},
+) {
+  const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  const canvasHeight = options.canvasHeight ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  if (options.clear !== false) {
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  }
+
+  const decorationCanvas = document.createElement('canvas');
+  decorationCanvas.width = Math.max(1, Math.round(canvasWidth));
+  decorationCanvas.height = Math.max(1, Math.round(canvasHeight));
+  const decorationCtx = getCanvas2dContext(decorationCanvas, 'readback');
+  if (!decorationCtx) {
+    return;
+  }
 
   for (const obj of objects) {
-    if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
+    if (!obj || isActiveSelectionObject(obj)) {
       continue;
     }
 
-    const fillTextureId = getVectorObjectFillTextureId(obj);
-    const fillColor = getVectorObjectFillColor(obj);
-    if (vectorObjectSupportsFill(obj) && fillTextureId !== DEFAULT_VECTOR_FILL_TEXTURE_ID && fillColor) {
-      const textureTile = createVectorFillTextureTile(
-        fillTextureId,
-        fillColor,
-        resolveVectorFillTextureSource(fillTextureId, options.onTextureSourceReady),
+    normalizeVectorObjectRendering(obj);
+    renderVectorObjectBaseToContext(ctx, obj, options);
+
+    const motionSnapshot = options.motionSnapshot;
+    if (motionSnapshot?.target === obj) {
+      ctx.drawImage(
+        motionSnapshot.canvas,
+        motionSnapshot.drawOffsetX,
+        motionSnapshot.drawOffsetY,
       );
-      if (textureTile && typeof obj.calcTransformMatrix === 'function') {
-        overlayCtx.save();
-        const transform = obj.calcTransformMatrix();
-        overlayCtx.transform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
-        if (traceVectorObjectLocalPath(overlayCtx, obj)) {
-          const pattern = overlayCtx.createPattern(textureTile, 'repeat');
-          if (pattern) {
-            overlayCtx.fillStyle = pattern;
-            overlayCtx.globalAlpha = getVectorObjectFillOpacity(obj) ?? 1;
-            overlayCtx.clip();
-            overlayCtx.fillRect(-canvasWidth, -canvasHeight, canvasWidth * 3, canvasHeight * 3);
-          }
-        }
-        overlayCtx.restore();
-        // Textured fills are composited in a post-pass above Fabric's solid stroke.
-        // Punch the stroke band back out so the already-rendered solid stroke stays visible.
-        cutOutSolidStrokeFromTexturedFill(overlayCtx, obj);
-      }
-    }
-
-    const brushId = getVectorObjectStrokeBrushId(obj);
-    if (brushId === DEFAULT_VECTOR_STROKE_BRUSH_ID) {
-      continue;
-    }
-    const strokeColor = getVectorObjectStrokeColor(obj);
-    const strokeWidth = typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 0;
-    if (!strokeColor || strokeWidth <= 0) {
       continue;
     }
 
-    const renderStyle = resolveVectorStrokeBrushRenderStyle(
-      brushId,
-      strokeColor,
-      strokeWidth,
-      options.onTextureSourceReady,
-    );
-    if (!renderStyle || renderStyle.kind !== 'bitmap-dab') {
-      continue;
-    }
-    const objectOpacity = getVectorObjectStrokeOpacity(obj) ?? 1;
-    const resolvedRenderStyle = objectOpacity === 1
-      ? renderStyle
-      : {
-          ...renderStyle,
-          dabs: renderStyle.dabs.map((dab) => ({
-            ...dab,
-            opacity: dab.opacity * objectOpacity,
-          })),
-        };
-
-    const contourPaths = getVectorObjectContourPaths(obj);
-    if (contourPaths.length === 0) {
+    if (!objectHasVectorTextureDecorations(obj)) {
       continue;
     }
 
-    for (const contour of contourPaths) {
-      const motionOffset = options.stabilizeMotion
-        ? resolveMotionStabilizationOffset(contour.points)
-        : null;
-      drawVectorStrokeBrushPath(overlayCtx, contour.points, contour.closed, resolvedRenderStyle, {
-        motionOffsetX: motionOffset?.x ?? 0,
-        motionOffsetY: motionOffset?.y ?? 0,
-      });
+    decorationCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+    const renderedDecorations = renderVectorTextureDecorationsForObject(decorationCtx, obj, options);
+    if (renderedDecorations) {
+      ctx.drawImage(decorationCanvas, 0, 0, canvasWidth, canvasHeight);
     }
   }
-
-  overlayCtx.restore();
-  ctx.drawImage(overlayCanvas, 0, 0, canvasWidth, canvasHeight);
 }
 
 export function renderVectorTextureOverlayForFabricCanvas(
@@ -1131,7 +1267,6 @@ export function renderVectorTextureOverlayForFabricCanvas(
     canvasHeight?: number;
     clear?: boolean;
     onTextureSourceReady?: (() => void) | null;
-    stabilizeMotion?: boolean;
   } = {},
 ) {
   const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
@@ -1141,6 +1276,47 @@ export function renderVectorTextureOverlayForFabricCanvas(
   }
 
   renderVectorTextureOverlayForObjects(
+    ctx,
+    [
+      ...(fabricCanvas.getObjects() as any[]),
+      ...(options.additionalObjects ?? []),
+    ],
+    {
+      ...options,
+      clear: false,
+      contextTransform: fabricCanvas.viewportTransform,
+    },
+  );
+}
+
+export function renderComposedVectorSceneForFabricCanvas(
+  ctx: CanvasRenderingContext2D,
+  fabricCanvas: {
+    getObjects: () => any[];
+    viewportTransform?: number[] | null;
+  },
+  options: {
+    additionalObjects?: readonly any[];
+    canvasSize?: number;
+    canvasWidth?: number;
+    canvasHeight?: number;
+    clear?: boolean;
+    onTextureSourceReady?: (() => void) | null;
+    motionSnapshot?: {
+      canvas: CanvasImageSource;
+      drawOffsetX: number;
+      drawOffsetY: number;
+      target: any;
+    } | null;
+  } = {},
+) {
+  const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  const canvasHeight = options.canvasHeight ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  if (options.clear !== false) {
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  }
+
+  renderComposedVectorSceneForObjects(
     ctx,
     [
       ...(fabricCanvas.getObjects() as any[]),
@@ -1184,11 +1360,7 @@ export async function renderVectorLayerDocumentToCanvas(
       return null;
     }
 
-    snapshotCtx.drawImage(vectorCanvasElement, 0, 0, canvasSize, canvasSize);
-    renderVectorTextureOverlayForFabricCanvas(snapshotCtx, vectorCanvas, {
-      canvasSize,
-      clear: false,
-    });
+    renderComposedVectorSceneForFabricCanvas(snapshotCtx, vectorCanvas, { canvasSize });
     return snapshotCanvas;
   } finally {
     vectorCanvas.dispose();

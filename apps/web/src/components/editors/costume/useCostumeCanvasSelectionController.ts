@@ -2,6 +2,11 @@ import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction 
 import { ActiveSelection, type Canvas as FabricCanvas } from 'fabric';
 import type { VectorHandleMode } from './CostumeToolbar';
 import {
+  fabricCanvasContainsObject,
+  getVectorGroupingAvailability,
+  type VectorGroupingAvailability,
+} from '@/lib/editor/fabricVectorSelection';
+import {
   resolveBitmapFloatingSelectionObject,
   resolveCostumeCanvasSelection,
 } from './costumeCanvasSelectionState';
@@ -26,6 +31,7 @@ interface UseCostumeCanvasSelectionControllerOptions {
     dragState: PathAnchorDragState;
   } | null>;
   onSelectionStateChangeRef: MutableRefObject<((state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void) | undefined>;
+  onVectorGroupingStateChangeRef?: MutableRefObject<((state: VectorGroupingAvailability) => void) | undefined>;
   onVectorPointEditingChangeRef: MutableRefObject<((isEditing: boolean) => void) | undefined>;
   onVectorPointSelectionChangeRef: MutableRefObject<((hasSelectedPoints: boolean) => void) | undefined>;
   pendingSelectionSyncedVectorHandleModeRef: MutableRefObject<VectorHandleMode | null>;
@@ -46,6 +52,7 @@ export function useCostumeCanvasSelectionController({
   fabricCanvasRef,
   insertedPathAnchorDragSessionRef,
   onSelectionStateChangeRef,
+  onVectorGroupingStateChangeRef,
   onVectorPointEditingChangeRef,
   onVectorPointSelectionChangeRef,
   pendingSelectionSyncedVectorHandleModeRef,
@@ -138,7 +145,7 @@ export function useCostumeCanvasSelectionController({
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
 
-    const nextObjects = selectedObjects.filter((obj) => fabricCanvas.getObjects().includes(obj));
+    const nextObjects = selectedObjects.filter((obj) => fabricCanvasContainsObject(fabricCanvas, obj));
     if (nextObjects.length === 0) {
       fabricCanvas.discardActiveObject();
       return;
@@ -165,11 +172,19 @@ export function useCostumeCanvasSelectionController({
       hasSelection,
       hasBitmapFloatingSelection: hasBitmap,
     });
+    onVectorGroupingStateChangeRef?.current?.(
+      layerVisible && editorModeRef.current === 'vector'
+        ? getVectorGroupingAvailability(fabricCanvasRef.current?.getActiveObject() as any)
+        : { canGroup: false, canUngroup: false },
+    );
   }, [
     activeLayerVisibleRef,
+    editorModeRef,
+    fabricCanvasRef,
     getResolvedCanvasSelection,
     getSelectionBoundsSnapshot,
     onSelectionStateChangeRef,
+    onVectorGroupingStateChangeRef,
     setCanZoomToSelection,
   ]);
 

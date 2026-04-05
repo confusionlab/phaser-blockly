@@ -1,6 +1,12 @@
 import { useCallback, type MutableRefObject, type RefObject } from 'react';
 import { type Canvas as FabricCanvas } from 'fabric';
 import { getBrushPaintColor, getCompositeOperation, type BitmapBrushKind } from '@/lib/background/brushCore';
+import {
+  fabricCanvasContainsObject,
+  forEachFabricObjectDeep,
+  sanitizeVectorGroupEditingPath,
+  syncVectorGroupInteractivity,
+} from '@/lib/editor/fabricVectorSelection';
 import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
 import type { CostumeEditorMode } from '@/types';
 import { attachTextEditingContainer, isTextEditableObject } from './costumeTextCommands';
@@ -46,6 +52,8 @@ interface UseCostumeCanvasToolControllerOptions {
   syncBrushCursorOverlay: () => void;
   syncSelectionState: () => void;
   textEditingHostRef: RefObject<HTMLDivElement | null>;
+  hoveredVectorTargetRef?: MutableRefObject<any | null>;
+  vectorGroupEditingPathRef: MutableRefObject<any[]>;
   vectorPointEditingTargetRef: MutableRefObject<any | null>;
   vectorStyleRef: MutableRefObject<any>;
 }
@@ -75,6 +83,8 @@ export function useCostumeCanvasToolController({
   syncBrushCursorOverlay,
   syncSelectionState,
   textEditingHostRef,
+  hoveredVectorTargetRef,
+  vectorGroupEditingPathRef,
   vectorPointEditingTargetRef,
   vectorStyleRef,
 }: UseCostumeCanvasToolControllerOptions) {
@@ -135,7 +145,7 @@ export function useCostumeCanvasToolController({
     const layerInteractive = activeLayerVisible && !activeLayerLocked;
     const pointEditingTarget = vectorPointEditingTargetRef.current;
 
-    if (pointEditingTarget && !fabricCanvas.getObjects().includes(pointEditingTarget)) {
+    if (pointEditingTarget && !fabricCanvasContainsObject(fabricCanvas, pointEditingTarget)) {
       setVectorPointEditingTarget(null);
     }
     if (vectorPointEditingTargetRef.current && (mode !== 'vector' || tool !== 'select' || !layerInteractive)) {
@@ -203,12 +213,16 @@ export function useCostumeCanvasToolController({
     restoreAllOriginalControls();
     applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     fabricCanvas.selection = isVectorSelectionMode;
+    vectorGroupEditingPathRef.current = isVectorSelectionMode
+      ? sanitizeVectorGroupEditingPath(fabricCanvas, vectorGroupEditingPathRef.current)
+      : [];
+    syncVectorGroupInteractivity(fabricCanvas, vectorGroupEditingPathRef.current);
     const selectionTokens = getResolvedEditorSelectionTokens();
     fabricCanvas.selectionColor = selectionTokens.fill;
     fabricCanvas.selectionBorderColor = selectionTokens.accent;
     fabricCanvas.selectionLineWidth = 2;
     fabricCanvas.selectionDashArray = [];
-    fabricCanvas.forEachObject((obj: any) => {
+    forEachFabricObjectDeep(fabricCanvas, (obj: any) => {
       if (isTextEditableObject(obj)) {
         attachTextEditingContainer(obj, textEditingHostRef.current);
       }
@@ -253,6 +267,9 @@ export function useCostumeCanvasToolController({
         }
       }
     });
+    if (hoveredVectorTargetRef && (!isVectorSelectionMode || !fabricCanvasContainsObject(fabricCanvas, hoveredVectorTargetRef.current))) {
+      hoveredVectorTargetRef.current = null;
+    }
 
     let activeObject = fabricCanvas.getActiveObject() as any;
     if (!layerInteractive && activeObject) {

@@ -89,6 +89,7 @@ import {
 import {
   handleSelectionClipboardShortcuts,
   handleSelectionDeleteShortcut,
+  handleSelectionGroupingShortcuts,
   handleSelectionNudgeShortcut,
   handleToolSwitchShortcut,
 } from '@/lib/editor/editorSurfaceShortcuts';
@@ -379,6 +380,8 @@ export function CostumeEditor() {
   const [canRedo, setCanRedo] = useState(false);
   const [hasCanvasSelection, setHasCanvasSelection] = useState(false);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
+  const [canGroupSelection, setCanGroupSelection] = useState(false);
+  const [canUngroupSelection, setCanUngroupSelection] = useState(false);
   const [canvasPreviewScale, setCanvasPreviewScale] = useState(DEFAULT_COSTUME_PREVIEW_SCALE);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [showSessionLoadingOverlay, setShowSessionLoadingOverlay] = useState(false);
@@ -857,6 +860,8 @@ export function CostumeEditor() {
     const deleteSelection = () => canvasRef.current?.deleteSelection() ?? false;
     const duplicateSelection = () => canvasRef.current?.duplicateSelection() ?? false;
     const pasteSelection = () => canvasRef.current?.pasteSelection() ?? false;
+    const groupSelection = () => canvasRef.current?.groupSelection() ?? false;
+    const ungroupSelection = () => canvasRef.current?.ungroupSelection() ?? false;
     const nudgeSelection = (dx: number, dy: number) => canvasRef.current?.nudgeSelection(dx, dy) ?? false;
     const handler: UndoRedoHandler = {
       undo: () => {
@@ -933,6 +938,13 @@ export function CostumeEditor() {
           pasteSelection,
           cutSelection,
         }, 'costume')) {
+          return true;
+        }
+
+        if (editorMode === 'vector' && handleSelectionGroupingShortcuts(event, {
+          groupSelection,
+          ungroupSelection,
+        })) {
           return true;
         }
 
@@ -1488,6 +1500,8 @@ export function CostumeEditor() {
     }
     setHasCanvasSelection(false);
     setHasBitmapFloatingSelection(false);
+    setCanGroupSelection(false);
+    setCanUngroupSelection(false);
     setIsVectorPointEditing(false);
     setHasSelectedVectorPoints(false);
     setHasTextSelection(false);
@@ -1522,12 +1536,31 @@ export function CostumeEditor() {
     canvasRef.current?.rotateSelection();
   }, []);
 
+  const handleGroupSelection = useCallback(() => {
+    if (isLoadingRef.current) {
+      return;
+    }
+    canvasRef.current?.groupSelection();
+  }, []);
+
+  const handleUngroupSelection = useCallback(() => {
+    if (isLoadingRef.current) {
+      return;
+    }
+    canvasRef.current?.ungroupSelection();
+  }, []);
+
   const handleSelectionStateChange = useCallback((state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => {
     setHasCanvasSelection(state.hasSelection);
     setHasBitmapFloatingSelection(state.hasBitmapFloatingSelection);
     if (!state.hasSelection) {
       setVectorStyleMixedState({});
     }
+  }, []);
+
+  const handleVectorGroupingStateChange = useCallback((state: { canGroup: boolean; canUngroup: boolean }) => {
+    setCanGroupSelection(state.canGroup);
+    setCanUngroupSelection(state.canUngroup);
   }, []);
 
   const handleTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
@@ -1674,8 +1707,12 @@ export function CostumeEditor() {
             previewScale={canvasPreviewScale}
             onToolChange={handleToolChange}
             onMoveOrder={handleMoveOrder}
+            canGroupSelection={canGroupSelection}
+            canUngroupSelection={canUngroupSelection}
+            onGroupSelection={handleGroupSelection}
             onFlipSelection={handleFlipSelection}
             onRotateSelection={handleRotateSelection}
+            onUngroupSelection={handleUngroupSelection}
             vectorHandleMode={vectorHandleMode}
             onVectorHandleModeChange={(mode) => setVectorHandleMode(mode)}
             onAlign={handleAlign}
@@ -1725,6 +1762,7 @@ export function CostumeEditor() {
             onVectorPointSelectionChange={setHasSelectedVectorPoints}
             onTextSelectionChange={setHasTextSelection}
             onSelectionStateChange={handleSelectionStateChange}
+            onVectorGroupingStateChange={handleVectorGroupingStateChange}
             onViewScaleChange={setCanvasPreviewScale}
           />
           {editorCostume ? (

@@ -41,18 +41,6 @@ export function CostumeActiveLayerVisual({
         zIndex: layerZIndex,
       }}
     >
-      <div
-        ref={fabricCanvasHostRef}
-        data-testid="costume-active-layer-host"
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: CANVAS_SIZE,
-          height: CANVAS_SIZE,
-        }}
-      />
-
       <canvas
         ref={vectorStrokeCanvasRef}
         data-testid="costume-vector-texture-overlay"
@@ -66,6 +54,19 @@ export function CostumeActiveLayerVisual({
           height: CANVAS_SIZE,
           pointerEvents: 'none',
           opacity: hostReady && activeLayerVisible ? activeLayerOpacity : 0,
+        }}
+      />
+
+      <div
+        ref={fabricCanvasHostRef}
+        data-testid="costume-active-layer-host"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: CANVAS_SIZE,
+          height: CANVAS_SIZE,
+          zIndex: 1,
         }}
       />
     </div>

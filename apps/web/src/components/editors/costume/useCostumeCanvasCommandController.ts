@@ -73,7 +73,6 @@ interface UseCostumeCanvasCommandControllerOptions {
   onVectorStyleCapabilitiesSyncRef: MutableRefObject<((capabilities: VectorStyleCapabilities) => void) | undefined>;
   onVectorStyleSyncRef: MutableRefObject<((snapshot: VectorToolStyleSelectionSnapshot) => boolean) | undefined>;
   rebaseHistoryToCurrentSnapshot: (sessionKey?: string | null) => void;
-  renderVectorBrushStrokeOverlay: (ctx: CanvasRenderingContext2D, options?: { clear?: boolean }) => void;
   resolveBitmapFillTextureSource: (textureId: BitmapFillStyle['textureId']) => CanvasImageSource | null;
   restoreCanvasSelection: (selectedObjects: any[]) => void;
   saveHistory: () => void;
@@ -81,11 +80,13 @@ interface UseCostumeCanvasCommandControllerOptions {
   setBitmapFloatingSelectionObject: (nextObject: any | null, options?: { activate?: boolean; syncState?: boolean }) => void;
   setHostedLayerId: (layerId: string | null) => void;
   setHostedLayerReady: (ready: boolean) => void;
+  markHostedLayerRenderPending: () => void;
   suppressBitmapSelectionAutoCommitRef: MutableRefObject<boolean>;
   suppressHistoryRef: MutableRefObject<boolean>;
   syncSelectionState: () => void;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
+  vectorGroupEditingPathRef: MutableRefObject<any[]>;
   waitForFabricCanvas: (requestId?: number) => Promise<FabricCanvas | null>;
 }
 
@@ -153,7 +154,6 @@ export function useCostumeCanvasCommandController({
   onVectorStyleCapabilitiesSyncRef,
   onVectorStyleSyncRef,
   rebaseHistoryToCurrentSnapshot,
-  renderVectorBrushStrokeOverlay,
   resolveBitmapFillTextureSource,
   restoreCanvasSelection,
   saveHistory,
@@ -161,11 +161,13 @@ export function useCostumeCanvasCommandController({
   setBitmapFloatingSelectionObject,
   setHostedLayerId,
   setHostedLayerReady,
+  markHostedLayerRenderPending,
   suppressBitmapSelectionAutoCommitRef,
   suppressHistoryRef,
   syncSelectionState,
   textStyle,
   vectorStyle,
+  vectorGroupEditingPathRef,
   waitForFabricCanvas,
 }: UseCostumeCanvasCommandControllerOptions) {
   const pendingVectorStyleHistorySaveRef = useRef<number | null>(null);
@@ -210,11 +212,10 @@ export function useCostumeCanvasCommandController({
 
     for (const layer of documentLayers) {
       if (canRenderHostedLayer && layer.id === hostedLayerId && baseCanvas) {
-          composedCtx.save();
-          composedCtx.globalAlpha = activeLayerVisible ? activeLayerOpacity : 0;
-          composedCtx.drawImage(baseCanvas, 0, 0);
-          renderVectorBrushStrokeOverlay(composedCtx, { clear: false });
-          composedCtx.restore();
+        composedCtx.save();
+        composedCtx.globalAlpha = activeLayerVisible ? activeLayerOpacity : 0;
+        composedCtx.drawImage(baseCanvas, 0, 0);
+        composedCtx.restore();
         continue;
       }
 
@@ -244,7 +245,6 @@ export function useCostumeCanvasCommandController({
     hostedLayerIdRef,
     isHostedLayerReadyRef,
     layerSurfaceRefs,
-    renderVectorBrushStrokeOverlay,
   ]);
 
   const getSelectionMousePos = useCallback((event: MouseEvent) => {
@@ -264,10 +264,12 @@ export function useCostumeCanvasCommandController({
   const {
     alignSelection: alignCanvasSelection,
     deleteSelection: deleteCanvasSelection,
+    groupSelection: groupCanvasSelection,
     moveSelectionOrder: moveCanvasSelectionOrder,
     nudgeSelection: nudgeCanvasSelection,
     flipSelection: flipCanvasSelection,
     rotateSelection: rotateCanvasSelection,
+    ungroupSelection: ungroupCanvasSelection,
   } = useCostumeCanvasSelectionTransformCommands({
     fabricCanvasRef,
     getAlignmentBounds: () => ({
@@ -485,7 +487,7 @@ export function useCostumeCanvasCommandController({
     copySelection,
     cutSelection,
     pasteSelection,
-  } = useFabricVectorClipboardCommands({
+  } = useFabricVectorClipboardCommands<any>({
     canRun: () => editorModeRef.current === 'vector',
     cloneObject: cloneFabricObjectWithVectorStyle,
     deleteSelection: deleteCanvasSelection,
@@ -496,6 +498,7 @@ export function useCostumeCanvasCommandController({
       x: CANVAS_SIZE / 2,
       y: CANVAS_SIZE / 2,
     },
+    resolveInsertionParent: () => vectorGroupEditingPathRef.current.at(-1) ?? null,
     saveHistory,
     syncSelectionState,
   });
@@ -527,6 +530,16 @@ export function useCostumeCanvasCommandController({
   const alignSelection = useCallback((action: AlignAction): boolean => {
     return alignCanvasSelection(action);
   }, [alignCanvasSelection]);
+
+  const groupSelection = useCallback((): boolean => {
+    if (editorModeRef.current !== 'vector') return false;
+    return groupCanvasSelection();
+  }, [editorModeRef, groupCanvasSelection]);
+
+  const ungroupSelection = useCallback((): boolean => {
+    if (editorModeRef.current !== 'vector') return false;
+    return ungroupCanvasSelection();
+  }, [editorModeRef, ungroupCanvasSelection]);
 
   const isTextEditing = useCallback((): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -584,7 +597,8 @@ export function useCostumeCanvasCommandController({
 
     if (!isLoadRequestActive(requestId)) return;
     setHostedLayerId(nextHostedLayerId);
-    setHostedLayerReady(true);
+    markHostedLayerRenderPending();
+    fabricCanvas.requestRenderAll();
     loadedSessionKeyRef.current = sessionKey;
     rebaseHistoryToCurrentSnapshot(sessionKey);
   }, [
@@ -595,6 +609,7 @@ export function useCostumeCanvasCommandController({
     loadBitmapLayer,
     loadRequestIdRef,
     loadedSessionKeyRef,
+    markHostedLayerRenderPending,
     normalizeCanvasVectorStrokeUniform,
     rebaseHistoryToCurrentSnapshot,
     setEditorMode,
@@ -705,10 +720,12 @@ export function useCostumeCanvasCommandController({
     nudgeSelection,
     pasteSelection,
     rotateSelection,
+    groupSelection,
     switchEditorMode,
     syncActiveVectorStyle,
     syncTextSelectionState,
     syncTextStyleFromSelection,
     syncVectorStyleFromSelection,
+    ungroupSelection,
   };
 }

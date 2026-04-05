@@ -1,11 +1,13 @@
 import { Card } from '@/components/ui/card';
-import { Clipboard, Copy, CopyPlus, Scissors, Trash2 } from '@/components/ui/icons';
+import { Clipboard, Copy, CopyPlus, Layers3, Scissors, Trash2, Unlink } from '@/components/ui/icons';
 import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
 
 type SelectionActionContextMenuProps = {
   canCopy: boolean;
   canDelete?: boolean;
+  canGroup?: boolean;
   canPaste: boolean;
+  canUngroup?: boolean;
   dataTestId?: string;
   deleteLabel?: string;
   onClose: () => void;
@@ -13,14 +15,18 @@ type SelectionActionContextMenuProps = {
   onCut?: () => void;
   onDelete?: () => void;
   onDuplicate?: () => void;
+  onGroup?: () => void;
   onPaste?: () => void;
+  onUngroup?: () => void;
   position: { x: number; y: number };
 };
 
 export function SelectionActionContextMenu({
   canCopy,
   canDelete = canCopy,
+  canGroup = false,
   canPaste,
+  canUngroup = false,
   dataTestId = 'selection-action-context-menu',
   deleteLabel = 'Delete',
   onClose,
@@ -28,11 +34,15 @@ export function SelectionActionContextMenu({
   onCut,
   onDelete,
   onDuplicate,
+  onGroup,
   onPaste,
+  onUngroup,
   position,
 }: SelectionActionContextMenuProps) {
   const hasClipboardAction = !!(onCopy || onCut || onPaste || onDuplicate);
-  const showDeleteSeparator = !!(onDelete && hasClipboardAction);
+  const hasGroupingAction = !!(onGroup || onUngroup);
+  const showGroupingSeparator = hasGroupingAction && hasClipboardAction;
+  const showDeleteSeparator = !!(onDelete && (hasClipboardAction || hasGroupingAction));
 
   return (
     <>
@@ -68,6 +78,17 @@ export function SelectionActionContextMenu({
         {onDuplicate ? (
           <MenuItemButton icon={<CopyPlus className="size-4" />} onClick={onDuplicate} disabled={!canCopy}>
             Duplicate
+          </MenuItemButton>
+        ) : null}
+        {showGroupingSeparator ? <MenuSeparator /> : null}
+        {onGroup ? (
+          <MenuItemButton icon={<Layers3 className="size-4" />} onClick={onGroup} disabled={!canGroup}>
+            Group
+          </MenuItemButton>
+        ) : null}
+        {onUngroup ? (
+          <MenuItemButton icon={<Unlink className="size-4" />} onClick={onUngroup} disabled={!canUngroup}>
+            Ungroup
           </MenuItemButton>
         ) : null}
         {showDeleteSeparator ? <MenuSeparator /> : null}

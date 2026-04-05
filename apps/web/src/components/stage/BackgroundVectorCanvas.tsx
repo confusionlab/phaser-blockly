@@ -54,10 +54,11 @@ import {
   getFabricStrokeValueForVectorBrush,
   getVectorStyleSelectionSnapshot,
   getVectorStyleCapabilitiesForSelection,
+  isActiveSelectionObject,
   isTextObject,
+  isVectorPointSelectableObject,
   normalizeVectorObjectRendering,
 } from '@/components/editors/costume/costumeCanvasVectorRuntime';
-import { useFabricVectorTextureOverlay } from '@/components/editors/shared/useFabricVectorTextureOverlay';
 import { useFabricVectorClipboardCommands } from '@/components/editors/shared/useFabricVectorClipboardCommands';
 import {
   appendLinearLocalHistorySnapshot,
@@ -90,6 +91,15 @@ import {
 } from '@/lib/background/backgroundVectorCoordinateSpace';
 import { clearCanvasInCssPixels, syncCanvasViewportSize } from '@/lib/editor/canvasOverlay';
 import type { FinishPendingEditsOptions } from '@/lib/editor/interactionSurface';
+import { renderComposedVectorSceneForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
+import {
+  fabricCanvasContainsObject,
+  forEachFabricObjectDeep,
+  getVectorGroupEditingPathForTarget,
+  isFabricGroupObject,
+  resolveVectorHoverTarget,
+  sanitizeVectorGroupEditingPath,
+} from '@/lib/editor/fabricVectorSelection';
 
 type WorldPoint = { x: number; y: number };
 
@@ -145,6 +155,8 @@ export interface BackgroundVectorCanvasHandle {
   cutSelection: () => Promise<boolean>;
   pasteSelection: () => Promise<boolean>;
   moveSelectionOrder: (action: MoveOrderAction) => void;
+  groupSelection: () => boolean;
+  ungroupSelection: () => boolean;
   nudgeSelection: (dx: number, dy: number) => boolean;
   flipSelection: (axis: SelectionFlipAxis) => void;
   rotateSelection: () => void;
@@ -169,6 +181,7 @@ interface BackgroundVectorCanvasProps {
   onDirty: () => void;
   onHistoryStateChange: (state: { canUndo: boolean; canRedo: boolean; isDirty: boolean }) => void;
   onSelectionChange: (hasSelection: boolean) => void;
+  onVectorGroupingStateChange?: (state: { canGroup: boolean; canUngroup: boolean }) => void;
   onTextSelectionChange: (hasTextSelection: boolean) => void;
   onTextStyleSync: (style: Partial<TextToolStyle>) => void;
   vectorHandleMode: VectorHandleMode;
@@ -363,6 +376,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   onDirty,
   onHistoryStateChange,
   onSelectionChange,
+  onVectorGroupingStateChange,
   onTextSelectionChange,
   onTextStyleSync,
   vectorHandleMode,
@@ -394,6 +408,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const originalControlsRef = useRef<WeakMap<object, Record<string, Control> | undefined>>(new WeakMap());
   const activePathAnchorRef = useRef<{ path: any; anchorIndex: number } | null>(null);
   const vectorPointEditingTargetRef = useRef<any | null>(null);
+  const hoveredVectorTargetRef = useRef<any | null>(null);
+  const vectorGroupEditingPathRef = useRef<any[]>([]);
   const selectedPathAnchorIndicesRef = useRef<number[]>([]);
   const pointSelectionTransformFrameRef = useRef<PointSelectionTransformFrameState | null>(null);
   const pointSelectionTransformSessionRef = useRef<PointSelectionTransformSession | null>(null);
@@ -420,6 +436,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const onHistoryStateChangeRef = useRef(onHistoryStateChange);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const onTextSelectionChangeRef = useRef(onTextSelectionChange);
+  const onVectorGroupingStateChangeRef = useRef(onVectorGroupingStateChange);
   const onTextStyleSyncRef = useRef(onTextStyleSync);
   const onSelectionStateChangeRef = useRef<((state: {
     hasSelection: boolean;
@@ -429,10 +446,6 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const onVectorPointEditingChangeRef = useRef(onVectorPointEditingChange);
   const onVectorPointSelectionChangeRef = useRef(onVectorPointSelectionChange);
   const onVectorStyleSyncRef = useRef(onVectorStyleSync);
-  const { renderVectorTextureOverlay } = useFabricVectorTextureOverlay({
-    fabricCanvasRef,
-    resolveAdditionalObjects: () => resolveLiveVectorTexturePreviewObjectsRef.current(),
-  });
   const onVectorStyleCapabilitiesSyncRef = useRef(onVectorStyleCapabilitiesSync);
   const onCanZoomToSelectionChangeRef = useRef(onCanZoomToSelectionChange);
   const onCanvasContextMenuRef = useRef(onCanvasContextMenu);
@@ -468,6 +481,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   onDirtyRef.current = onDirty;
   onHistoryStateChangeRef.current = onHistoryStateChange;
   onSelectionChangeRef.current = onSelectionChange;
+  onVectorGroupingStateChangeRef.current = onVectorGroupingStateChange;
   onTextSelectionChangeRef.current = onTextSelectionChange;
   onTextStyleSyncRef.current = onTextStyleSync;
   onSelectionStateChangeRef.current = (state) => {
@@ -659,13 +673,17 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     ctx.save();
     clearCanvasInCssPixels(ctx, viewport.width, viewport.height, vectorTextureOverlayDprRef.current);
-    renderVectorTextureOverlay(ctx, {
+    renderComposedVectorSceneForFabricCanvas(ctx, fabricCanvas, {
       canvasWidth: viewport.width,
       canvasHeight: viewport.height,
       clear: false,
+      additionalObjects: resolveLiveVectorTexturePreviewObjectsRef.current(),
+      onTextureSourceReady: () => {
+        fabricCanvasRef.current?.requestRenderAll();
+      },
     });
     ctx.restore();
-  }, [renderVectorTextureOverlay, viewport.height, viewport.width]);
+  }, [viewport.height, viewport.width]);
 
   const clearVectorGuideOverlayContext = useCallback((ctx: CanvasRenderingContext2D) => {
     clearCanvasInCssPixels(ctx, viewport.width, viewport.height, vectorGuideOverlayDprRef.current);
@@ -698,7 +716,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     }
 
     let changed = false;
-    fabricCanvas.forEachObject((obj: any) => {
+    forEachFabricObjectDeep(fabricCanvas, (obj: any) => {
       if (normalizeVectorObjectRendering(obj)) {
         obj.setCoords?.();
         changed = true;
@@ -732,6 +750,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     fabricCanvasRef,
     insertedPathAnchorDragSessionRef,
     onSelectionStateChangeRef,
+    onVectorGroupingStateChangeRef,
     onVectorPointEditingChangeRef,
     onVectorPointSelectionChangeRef,
     pendingSelectionSyncedVectorHandleModeRef,
@@ -832,6 +851,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     mirroredPathAnchorDragSessionRef,
     originalControlsRef,
     pointSelectionMarqueeSessionRef,
+    hoveredVectorTargetRef,
     removeDuplicateClosedPathAnchorControl,
     renderPenDraftGuide: renderPenDraftGuideFromRef,
     resolveMirroredPathAnchorHandleRole,
@@ -877,6 +897,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     syncBrushCursorOverlay,
     syncSelectionState,
     textEditingHostRef,
+    hoveredVectorTargetRef,
+    vectorGroupEditingPathRef,
     vectorPointEditingTargetRef,
     vectorStyleRef,
   });
@@ -885,9 +907,11 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     alignSelection: alignCanvasSelection,
     deleteSelection: deleteCanvasSelection,
     moveSelectionOrder: moveCanvasSelectionOrder,
+    groupSelection: groupCanvasSelection,
     nudgeSelection: nudgeCanvasSelection,
     flipSelection: flipCanvasSelection,
     rotateSelection: rotateCanvasSelection,
+    ungroupSelection: ungroupCanvasSelection,
   } = useCostumeCanvasSelectionTransformCommands({
     fabricCanvasRef,
     getAlignmentBounds: () => alignmentBounds,
@@ -973,7 +997,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     copySelection,
     cutSelection,
     pasteSelection,
-  } = useFabricVectorClipboardCommands({
+  } = useFabricVectorClipboardCommands<any>({
     beforeDuplicate: ignoreCanvasHistoryEventsTemporarily,
     beforePaste: ignoreCanvasHistoryEventsTemporarily,
     cloneObject: cloneFabricObjectWithVectorStyle,
@@ -981,6 +1005,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     fabricCanvasRef,
     normalizeCanvasVectorStrokeUniform,
     pasteTargetCenter: worldPointToScenePoint(camera),
+    resolveInsertionParent: () => vectorGroupEditingPathRef.current.at(-1) ?? null,
     saveHistory: recordHistorySnapshot,
     syncSelectionState,
   });
@@ -1044,13 +1069,15 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
         restoreAllOriginalControls();
         setVectorPointEditingTarget(null);
+        hoveredVectorTargetRef.current = null;
+        vectorGroupEditingPathRef.current = [];
         activePathAnchorRef.current = null;
         skipNextObjectModifiedTargetRef.current = null;
         fabricCanvas.discardActiveObject();
-        for (const obj of fabricCanvas.getObjects()) {
+        forEachFabricObjectDeep(fabricCanvas, (obj: any) => {
           normalizeVectorObjectRendering(obj);
           bindTextObjectEvents(obj);
-        }
+        });
         syncTextSelectionState();
         syncVectorStyleFromSelection();
         syncSelectionState();
@@ -1135,11 +1162,17 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     const contextMenuTargets = [
       instrumentedCanvas.upperCanvasEl,
       instrumentedCanvas.wrapperEl,
-    ].filter((target): target is EventTarget => !!target);
+    ].filter((target): target is HTMLCanvasElement | HTMLDivElement => !!target);
     instrumentedCanvas.upperCanvasEl?.setAttribute('data-testid', 'background-vector-layer-canvas');
     instrumentedCanvas.wrapperEl?.setAttribute('data-testid', 'background-vector-layer-surface');
-    instrumentedCanvas.wrapperEl?.classList.add('absolute', 'inset-0');
-    const handleContextMenu = (event: MouseEvent) => {
+    instrumentedCanvas.wrapperEl?.classList.add('absolute', 'inset-0', 'z-[2]');
+    if (instrumentedCanvas.lowerCanvasEl) {
+      instrumentedCanvas.lowerCanvasEl.style.opacity = '0';
+    }
+    const handleContextMenu: EventListener = (event) => {
+      if (!(event instanceof MouseEvent)) {
+        return;
+      }
       if (!interactive) {
         return;
       }
@@ -1156,13 +1189,13 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     hostElement.appendChild(vectorTextureCanvas);
     vectorTextureCanvasRef.current = vectorTextureCanvas;
     const vectorGuideCanvas = document.createElement('canvas');
-    vectorGuideCanvas.className = 'pointer-events-none absolute inset-0 z-[2]';
+    vectorGuideCanvas.className = 'pointer-events-none absolute inset-0 z-[3]';
     vectorGuideCanvas.setAttribute('aria-hidden', 'true');
     hostElement.appendChild(vectorGuideCanvas);
     vectorGuideCanvasRef.current = vectorGuideCanvas;
     vectorGuideCtxRef.current = vectorGuideCanvas.getContext('2d');
     const penOverlayCanvas = document.createElement('canvas');
-    penOverlayCanvas.className = 'pointer-events-none absolute inset-0 z-[3]';
+    penOverlayCanvas.className = 'pointer-events-none absolute inset-0 z-[4]';
     penOverlayCanvas.setAttribute('aria-hidden', 'true');
     hostElement.appendChild(penOverlayCanvas);
     penOverlayCanvasRef.current = penOverlayCanvas;
@@ -1174,6 +1207,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     return () => {
       restoreAllOriginalControlsEffectRef.current();
       setVectorPointEditingTargetEffectRef.current(null);
+      hoveredVectorTargetRef.current = null;
+      vectorGroupEditingPathRef.current = [];
       activePathAnchorRef.current = null;
       shapeDraftRef.current = null;
       shapeDraftHistoryBaselineRef.current = null;
@@ -1186,6 +1221,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       textEditingHostRef.current = null;
       clearHistoryEffectRef.current();
       onSelectionChangeRef.current(false);
+      onVectorGroupingStateChangeRef.current?.({ canGroup: false, canUngroup: false });
       onTextSelectionChangeRef.current(false);
       contextMenuTargets.forEach((target) => {
         target.removeEventListener('contextmenu', handleContextMenu, true);
@@ -1199,6 +1235,23 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       }
     };
   }, []);
+
+  useEffect(() => {
+    const nextOpacity = layer?.visible ?? true ? '1' : '0';
+    const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & {
+      lowerCanvasEl?: HTMLCanvasElement;
+      upperCanvasEl?: HTMLCanvasElement;
+    }) | null;
+    if (fabricCanvas?.lowerCanvasEl) {
+      fabricCanvas.lowerCanvasEl.style.opacity = '0';
+    }
+    if (fabricCanvas?.upperCanvasEl) {
+      fabricCanvas.upperCanvasEl.style.opacity = nextOpacity;
+    }
+    if (vectorTextureCanvasRef.current) {
+      vectorTextureCanvasRef.current.style.opacity = nextOpacity;
+    }
+  }, [layer?.visible]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1255,6 +1308,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     if (!layer) {
       restoreAllOriginalControls();
       setVectorPointEditingTarget(null);
+      hoveredVectorTargetRef.current = null;
+      vectorGroupEditingPathRef.current = [];
       activePathAnchorRef.current = null;
       fabricCanvas.clear();
       loadedLayerKeyRef.current = null;
@@ -1262,6 +1317,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       clearHistory();
       syncTextSelectionState();
       syncSelectionState();
+      onVectorGroupingStateChangeRef.current?.({ canGroup: false, canUngroup: false });
       onVectorStyleCapabilitiesSyncRef.current?.({ supportsFill: true });
       drawVectorTextureOverlay();
       drawPenOverlay();
@@ -1318,6 +1374,56 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return;
     }
 
+    const setHoveredVectorTarget = (nextTarget: any | null) => {
+      const nextHoveredTarget = (
+        nextTarget &&
+        fabricCanvasContainsObject(fabricCanvas, nextTarget) &&
+        !isActiveSelectionObject(nextTarget)
+      )
+        ? nextTarget
+        : null;
+      if (hoveredVectorTargetRef.current === nextHoveredTarget) {
+        return;
+      }
+      hoveredVectorTargetRef.current = nextHoveredTarget;
+      fabricCanvas.requestRenderAll();
+    };
+
+    const setVectorGroupEditingPath = (nextPath: any[]) => {
+      vectorGroupEditingPathRef.current = sanitizeVectorGroupEditingPath(fabricCanvas, nextPath);
+    };
+
+    const syncVectorGroupEditingPathFromSelection = (activeObject: any | null) => {
+      if (!activeObject) {
+        return;
+      }
+
+      const currentPath = sanitizeVectorGroupEditingPath(fabricCanvas, vectorGroupEditingPathRef.current);
+      if (isFabricGroupObject(activeObject) && currentPath.at(-1) === activeObject) {
+        vectorGroupEditingPathRef.current = currentPath;
+        return;
+      }
+
+      setVectorGroupEditingPath(getVectorGroupEditingPathForTarget(activeObject));
+    };
+
+    const enterVectorGroupEditing = (group: any): boolean => {
+      if (!isFabricGroupObject(group) || !fabricCanvasContainsObject(fabricCanvas, group)) {
+        return false;
+      }
+
+      setVectorGroupEditingPath([
+        ...getVectorGroupEditingPathForTarget(group),
+        group,
+      ]);
+      setHoveredVectorTarget(group);
+      fabricCanvas.setActiveObject(group);
+      configureCanvasForTool();
+      syncSelectionState();
+      fabricCanvas.requestRenderAll();
+      return true;
+    };
+
     const handleMouseDown = (opt: any) => {
       if (!opt.e) {
         return;
@@ -1372,7 +1478,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
           setVectorPointEditingTarget(null);
           queueMicrotask(() => {
             const canvas = fabricCanvasRef.current;
-            if (!canvas || !canvas.getObjects().includes(pointEditingTarget)) {
+            if (!canvas || !fabricCanvasContainsObject(canvas, pointEditingTarget)) {
               return;
             }
             canvas.setActiveObject(pointEditingTarget);
@@ -1427,10 +1533,17 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         if (opt.e.detail >= 2 && clickedTarget) {
           queueMicrotask(() => {
             const canvas = fabricCanvasRef.current;
-            if (!canvas || !canvas.getObjects().includes(clickedTarget)) {
+            if (!canvas || !fabricCanvasContainsObject(canvas, clickedTarget)) {
               return;
             }
-            canvas.setActiveObject(clickedTarget);
+            if (isFabricGroupObject(clickedTarget)) {
+              enterVectorGroupEditing(clickedTarget);
+              return;
+            }
+            if (!isVectorPointSelectableObject(clickedTarget)) {
+              return;
+            }
+            (canvas as any).setActiveObject(clickedTarget);
             activateVectorPointEditing(clickedTarget, true);
             configureCanvasForTool();
           });
@@ -1447,7 +1560,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         attachTextEditingContainer(textObject, textEditingHostRef.current);
         queueMicrotask(() => {
           const canvas = fabricCanvasRef.current;
-          if (!canvas || !canvas.getObjects().includes(textObject)) {
+          if (!canvas || !fabricCanvasContainsObject(canvas, textObject)) {
             return;
           }
           beginTextEditing(canvas as any, textObject, { event: opt.e });
@@ -1505,7 +1618,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         if (
           activeToolRef.current !== 'select' ||
           vectorPointEditingTargetRef.current !== pointSelectionTransformSession.path ||
-          !fabricCanvas.getObjects().includes(pointSelectionTransformSession.path)
+          !fabricCanvasContainsObject(fabricCanvas, pointSelectionTransformSession.path)
         ) {
           pointSelectionTransformSessionRef.current = null;
           return;
@@ -1525,7 +1638,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         if (
           activeToolRef.current !== 'select' ||
           vectorPointEditingTargetRef.current !== pointSelectionMarqueeSession.path ||
-          !fabricCanvas.getObjects().includes(pointSelectionMarqueeSession.path)
+          !fabricCanvasContainsObject(fabricCanvas, pointSelectionMarqueeSession.path)
         ) {
           pointSelectionMarqueeSessionRef.current = null;
           return;
@@ -1543,7 +1656,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         if (
           activeToolRef.current !== 'select' ||
           vectorPointEditingTargetRef.current !== path ||
-          !fabricCanvas.getObjects().includes(path)
+          !fabricCanvasContainsObject(fabricCanvas, path)
         ) {
           insertedPathAnchorDragSessionRef.current = null;
           return;
@@ -1565,7 +1678,19 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
           fabricCanvas.setActiveObject(path);
           fabricCanvas.requestRenderAll();
         }
+        return;
       }
+
+      if (
+        activeToolRef.current === 'select' &&
+        !vectorPointEditingTargetRef.current
+      ) {
+        setHoveredVectorTarget(resolveVectorHoverTarget(fabricCanvas as any, opt.e) as any);
+      }
+    };
+
+    const handleMouseOut = () => {
+      setHoveredVectorTarget(null);
     };
 
     const handleMouseUp = () => {
@@ -1593,7 +1718,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         applyPointSelectionMarqueeSession(marqueeSession);
         if (
           vectorPointEditingTargetRef.current === marqueeSession.path &&
-          fabricCanvas.getObjects().includes(marqueeSession.path)
+          fabricCanvasContainsObject(fabricCanvas, marqueeSession.path)
         ) {
           fabricCanvas.setActiveObject(marqueeSession.path);
         }
@@ -1664,6 +1789,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     const handleSelectionChange = () => {
       const activeObject = fabricCanvas.getActiveObject() as any;
+      setHoveredVectorTarget(null);
+      syncVectorGroupEditingPathFromSelection(activeObject);
       if (
         activeToolRef.current === 'select' &&
         vectorPointEditingTargetRef.current &&
@@ -1693,6 +1820,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     const handleSelectionCleared = () => {
       clearUnifiedCanvasTransformGuide(fabricCanvas);
+      setHoveredVectorTarget(null);
       if (
         vectorPointEditingTargetRef.current &&
         activeToolRef.current === 'select'
@@ -1706,7 +1834,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
           if (vectorPointEditingTargetRef.current !== pointEditingTarget) {
             return;
           }
-          if (!canvas.getObjects().includes(pointEditingTarget)) {
+          if (!fabricCanvasContainsObject(canvas, pointEditingTarget)) {
             restoreAllOriginalControls();
             setVectorPointEditingTarget(null);
             configureCanvasForTool();
@@ -1744,6 +1872,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     fabricCanvas.on('mouse:down', handleMouseDown);
     fabricCanvas.on('mouse:move', handleMouseMove);
+    fabricCanvas.on('mouse:out', handleMouseOut);
     fabricCanvas.on('mouse:up', handleMouseUp);
     fabricCanvas.on('path:created', handlePathCreated);
     fabricCanvas.on('object:modified', handleObjectModified);
@@ -1758,6 +1887,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     return () => {
       fabricCanvas.off('mouse:down', handleMouseDown);
       fabricCanvas.off('mouse:move', handleMouseMove);
+      fabricCanvas.off('mouse:out', handleMouseOut);
       fabricCanvas.off('mouse:up', handleMouseUp);
       fabricCanvas.off('path:created', handlePathCreated);
       fabricCanvas.off('object:modified', handleObjectModified);
@@ -2039,7 +2169,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         applyPointSelectionMarqueeSession(marqueeSession);
         if (
           vectorPointEditingTargetRef.current === marqueeSession.path &&
-          fabricCanvas.getObjects().includes(marqueeSession.path)
+          fabricCanvasContainsObject(fabricCanvas, marqueeSession.path)
         ) {
           fabricCanvas.setActiveObject(marqueeSession.path);
         }
@@ -2167,6 +2297,12 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     copySelection,
     cutSelection,
     pasteSelection,
+    groupSelection() {
+      return groupCanvasSelection();
+    },
+    ungroupSelection() {
+      return ungroupCanvasSelection();
+    },
     moveSelectionOrder(action) {
       moveCanvasSelectionOrder(action);
     },

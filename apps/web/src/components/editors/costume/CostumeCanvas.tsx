@@ -26,13 +26,14 @@ import type {
   CostumeVectorDocument,
 } from '@/types';
 import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
+import { fabricCanvasContainsObject } from '@/lib/editor/fabricVectorSelection';
 import { CostumeCanvasStage } from './CostumeCanvasStage';
 import { type BitmapBrushKind } from '@/lib/background/brushCore';
 import {
   getActiveCostumeLayer,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
-import { renderVectorTextureOverlayForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
+import { renderComposedVectorSceneForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
 import {
   CANVAS_SIZE,
   DEFAULT_COSTUME_PREVIEW_SCALE,
@@ -61,10 +62,7 @@ import { useCostumeCanvasPenHotkeys } from './useCostumeCanvasPenHotkeys';
 import { useCostumeCanvasSelectionController } from './useCostumeCanvasSelectionController';
 import { useCostumeCanvasToolController } from './useCostumeCanvasToolController';
 import { useCostumeCanvasVectorHandleSync } from './useCostumeCanvasVectorHandleSync';
-import {
-  useCostumeCanvasVectorBrushRenderer,
-  type VectorTextureMotionSnapshot,
-} from './useCostumeCanvasVectorBrushRenderer';
+import { useCostumeCanvasVectorBrushRenderer } from './useCostumeCanvasVectorBrushRenderer';
 import { useCostumeCanvasVectorObjectController } from './useCostumeCanvasVectorObjectController';
 import { useCostumeCanvasVectorPathController } from './useCostumeCanvasVectorPathController';
 import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportController';
@@ -106,6 +104,8 @@ export interface CostumeCanvasHandle {
   cutSelection: () => Promise<boolean>;
   pasteSelection: () => Promise<boolean>;
   moveSelectionOrder: (action: MoveOrderAction) => boolean;
+  groupSelection: () => boolean;
+  ungroupSelection: () => boolean;
   nudgeSelection: (dx: number, dy: number) => boolean;
   flipSelection: (axis: SelectionFlipAxis) => boolean;
   rotateSelection: () => boolean;
@@ -151,6 +151,7 @@ interface CostumeCanvasProps {
   onVectorPointSelectionChange?: (hasSelectedPoints: boolean) => void;
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
   onSelectionStateChange?: (state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void;
+  onVectorGroupingStateChange?: (state: { canGroup: boolean; canUngroup: boolean }) => void;
   onViewScaleChange?: (scale: number) => void;
 }
 
@@ -186,6 +187,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onVectorPointSelectionChange,
   onTextSelectionChange,
   onSelectionStateChange,
+  onVectorGroupingStateChange,
   onViewScaleChange,
 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -203,8 +205,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const vectorStrokeCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const vectorGuideCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const bitmapSelectionCtxRef = useRef<CanvasRenderingContext2D | null>(null);
-  const stabilizeTextureMotionRef = useRef(false);
-  const vectorTextureMotionSnapshotRef = useRef<VectorTextureMotionSnapshot | null>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const documentLayers = costumeDocument?.layers ?? [];
   const activeDocumentLayer = useMemo(() => getActiveCostumeLayer(costumeDocument), [costumeDocument]);
@@ -242,6 +242,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>(initialEditorMode);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
   const [hasVectorSelection, setHasVectorSelection] = useState(false);
+  const [vectorGroupingState, setVectorGroupingState] = useState({ canGroup: false, canUngroup: false });
   const [canZoomToSelection, setCanZoomToSelection] = useState(false);
   const [vectorContextMenuPosition, setVectorContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
@@ -257,7 +258,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const isVisibleRef = useRef(isVisible);
   isVisibleRef.current = isVisible;
   const previousVisibilityRef = useRef(isVisible);
-  const pendingVisibilityHostRenderRef = useRef(false);
+  const pendingHostedLayerRenderRef = useRef(false);
+  const hoveredVectorTargetRef = useRef<any | null>(null);
+  const vectorGroupEditingPathRef = useRef<any[]>([]);
 
   const bitmapBrushKindRef = useRef(bitmapBrushKind);
   bitmapBrushKindRef.current = bitmapBrushKind;
@@ -319,6 +322,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onSelectionStateChangeRef.current = (state) => {
     setHasVectorSelection(state.hasSelection);
     onSelectionStateChange?.(state);
+  };
+  const onVectorGroupingStateChangeRef = useRef<((state: { canGroup: boolean; canUngroup: boolean }) => void) | undefined>(undefined);
+  onVectorGroupingStateChangeRef.current = (state) => {
+    setVectorGroupingState((previous) => (
+      previous.canGroup === state.canGroup && previous.canUngroup === state.canUngroup
+        ? previous
+        : state
+    ));
+    onVectorGroupingStateChange?.(state);
   };
 
   const suppressHistoryRef = useRef(false);
@@ -456,6 +468,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvasRef,
     insertedPathAnchorDragSessionRef,
     onSelectionStateChangeRef,
+    onVectorGroupingStateChangeRef,
     onVectorPointEditingChangeRef,
     onVectorPointSelectionChangeRef,
     pendingSelectionSyncedVectorHandleModeRef,
@@ -527,22 +540,33 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const nextOpacity = isVisibleRef.current && isHostedLayerReadyRef.current && activeLayerVisibleRef.current
       ? String(activeLayerOpacityRef.current)
       : '0';
+    const showVectorComposite = editorModeRef.current === 'vector';
     if (fabricCanvas.wrapperEl) {
-      fabricCanvas.wrapperEl.style.opacity = nextOpacity;
+      fabricCanvas.wrapperEl.style.opacity = '1';
     }
     if (fabricCanvas.lowerCanvasEl) {
-      fabricCanvas.lowerCanvasEl.style.opacity = nextOpacity;
+      fabricCanvas.lowerCanvasEl.style.opacity = showVectorComposite ? '0' : nextOpacity;
     }
     if (fabricCanvas.upperCanvasEl) {
       fabricCanvas.upperCanvasEl.style.opacity = nextOpacity;
     }
   }, []);
 
+  const markHostedLayerRenderPending = useCallback(() => {
+    pendingHostedLayerRenderRef.current = isVisibleRef.current;
+    setHostedLayerReady(false);
+    syncActiveLayerCanvasVisibility();
+  }, [setHostedLayerReady, syncActiveLayerCanvasVisibility]);
+
   const setEditorMode = useCallback((mode: CostumeEditorMode) => {
     editorModeRef.current = mode;
     setEditorModeState(mode);
     onModeChangeRef.current?.(mode);
     if (mode !== 'vector') {
+      hoveredVectorTargetRef.current = null;
+      vectorGroupEditingPathRef.current = [];
+      setVectorGroupingState({ canGroup: false, canUngroup: false });
+      onVectorGroupingStateChangeRef.current?.({ canGroup: false, canUngroup: false });
       setVectorPointEditingTarget(null);
       activePathAnchorRef.current = null;
       onTextSelectionChangeRef.current?.(false);
@@ -621,16 +645,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   });
 
   const {
-    captureVectorTextureMotionSnapshot,
-    clearVectorTextureMotionSnapshot,
-    renderVectorBrushStrokeOverlay,
+    renderVectorCompositeScene,
     resolveBitmapFillTextureSource,
   } = useCostumeCanvasVectorBrushRenderer({
     editorModeRef,
     fabricCanvasRef,
     resolvePreviewObjects: resolveLiveVectorTexturePreviewObjects,
-    stabilizeTextureMotionRef,
-    vectorTextureMotionSnapshotRef,
   });
 
   const refreshVectorTextureOverlay = useCallback(() => {
@@ -642,13 +662,26 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (!ctx) {
       return;
     }
-    renderVectorBrushStrokeOverlay(ctx);
-  }, [renderVectorBrushStrokeOverlay]);
+    renderVectorCompositeScene(ctx);
+  }, [renderVectorCompositeScene]);
 
   const getActiveLayerCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
     if (fabricCanvas) {
-      return fabricCanvas.toCanvasElement(1);
+      if (editorModeRef.current !== 'vector') {
+        return fabricCanvas.toCanvasElement(1);
+      }
+
+      const composed = document.createElement('canvas');
+      composed.width = CANVAS_SIZE;
+      composed.height = CANVAS_SIZE;
+      const composedCtx = composed.getContext('2d');
+      if (!composedCtx) {
+        return fabricCanvas.toCanvasElement(1);
+      }
+
+      renderComposedVectorSceneForFabricCanvas(composedCtx, fabricCanvas, { canvasSize: CANVAS_SIZE });
+      return composed;
     }
 
     const fallback = document.createElement('canvas');
@@ -663,8 +696,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     const surface = layerSurfaceRefs.current.get(layerId);
-    const fabricCanvas = fabricCanvasRef.current;
-    if (!surface || !fabricCanvas) {
+    if (!surface) {
       return;
     }
 
@@ -673,15 +705,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       return;
     }
 
+    const activeLayerCanvas = getActiveLayerCanvasElement();
     ctx.clearRect(0, 0, surface.width, surface.height);
-    ctx.drawImage(fabricCanvas.toCanvasElement(1), 0, 0, surface.width, surface.height);
-    if (editorModeRef.current === 'vector') {
-      renderVectorTextureOverlayForFabricCanvas(ctx, fabricCanvas, {
-        canvasSize: surface.width,
-        clear: false,
-      });
-    }
-  }, []);
+    ctx.drawImage(activeLayerCanvas, 0, 0, surface.width, surface.height);
+  }, [getActiveLayerCanvasElement]);
 
   const {
     alignSelection,
@@ -697,6 +724,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     isTextEditing,
     loadDocument,
     moveSelectionOrder,
+    groupSelection,
     nudgeSelection,
     pasteSelection,
     rotateSelection,
@@ -705,6 +733,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncTextSelectionState,
     syncTextStyleFromSelection,
     syncVectorStyleFromSelection,
+    ungroupSelection,
   } = useCostumeCanvasCommandController({
     activeDocumentLayerId: activeDocumentLayer?.id,
     activeLayerOpacity,
@@ -738,7 +767,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     onVectorStyleCapabilitiesSyncRef,
     onVectorStyleSyncRef,
     rebaseHistoryToCurrentSnapshot,
-    renderVectorBrushStrokeOverlay,
     resolveBitmapFillTextureSource,
     restoreCanvasSelection,
     saveHistory,
@@ -746,20 +774,22 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     setBitmapFloatingSelectionObject,
     setHostedLayerId,
     setHostedLayerReady,
+    markHostedLayerRenderPending,
     suppressBitmapSelectionAutoCommitRef,
     suppressHistoryRef,
     syncSelectionState,
     textStyle,
     vectorStyle,
+    vectorGroupEditingPathRef,
     waitForFabricCanvas,
   });
 
   const handleFabricCanvasAfterRender = useCallback(() => {
-    if (!isVisibleRef.current || !pendingVisibilityHostRenderRef.current) {
+    if (!isVisibleRef.current || !pendingHostedLayerRenderRef.current) {
       return;
     }
 
-    pendingVisibilityHostRenderRef.current = false;
+    pendingHostedLayerRenderRef.current = false;
     setHostedLayerReady(true);
     syncActiveLayerCanvasVisibility();
   }, [setHostedLayerReady, syncActiveLayerCanvasVisibility]);
@@ -854,6 +884,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     originalControlsRef,
     pointSelectionMarqueeSessionRef,
     pointSelectionTransformSessionRef,
+    hoveredVectorTargetRef,
     removeDuplicateClosedPathAnchorControl,
     renderPenDraftGuide,
     resolveMirroredPathAnchorHandleRole,
@@ -899,6 +930,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncBrushCursorOverlay,
     syncSelectionState,
     textEditingHostRef,
+    hoveredVectorTargetRef,
+    vectorGroupEditingPathRef,
     vectorPointEditingTargetRef,
     vectorStyleRef,
   });
@@ -925,8 +958,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     commitBitmapSelection,
     commitCurrentPenPlacement,
     configureCanvasForTool,
-    clearVectorTextureMotionSnapshot,
-    captureVectorTextureMotionSnapshot,
     drawBitmapSelectionOverlay,
     editorModeRef,
     enforcePathAnchorHandleType,
@@ -949,7 +980,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     penDraftRef,
     pointSelectionMarqueeSessionRef,
     pointSelectionTransformSessionRef,
-    renderVectorBrushStrokeOverlay,
+    renderVectorCompositeScene,
     renderVectorPointEditingGuide,
     restoreAllOriginalControls,
     saveHistory,
@@ -968,12 +999,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     textStyleRef,
     toPathCommandPoint,
     updatePenAnchorPlacement,
+    hoveredVectorTargetRef,
     vectorGuideCanvasRef,
     vectorGuideCtxRef,
+    vectorGroupEditingPathRef,
     vectorPointEditingTargetRef,
     vectorStrokeCanvasRef,
     vectorStrokeCtxRef,
-    stabilizeTextureMotionRef,
     vectorStyleRef,
     onFabricCanvasReady: resolveFabricCanvasReady,
     onFabricCanvasAfterRender: handleFabricCanvasAfterRender,
@@ -1082,7 +1114,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       applyPointSelectionMarqueeSession(pointSelectionMarqueeSession);
       if (
         vectorPointEditingTargetRef.current === pointSelectionMarqueeSession.path &&
-        fabricCanvas.getObjects().includes(pointSelectionMarqueeSession.path)
+        fabricCanvasContainsObject(fabricCanvas, pointSelectionMarqueeSession.path)
       ) {
         fabricCanvas.setActiveObject(pointSelectionMarqueeSession.path);
       }
@@ -1221,14 +1253,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
     moveSelectionOrder,
+    groupSelection,
     nudgeSelection,
     pasteSelection,
     persistedSnapshotRef,
     ref,
     rotateSelection,
     rebaseHistoryToCurrentSnapshot,
+    saveHistory,
     setEditorMode,
     switchEditorMode,
+    ungroupSelection,
     editorModeRef,
   });
 
@@ -1236,7 +1271,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (costumeDocument) {
       return;
     }
-    pendingVisibilityHostRenderRef.current = false;
+    pendingHostedLayerRenderRef.current = false;
+    hoveredVectorTargetRef.current = null;
+    vectorGroupEditingPathRef.current = [];
+    setVectorGroupingState({ canGroup: false, canUngroup: false });
+    onVectorGroupingStateChangeRef.current?.({ canGroup: false, canUngroup: false });
     setHostedLayerId(null);
     setHostedLayerReady(false);
   }, [costumeDocument, setHostedLayerId, setHostedLayerReady]);
@@ -1256,7 +1295,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & { calcOffset?: () => void }) | null;
 
     if (!isVisible) {
-      pendingVisibilityHostRenderRef.current = false;
+      pendingHostedLayerRenderRef.current = false;
       if (hostedLayerId && fabricCanvas) {
         commitHostedLayerSurfaceSnapshot(hostedLayerId);
       }
@@ -1268,13 +1307,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     refreshViewportSize();
 
     if (!hostedLayerId || !fabricCanvas) {
-      pendingVisibilityHostRenderRef.current = false;
+      pendingHostedLayerRenderRef.current = false;
       return;
     }
 
-    pendingVisibilityHostRenderRef.current = true;
-    setHostedLayerReady(false);
-    syncActiveLayerCanvasVisibility();
+    markHostedLayerRenderPending();
     fabricCanvas.calcOffset?.();
     syncSelectionState();
     configureCanvasForTool();
@@ -1285,6 +1322,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     configureCanvasForTool,
     hostedDocumentLayer?.id,
     isVisible,
+    markHostedLayerRenderPending,
     refreshViewportSize,
     setHostedLayerReady,
     syncSelectionState,
@@ -1377,6 +1415,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     });
   }, [closeVectorContextMenu, duplicateSelection]);
 
+  const handleVectorContextMenuGroup = useCallback(() => {
+    closeVectorContextMenu();
+    groupSelection();
+  }, [closeVectorContextMenu, groupSelection]);
+
+  const handleVectorContextMenuUngroup = useCallback(() => {
+    closeVectorContextMenu();
+    ungroupSelection();
+  }, [closeVectorContextMenu, ungroupSelection]);
+
   const handleVectorContextMenuDelete = useCallback(() => {
     closeVectorContextMenu();
     deleteSelection();
@@ -1425,13 +1473,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         <VectorSelectionContextMenu
           canCopy={hasVectorSelection}
           canDelete={hasVectorSelection}
+          canGroup={vectorGroupingState.canGroup}
           canPaste={hasVectorClipboardContents()}
+          canUngroup={vectorGroupingState.canUngroup}
           onClose={closeVectorContextMenu}
           onCopy={handleVectorContextMenuCopy}
           onCut={handleVectorContextMenuCut}
           onDelete={handleVectorContextMenuDelete}
           onDuplicate={handleVectorContextMenuDuplicate}
+          onGroup={handleVectorContextMenuGroup}
           onPaste={handleVectorContextMenuPaste}
+          onUngroup={handleVectorContextMenuUngroup}
           position={vectorContextMenuPosition}
         />
       ) : null}
