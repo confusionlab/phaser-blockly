@@ -14,6 +14,10 @@ import {
   type VectorStrokeBrushRenderStyle,
 } from '@/lib/vector/vectorStrokeBrushCore';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
+import {
+  getFabricChildObjects,
+  isFabricGroupObject,
+} from '@/lib/editor/fabricVectorSelection';
 import { getCanvas2dContext } from '@/utils/canvas2d';
 import { COSTUME_CANVAS_SIZE } from './costumeDocument';
 
@@ -341,6 +345,26 @@ function getFabricFillValueForVectorTexture(
 export function normalizeVectorObjectRendering(obj: unknown): boolean {
   if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
     return false;
+  }
+
+  if (isFabricGroupObject(obj)) {
+    let changed = false;
+    const group = obj as {
+      set?: (props: Record<string, unknown>) => void;
+      setCoords?: () => void;
+      subTargetCheck?: boolean;
+    };
+    if (group.subTargetCheck !== true) {
+      group.set?.({ subTargetCheck: true });
+      changed = true;
+    }
+    for (const child of getFabricChildObjects(obj)) {
+      changed = normalizeVectorObjectRendering(child) || changed;
+    }
+    if (changed) {
+      group.setCoords?.();
+    }
+    return changed;
   }
 
   const candidate = obj as {
@@ -1008,6 +1032,10 @@ function objectHasVectorTextureDecorations(obj: any): boolean {
     return false;
   }
 
+  if (isFabricGroupObject(obj)) {
+    return getFabricChildObjects(obj).some((child) => objectHasVectorTextureDecorations(child));
+  }
+
   const fillTextureId = getVectorObjectFillTextureId(obj);
   const hasTexturedFill = (
     vectorObjectSupportsFill(obj)
@@ -1048,7 +1076,7 @@ function renderVectorObjectBaseToContext(
     contextTransform?: number[] | null;
   } = {},
 ): boolean {
-  if (!obj || isActiveSelectionObject(obj) || typeof obj.render !== 'function') {
+  if (!obj || isActiveSelectionObject(obj) || isFabricGroupObject(obj) || typeof obj.render !== 'function') {
     return false;
   }
 
@@ -1070,7 +1098,7 @@ function renderVectorTextureDecorationsForObject(
     onTextureSourceReady?: (() => void) | null;
   } = {},
 ): boolean {
-  if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
+  if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj) || isFabricGroupObject(obj)) {
     return false;
   }
 
@@ -1156,6 +1184,91 @@ function renderVectorTextureDecorationsForObject(
   return rendered;
 }
 
+function renderVectorTextureOverlayNode(
+  overlayCtx: CanvasRenderingContext2D,
+  obj: any,
+  options: {
+    canvasSize?: number;
+    canvasWidth?: number;
+    canvasHeight?: number;
+    contextTransform?: number[] | null;
+    onTextureSourceReady?: (() => void) | null;
+  } = {},
+) {
+  if (!obj || isActiveSelectionObject(obj)) {
+    return;
+  }
+
+  normalizeVectorObjectRendering(obj);
+  if (isFabricGroupObject(obj)) {
+    for (const child of getFabricChildObjects(obj)) {
+      renderVectorTextureOverlayNode(overlayCtx, child, options);
+    }
+    return;
+  }
+
+  if (!objectHasVectorTextureDecorations(obj)) {
+    return;
+  }
+
+  renderVectorTextureDecorationsForObject(overlayCtx, obj, options);
+}
+
+function renderComposedVectorSceneNode(
+  ctx: CanvasRenderingContext2D,
+  decorationCtx: CanvasRenderingContext2D,
+  decorationCanvas: HTMLCanvasElement,
+  obj: any,
+  options: {
+    canvasSize?: number;
+    canvasWidth?: number;
+    canvasHeight?: number;
+    contextTransform?: number[] | null;
+    onTextureSourceReady?: (() => void) | null;
+    motionSnapshot?: {
+      canvas: CanvasImageSource;
+      drawOffsetX: number;
+      drawOffsetY: number;
+      target: any;
+    } | null;
+  } = {},
+) {
+  if (!obj || isActiveSelectionObject(obj)) {
+    return;
+  }
+
+  normalizeVectorObjectRendering(obj);
+  const motionSnapshot = options.motionSnapshot;
+  if (motionSnapshot?.target === obj) {
+    ctx.drawImage(
+      motionSnapshot.canvas,
+      motionSnapshot.drawOffsetX,
+      motionSnapshot.drawOffsetY,
+    );
+    return;
+  }
+
+  if (isFabricGroupObject(obj)) {
+    for (const child of getFabricChildObjects(obj)) {
+      renderComposedVectorSceneNode(ctx, decorationCtx, decorationCanvas, child, options);
+    }
+    return;
+  }
+
+  renderVectorObjectBaseToContext(ctx, obj, options);
+  if (!objectHasVectorTextureDecorations(obj)) {
+    return;
+  }
+
+  const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  const canvasHeight = options.canvasHeight ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  decorationCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+  const renderedDecorations = renderVectorTextureDecorationsForObject(decorationCtx, obj, options);
+  if (renderedDecorations) {
+    ctx.drawImage(decorationCanvas, 0, 0, canvasWidth, canvasHeight);
+  }
+}
+
 export function renderVectorTextureOverlayForObjects(
   ctx: CanvasRenderingContext2D,
   objects: readonly any[],
@@ -1183,10 +1296,7 @@ export function renderVectorTextureOverlayForObjects(
   }
 
   for (const obj of objects) {
-    if (!objectHasVectorTextureDecorations(obj)) {
-      continue;
-    }
-    renderVectorTextureDecorationsForObject(overlayCtx, obj, options);
+    renderVectorTextureOverlayNode(overlayCtx, obj, options);
   }
 
   ctx.drawImage(overlayCanvas, 0, 0, canvasWidth, canvasHeight);
@@ -1225,32 +1335,7 @@ export function renderComposedVectorSceneForObjects(
   }
 
   for (const obj of objects) {
-    if (!obj || isActiveSelectionObject(obj)) {
-      continue;
-    }
-
-    normalizeVectorObjectRendering(obj);
-    renderVectorObjectBaseToContext(ctx, obj, options);
-
-    const motionSnapshot = options.motionSnapshot;
-    if (motionSnapshot?.target === obj) {
-      ctx.drawImage(
-        motionSnapshot.canvas,
-        motionSnapshot.drawOffsetX,
-        motionSnapshot.drawOffsetY,
-      );
-      continue;
-    }
-
-    if (!objectHasVectorTextureDecorations(obj)) {
-      continue;
-    }
-
-    decorationCtx.clearRect(0, 0, canvasWidth, canvasHeight);
-    const renderedDecorations = renderVectorTextureDecorationsForObject(decorationCtx, obj, options);
-    if (renderedDecorations) {
-      ctx.drawImage(decorationCanvas, 0, 0, canvasWidth, canvasHeight);
-    }
+    renderComposedVectorSceneNode(ctx, decorationCtx, decorationCanvas, obj, options);
   }
 }
 

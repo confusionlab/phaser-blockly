@@ -174,6 +174,31 @@ async function readSavedBackgroundVectorObjectCount(page: Page): Promise<number>
   });
 }
 
+async function readSavedBackgroundGroupedChildFillColors(page: Page): Promise<string[]> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const vectorLayer = project?.scenes[0]?.background?.document?.layers?.find(
+      (layer: { kind: string }) => layer.kind === 'vector',
+    ) as { vector?: { fabricJson?: string } } | undefined;
+    if (!vectorLayer?.vector?.fabricJson) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{ objects?: Array<{ vectorFillColor?: string; fill?: string }> }>;
+      };
+      const [group] = Array.isArray(parsed.objects) ? parsed.objects : [];
+      return Array.isArray(group?.objects)
+        ? group.objects.map((child) => String(child?.vectorFillColor ?? child?.fill ?? '')).filter(Boolean)
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 async function readSavedBackgroundVectorObjectPosition(
   page: Page,
 ): Promise<{ left: number | null; top: number | null } | null> {
@@ -829,6 +854,113 @@ test.describe('Background editor', () => {
       }
       return JSON.stringify(inside) !== JSON.stringify(outside);
     }).toBe(true);
+  });
+
+  test('grouped background vector selections stay visible after Cmd/Ctrl+G', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await setToolbarColorOpacity(page, 'Stroke', 0);
+    await setToolbarColorOpacity(page, 'Fill', 100);
+    await setToolbarHexColor(page, 'Fill', '#22C55E');
+
+    const firstRectStart = { x: editor.box.x + editor.box.width * 0.32, y: editor.box.y + editor.box.height * 0.34 };
+    const firstRectEnd = { x: editor.box.x + editor.box.width * 0.47, y: editor.box.y + editor.box.height * 0.5 };
+    const firstCenter = { x: Math.round(editor.box.width * 0.395), y: Math.round(editor.box.height * 0.42) };
+
+    await page.mouse.move(firstRectStart.x, firstRectStart.y);
+    await page.mouse.down();
+    await page.mouse.move(firstRectEnd.x, firstRectEnd.y, { steps: 8 });
+    await page.mouse.up();
+
+    await setToolbarHexColor(page, 'Fill', '#2563EB');
+
+    const secondRectStart = { x: editor.box.x + editor.box.width * 0.54, y: editor.box.y + editor.box.height * 0.35 };
+    const secondRectEnd = { x: editor.box.x + editor.box.width * 0.71, y: editor.box.y + editor.box.height * 0.54 };
+    const secondCenter = { x: Math.round(editor.box.width * 0.625), y: Math.round(editor.box.height * 0.445) };
+    const outsideSample = { x: Math.round(editor.box.width * 0.12), y: Math.round(editor.box.height * 0.12) };
+
+    await page.mouse.move(secondRectStart.x, secondRectStart.y);
+    await page.mouse.down();
+    await page.mouse.move(secondRectEnd.x, secondRectEnd.y, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({ position: firstCenter });
+    await page.keyboard.down('Shift');
+    await vectorCanvas.click({ position: secondCenter });
+    await page.keyboard.up('Shift');
+
+    await page.keyboard.press('ControlOrMeta+G');
+
+    await expect.poll(async () => await readSavedBackgroundVectorObjectCount(page), { timeout: 10000 }).toBe(1);
+    await expect.poll(async () => {
+      const firstPixel = await readBackgroundEditorCompositePixel(page, firstCenter);
+      const secondPixel = await readBackgroundEditorCompositePixel(page, secondCenter);
+      const outsidePixel = await readBackgroundEditorCompositePixel(page, outsideSample);
+      if (!firstPixel || !secondPixel || !outsidePixel) {
+        return false;
+      }
+      const firstVisible = firstPixel.a > 0 && JSON.stringify(firstPixel) !== JSON.stringify(outsidePixel);
+      const secondVisible = secondPixel.a > 0 && JSON.stringify(secondPixel) !== JSON.stringify(outsidePixel);
+      return firstVisible && secondVisible;
+    }, { timeout: 10000 }).toBe(true);
+  });
+
+  test('double-clicking a grouped background object enters the group and selects the clicked child', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await setToolbarColorOpacity(page, 'Stroke', 0);
+    await setToolbarColorOpacity(page, 'Fill', 100);
+    await setToolbarHexColor(page, 'Fill', '#22C55E');
+
+    const firstRectStart = { x: editor.box.x + editor.box.width * 0.32, y: editor.box.y + editor.box.height * 0.34 };
+    const firstRectEnd = { x: editor.box.x + editor.box.width * 0.47, y: editor.box.y + editor.box.height * 0.5 };
+    const firstCenter = { x: Math.round(editor.box.width * 0.395), y: Math.round(editor.box.height * 0.42) };
+
+    await page.mouse.move(firstRectStart.x, firstRectStart.y);
+    await page.mouse.down();
+    await page.mouse.move(firstRectEnd.x, firstRectEnd.y, { steps: 8 });
+    await page.mouse.up();
+
+    await setToolbarHexColor(page, 'Fill', '#2563EB');
+
+    const secondRectStart = { x: editor.box.x + editor.box.width * 0.54, y: editor.box.y + editor.box.height * 0.35 };
+    const secondRectEnd = { x: editor.box.x + editor.box.width * 0.71, y: editor.box.y + editor.box.height * 0.54 };
+    const secondCenter = { x: Math.round(editor.box.width * 0.625), y: Math.round(editor.box.height * 0.445) };
+
+    await page.mouse.move(secondRectStart.x, secondRectStart.y);
+    await page.mouse.down();
+    await page.mouse.move(secondRectEnd.x, secondRectEnd.y, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({ position: firstCenter });
+    await page.keyboard.down('Shift');
+    await vectorCanvas.click({ position: secondCenter });
+    await page.keyboard.up('Shift');
+    await page.keyboard.press('ControlOrMeta+G');
+
+    await expect.poll(async () => await readSavedBackgroundVectorObjectCount(page), { timeout: 10000 }).toBe(1);
+
+    await vectorCanvas.dblclick({ position: firstCenter });
+    await setToolbarHexColor(page, 'Fill', '#EF4444');
+
+    await expect.poll(async () => {
+      const childColors = await readSavedBackgroundGroupedChildFillColors(page);
+      return childColors.length === 2
+        && childColors.includes('#EF4444')
+        && childColors.includes('#2563EB');
+    }, { timeout: 10000 }).toBe(true);
   });
 
   test('open background pen paths render textured fills', async ({ page }) => {

@@ -97,6 +97,7 @@ import {
   forEachFabricObjectDeep,
   getVectorGroupEditingPathForTarget,
   isFabricGroupObject,
+  resolveVectorGroupEntrySelectionTarget,
   resolveVectorHoverTarget,
   sanitizeVectorGroupEditingPath,
 } from '@/lib/editor/fabricVectorSelection';
@@ -1407,17 +1408,28 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       setVectorGroupEditingPath(getVectorGroupEditingPathForTarget(activeObject));
     };
 
-    const enterVectorGroupEditing = (group: any): boolean => {
+    const enterVectorGroupEditing = (
+      group: any,
+      options?: {
+        selectionTarget?: any | null;
+      },
+    ): boolean => {
       if (!isFabricGroupObject(group) || !fabricCanvasContainsObject(fabricCanvas, group)) {
         return false;
       }
 
+      const selectionTarget = (
+        options?.selectionTarget &&
+        fabricCanvasContainsObject(fabricCanvas, options.selectionTarget)
+      )
+        ? options.selectionTarget
+        : null;
       setVectorGroupEditingPath([
         ...getVectorGroupEditingPathForTarget(group),
         group,
       ]);
-      setHoveredVectorTarget(group);
-      fabricCanvas.setActiveObject(group);
+      setHoveredVectorTarget(selectionTarget ?? group);
+      fabricCanvas.setActiveObject(selectionTarget ?? group);
       configureCanvasForTool();
       syncSelectionState();
       fabricCanvas.requestRenderAll();
@@ -1537,7 +1549,12 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
               return;
             }
             if (isFabricGroupObject(clickedTarget)) {
-              enterVectorGroupEditing(clickedTarget);
+              const selectionTarget = resolveVectorGroupEntrySelectionTarget(
+                clickedTarget,
+                clickedTarget,
+                opt.subTargets,
+              );
+              enterVectorGroupEditing(clickedTarget, { selectionTarget });
               return;
             }
             if (!isVectorPointSelectableObject(clickedTarget)) {

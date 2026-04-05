@@ -13,6 +13,7 @@ import {
   fabricCanvasContainsObject,
   getVectorGroupEditingPathForTarget,
   isFabricGroupObject,
+  resolveVectorGroupEntrySelectionTarget,
   resolveVectorHoverTarget,
   sanitizeVectorGroupEditingPath,
 } from '@/lib/editor/fabricVectorSelection';
@@ -288,17 +289,28 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       setVectorGroupEditingPath(getVectorGroupEditingPathForTarget(activeObject));
     };
 
-    const enterVectorGroupEditing = (group: any): boolean => {
+    const enterVectorGroupEditing = (
+      group: any,
+      options?: {
+        selectionTarget?: any | null;
+      },
+    ): boolean => {
       if (!isFabricGroupObject(group) || !fabricCanvasContainsObject(fabricCanvas, group)) {
         return false;
       }
 
+      const selectionTarget = (
+        options?.selectionTarget &&
+        fabricCanvasContainsObject(fabricCanvas, options.selectionTarget)
+      )
+        ? options.selectionTarget
+        : null;
       setVectorGroupEditingPath([
         ...getVectorGroupEditingPathForTarget(group),
         group,
       ]);
-      setHoveredVectorTarget(group);
-      fabricCanvas.setActiveObject(group);
+      setHoveredVectorTarget(selectionTarget ?? group);
+      fabricCanvas.setActiveObject(selectionTarget ?? group);
       callbacksRef.current.configureCanvasForTool();
       callbacksRef.current.syncSelectionState();
       fabricCanvas.requestRenderAll();
@@ -638,7 +650,12 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             const vectorTarget = clickedTarget as any;
             if (!fabricCanvasContainsObject(canvas, vectorTarget)) return;
             if (isFabricGroupObject(vectorTarget)) {
-              enterVectorGroupEditing(vectorTarget);
+              const selectionTarget = resolveVectorGroupEntrySelectionTarget(
+                vectorTarget,
+                clickedTarget,
+                opt.subTargets,
+              );
+              enterVectorGroupEditing(vectorTarget, { selectionTarget });
               return;
             }
             if (!isVectorPointSelectableObject(vectorTarget)) {

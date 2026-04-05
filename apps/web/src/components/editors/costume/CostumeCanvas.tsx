@@ -541,14 +541,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       ? String(activeLayerOpacityRef.current)
       : '0';
     const showVectorComposite = editorModeRef.current === 'vector';
+    const hideFabricArtwork = showVectorComposite && activeToolRef.current !== 'text';
     if (fabricCanvas.wrapperEl) {
       fabricCanvas.wrapperEl.style.opacity = '1';
+      fabricCanvas.wrapperEl.style.zIndex = '0';
     }
     if (fabricCanvas.lowerCanvasEl) {
-      fabricCanvas.lowerCanvasEl.style.opacity = showVectorComposite ? '0' : nextOpacity;
+      fabricCanvas.lowerCanvasEl.style.opacity = hideFabricArtwork ? '0' : nextOpacity;
+      fabricCanvas.lowerCanvasEl.style.visibility = hideFabricArtwork ? 'hidden' : 'visible';
+      fabricCanvas.lowerCanvasEl.style.zIndex = '0';
     }
     if (fabricCanvas.upperCanvasEl) {
-      fabricCanvas.upperCanvasEl.style.opacity = nextOpacity;
+      fabricCanvas.upperCanvasEl.style.opacity = hideFabricArtwork ? '0' : nextOpacity;
+      fabricCanvas.upperCanvasEl.style.visibility = nextOpacity === '0' ? 'hidden' : 'visible';
+      fabricCanvas.upperCanvasEl.style.zIndex = '2';
     }
   }, []);
 
@@ -1018,7 +1024,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   useLayoutEffect(() => {
     syncActiveLayerCanvasVisibility();
-  }, [activeLayerOpacity, activeLayerVisible, isHostedLayerReadyState, isVisible, syncActiveLayerCanvasVisibility]);
+  }, [
+    activeLayerOpacity,
+    activeLayerVisible,
+    editorModeState,
+    isHostedLayerReadyState,
+    isVisible,
+    syncActiveLayerCanvasVisibility,
+  ]);
 
   useCostumeCanvasVectorHandleSync({
     activePathAnchorRef,

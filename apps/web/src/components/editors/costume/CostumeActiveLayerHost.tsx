@@ -54,6 +54,7 @@ export function CostumeActiveLayerVisual({
           height: CANVAS_SIZE,
           pointerEvents: 'none',
           opacity: hostReady && activeLayerVisible ? activeLayerOpacity : 0,
+          zIndex: 1,
         }}
       />
 
@@ -66,7 +67,6 @@ export function CostumeActiveLayerVisual({
           left: 0,
           width: CANVAS_SIZE,
           height: CANVAS_SIZE,
-          zIndex: 1,
         }}
       />
     </div>

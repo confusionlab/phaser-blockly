@@ -116,6 +116,35 @@ export function getVectorGroupEditingPathForTarget(target: unknown): FabricObjec
   return getFabricAncestorGroups(target);
 }
 
+export function resolveVectorGroupEntrySelectionTarget(
+  group: unknown,
+  target: unknown,
+  subTargets: unknown[] | null | undefined,
+): FabricObjectLike | null {
+  if (!isFabricGroupObject(group)) {
+    return null;
+  }
+
+  const parentGroup = group as FabricObjectLike;
+  const candidates = [
+    target,
+    ...(Array.isArray(subTargets) ? subTargets : []),
+  ];
+  const seen = new Set<unknown>();
+
+  for (const candidate of candidates) {
+    if (!candidate || candidate === parentGroup || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    if (getFabricObjectDirectParentGroup(candidate) === parentGroup) {
+      return candidate as FabricObjectLike;
+    }
+  }
+
+  return null;
+}
+
 export function sanitizeVectorGroupEditingPath(
   fabricCanvas: Pick<FabricCanvas, 'getObjects'> | null | undefined,
   path: unknown[],

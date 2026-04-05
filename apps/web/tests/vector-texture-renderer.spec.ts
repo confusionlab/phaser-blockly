@@ -442,6 +442,118 @@ test.describe('vector texture renderer', () => {
     expect(result.texturedOnlyOpaquePixels).toBeGreaterThan(20);
   });
 
+  test('preserves child stacking for grouped objects that mix textured and solid fills', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { ActiveSelection, Canvas, Rect } = await import(
+        '/@fs/Users/kihaahn/code/0040-pochacoding/node_modules/.pnpm/fabric@7.1.0/node_modules/fabric/dist/index.mjs'
+      );
+      const { groupActiveCanvasSelection } = await import('/src/components/editors/shared/fabricSelectionCommands.ts');
+      const { renderComposedVectorSceneForFabricCanvas } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 220;
+      const height = 220;
+
+      const groupedObjects = [
+        new Rect({
+          left: 36,
+          top: 36,
+          width: 132,
+          height: 132,
+          strokeWidth: 0,
+          fill: 'rgba(34, 197, 94, 0)',
+          opacity: 1,
+          vectorFillTextureId: 'grain',
+          vectorFillColor: '#22c55e',
+          vectorFillOpacity: 1,
+          vectorStrokeBrushId: 'solid',
+          vectorStrokeColor: '#22c55e',
+          vectorStrokeOpacity: 1,
+        } as any),
+        new Rect({
+          left: 84,
+          top: 84,
+          width: 84,
+          height: 84,
+          strokeWidth: 0,
+          fill: '#ef4444',
+          opacity: 1,
+          vectorFillTextureId: 'solid',
+          vectorFillColor: '#ef4444',
+          vectorFillOpacity: 1,
+          vectorStrokeBrushId: 'solid',
+          vectorStrokeColor: '#ef4444',
+          vectorStrokeOpacity: 1,
+        } as any),
+      ];
+
+      const sourceCanvasElement = document.createElement('canvas');
+      sourceCanvasElement.width = width;
+      sourceCanvasElement.height = height;
+      const fabricCanvas = new Canvas(sourceCanvasElement, {
+        width,
+        height,
+        renderOnAddRemove: false,
+        enableRetinaScaling: false,
+        preserveObjectStacking: true,
+      });
+      groupedObjects.forEach((object) => fabricCanvas.add(object));
+      fabricCanvas.setActiveObject(new ActiveSelection(groupedObjects as any[], { canvas: fabricCanvas }) as any);
+      const grouped = groupActiveCanvasSelection(fabricCanvas as any);
+      if (!grouped) {
+        throw new Error('Failed to group canvas selection.');
+      }
+      fabricCanvas.renderAll();
+
+      const composedCanvas = document.createElement('canvas');
+      composedCanvas.width = width;
+      composedCanvas.height = height;
+      const composedCtx = composedCanvas.getContext('2d', { willReadFrequently: true });
+      if (!composedCtx) {
+        throw new Error('Failed to acquire grouped composed vector scene context.');
+      }
+
+      try {
+        renderComposedVectorSceneForFabricCanvas(composedCtx, fabricCanvas, {
+          canvasWidth: width,
+          canvasHeight: height,
+        });
+
+        const readPixel = (x: number, y: number) => {
+          const data = composedCtx.getImageData(x, y, 1, 1).data;
+          return {
+            r: data[0] ?? 0,
+            g: data[1] ?? 0,
+            b: data[2] ?? 0,
+            a: data[3] ?? 0,
+          };
+        };
+        const countOpaquePixelsInRect = (left: number, top: number, rectWidth: number, rectHeight: number) => {
+          const imageData = composedCtx.getImageData(left, top, rectWidth, rectHeight).data;
+          let count = 0;
+          for (let index = 3; index < imageData.length; index += 4) {
+            if ((imageData[index] ?? 0) > 0) {
+              count += 1;
+            }
+          }
+          return count;
+        };
+
+        return {
+          overlap: readPixel(120, 120),
+          texturedOnlyOpaquePixels: countOpaquePixelsInRect(48, 48, 32, 32),
+        };
+      } finally {
+        fabricCanvas.dispose();
+      }
+    });
+
+    expect(result.overlap.a).toBeGreaterThan(200);
+    expect(result.overlap.r).toBeGreaterThan(result.overlap.g * 1.5);
+    expect(result.texturedOnlyOpaquePixels).toBeGreaterThan(20);
+  });
+
   test('renders transient textured preview paths passed as additional overlay objects', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');
