@@ -3,6 +3,97 @@ import { expect, test } from '@playwright/test';
 const APP_URL = process.env.POCHA_E2E_BASE_URL ?? '/';
 
 test.describe('vector texture renderer', () => {
+  test('keeps textured stroke dab placement stable when the object translates', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 320;
+      const height = 220;
+      const translationX = 36;
+      const createOverlayContext = () => {
+        const overlayCanvas = document.createElement('canvas');
+        overlayCanvas.width = width;
+        overlayCanvas.height = height;
+        return overlayCanvas.getContext('2d', { willReadFrequently: true });
+      };
+      const baseCtx = createOverlayContext();
+      const translatedCtx = createOverlayContext();
+      if (!baseCtx || !translatedCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      const createPathObject = (offsetX: number) => ({
+        type: 'path',
+        path: [
+          ['M', 56 + offsetX, 68],
+          ['Q', 124 + offsetX, 26, 174 + offsetX, 92],
+          ['L', 236 + offsetX, 146],
+        ],
+        pathOffset: { x: 0, y: 0 },
+        fill: null,
+        opacity: 1,
+        stroke: 'rgba(37, 99, 235, 0)',
+        strokeWidth: 20,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+        vectorStrokeBrushId: 'marker',
+        vectorStrokeColor: '#2563eb',
+        vectorStrokeOpacity: 1,
+        calcTransformMatrix: () => [1, 0, 0, 1, 0, 0],
+      });
+
+      renderVectorTextureOverlayForObjects(baseCtx, [createPathObject(0)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+      renderVectorTextureOverlayForObjects(translatedCtx, [createPathObject(translationX)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const alignedCanvas = document.createElement('canvas');
+      alignedCanvas.width = width;
+      alignedCanvas.height = height;
+      const alignedCtx = alignedCanvas.getContext('2d', { willReadFrequently: true });
+      if (!alignedCtx) {
+        throw new Error('Failed to acquire aligned overlay context.');
+      }
+      alignedCtx.drawImage(translatedCtx.canvas, -translationX, 0);
+
+      const basePixels = baseCtx.getImageData(0, 0, width, height).data;
+      const alignedPixels = alignedCtx.getImageData(0, 0, width, height).data;
+
+      let opaqueUnion = 0;
+      let opaqueIntersection = 0;
+      let alphaDifference = 0;
+      for (let index = 3; index < basePixels.length; index += 4) {
+        const baseAlpha = basePixels[index] ?? 0;
+        const alignedAlpha = alignedPixels[index] ?? 0;
+        const baseOpaque = baseAlpha > 16;
+        const alignedOpaque = alignedAlpha > 16;
+        if (baseOpaque || alignedOpaque) {
+          opaqueUnion += 1;
+        }
+        if (baseOpaque && alignedOpaque) {
+          opaqueIntersection += 1;
+        }
+        alphaDifference += Math.abs(baseAlpha - alignedAlpha);
+      }
+
+      return {
+        opaqueIntersection,
+        opaqueUnion,
+        averageAlphaDifference: alphaDifference / (width * height),
+      };
+    });
+
+    expect(result.opaqueUnion).toBeGreaterThan(1800);
+    expect(result.opaqueIntersection / result.opaqueUnion).toBeGreaterThan(0.94);
+    expect(result.averageAlphaDifference).toBeLessThan(4);
+  });
+
   test('applies the fabric viewport transform before drawing textured overlays', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');

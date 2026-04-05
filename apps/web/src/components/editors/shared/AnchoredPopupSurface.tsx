@@ -61,13 +61,21 @@ export function AnchoredPopupSurface({
         ? (fitsAbove || !fitsBelow ? 'top' : 'bottom')
         : (fitsBelow || !fitsAbove ? 'bottom' : 'top');
 
-    setPosition({
+    const nextPosition = {
       left,
       top: resolvedSide === 'top'
         ? Math.max(viewportPadding, topCandidate)
         : Math.min(bottomCandidate, window.innerHeight - panelHeight - viewportPadding),
       side: resolvedSide,
-    });
+    } as const;
+
+    setPosition((current) => (
+      current.left === nextPosition.left &&
+      current.top === nextPosition.top &&
+      current.side === nextPosition.side
+        ? current
+        : nextPosition
+    ));
   }, [align, anchorRef, side, sideOffset, viewportPadding]);
 
   useEffect(() => {

@@ -275,6 +275,7 @@ const ToolbarPreviewSlider = memo(({
 }: ToolbarPreviewSliderProps) => {
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
+  const closePreview = useCallback(() => setIsPreviewVisible(false), []);
 
   useEffect(() => {
     if (!previewEnabled) {
@@ -288,7 +289,7 @@ const ToolbarPreviewSlider = memo(({
     }
 
     const handlePointerEnd = () => {
-      setIsPreviewVisible(false);
+      closePreview();
     };
 
     window.addEventListener('pointerup', handlePointerEnd);
@@ -297,7 +298,7 @@ const ToolbarPreviewSlider = memo(({
       window.removeEventListener('pointerup', handlePointerEnd);
       window.removeEventListener('pointercancel', handlePointerEnd);
     };
-  }, [isPreviewVisible]);
+  }, [closePreview, isPreviewVisible]);
 
   return (
     <div className={cn('flex min-w-[136px] items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0', className)}>
@@ -309,7 +310,7 @@ const ToolbarPreviewSlider = memo(({
           className={sliderClassName}
           value={value}
           onValueChange={onValueChange}
-          onValueCommit={() => setIsPreviewVisible(false)}
+          onValueCommit={closePreview}
           onPointerDownCapture={() => {
             if (previewEnabled) {
               setIsPreviewVisible(true);
@@ -320,7 +321,7 @@ const ToolbarPreviewSlider = memo(({
               setIsPreviewVisible(true);
             }
           }}
-          onBlurCapture={() => setIsPreviewVisible(false)}
+          onBlurCapture={closePreview}
           min={min}
           max={max}
           step={step}
@@ -331,7 +332,7 @@ const ToolbarPreviewSlider = memo(({
       <AnchoredPopupSurface
         open={previewEnabled && isPreviewVisible}
         anchorRef={anchorRef}
-        onClose={() => setIsPreviewVisible(false)}
+        onClose={closePreview}
         side="top"
         align="center"
         sideOffset={toolbarPopupSideOffset}

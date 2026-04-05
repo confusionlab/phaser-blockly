@@ -705,6 +705,11 @@ function drawVectorStrokeBrushPath(
   }
 
   const tangentWindow = Math.max(1, renderStyle.spacing * 0.85);
+  const contourSeed = hashNumberTriplet(
+    totalLength,
+    pathPoints.length,
+    closed ? 1 : 0,
+  );
 
   const renderDabAt = (distanceAlongPath: number, dabIndex: number) => {
     const point = samplePointAlongPolyline(
@@ -723,11 +728,12 @@ function drawVectorStrokeBrushPath(
       tangentWindow,
     );
     const dab = renderStyle.dabs[dabIndex % renderStyle.dabs.length];
-    const scaleRandom = hashNumberTriplet(point.x, point.y, dabIndex * 0.17);
-    const opacityRandom = hashNumberTriplet(point.y, point.x, dabIndex * 0.23);
-    const rotationRandom = hashNumberTriplet(point.y, point.x, dabIndex * 0.41);
-    const scatterAngleRandom = hashNumberTriplet(point.x, angle, dabIndex * 0.83);
-    const scatterRadiusRandom = hashNumberTriplet(point.y, angle, dabIndex * 1.29);
+    const dabPositionSeed = distanceAlongPath / Math.max(0.0001, renderStyle.spacing);
+    const scaleRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.17);
+    const opacityRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.23);
+    const rotationRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.41);
+    const scatterAngleRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.83);
+    const scatterRadiusRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 1.29);
     const jitterScale = 1 + (((scaleRandom * 2) - 1) * renderStyle.scaleJitter);
     const jitterRotation = ((rotationRandom * 2) - 1) * renderStyle.rotationJitter;
     const jitterOpacity = clampUnit(1 + (((opacityRandom * 2) - 1) * renderStyle.opacityJitter));
