@@ -82,14 +82,19 @@ async function setBrushColorOpacity(page: Page, opacityPercent: number): Promise
   await colorButton.click();
 }
 
-async function previewRangeSliderValueWithoutCommit(_page: Page, slider: Locator, value: number): Promise<void> {
-  await slider.evaluate((element, targetValue) => {
+async function previewRangeSliderValueWithoutCommit(
+  page: Page,
+  slider: Locator,
+  value: number,
+  options?: { overshootPx?: number },
+): Promise<void> {
+  const pointerPath = await slider.evaluate((element, payload) => {
     const sliderElement = element as HTMLElement;
     const min = Number(sliderElement.getAttribute('aria-valuemin') ?? '0');
     const max = Number(sliderElement.getAttribute('aria-valuemax') ?? '100');
     const currentValue = Number(sliderElement.getAttribute('aria-valuenow') ?? String(min));
     const rect = sliderElement.getBoundingClientRect();
-    const clampedTarget = Math.max(min, Math.min(max, Number(targetValue)));
+    const clampedTarget = Math.max(min, Math.min(max, Number(payload.targetValue)));
     const range = max - min;
     const getClientX = (nextValue: number) => {
       if (range <= 0) {
@@ -98,46 +103,24 @@ async function previewRangeSliderValueWithoutCommit(_page: Page, slider: Locator
       return rect.left + ((nextValue - min) / range) * rect.width;
     };
     const clientY = rect.top + rect.height / 2;
-    sliderElement.dispatchEvent(new PointerEvent('pointerdown', {
-      bubbles: true,
-      button: 0,
-      buttons: 1,
-      clientX: getClientX(currentValue),
+    return {
+      startX: getClientX(currentValue),
+      endX: getClientX(clampedTarget) + (payload.overshootPx ?? 0),
       clientY,
-      pointerId: 1,
-    }));
-    sliderElement.dispatchEvent(new PointerEvent('pointermove', {
-      bubbles: true,
-      button: 0,
-      buttons: 1,
-      clientX: getClientX(clampedTarget),
-      clientY,
-      pointerId: 1,
-    }));
-  }, value);
-  await slider.page().waitForTimeout(250);
+    };
+  }, {
+    targetValue: value,
+    overshootPx: options?.overshootPx ?? 0,
+  });
+
+  await page.mouse.move(pointerPath.startX, pointerPath.clientY);
+  await page.mouse.down();
+  await page.mouse.move(pointerPath.endX, pointerPath.clientY, { steps: 8 });
+  await page.waitForTimeout(250);
 }
 
-async function commitRangeSliderValue(slider: Locator): Promise<void> {
-  await slider.evaluate((element) => {
-    const sliderElement = element as HTMLElement;
-    const min = Number(sliderElement.getAttribute('aria-valuemin') ?? '0');
-    const max = Number(sliderElement.getAttribute('aria-valuemax') ?? '100');
-    const currentValue = Number(sliderElement.getAttribute('aria-valuenow') ?? String(min));
-    const rect = sliderElement.getBoundingClientRect();
-    const range = max - min;
-    const clientX = range <= 0
-      ? rect.left + rect.width / 2
-      : rect.left + ((currentValue - min) / range) * rect.width;
-    sliderElement.dispatchEvent(new PointerEvent('pointerup', {
-      bubbles: true,
-      button: 0,
-      buttons: 0,
-      clientX,
-      clientY: rect.top + rect.height / 2,
-      pointerId: 1,
-    }));
-  });
+async function commitRangeSliderValue(page: Page): Promise<void> {
+  await page.mouse.up();
 }
 
 async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) {
@@ -840,9 +823,37 @@ test.describe('Costume editor tools', () => {
 
     await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).toBe(initialFontSize ?? null);
 
-    await commitRangeSliderValue(fontSizeSlider);
+    await commitRangeSliderValue(page);
 
     await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).toBe(72);
+  });
+
+  test('costume text-size slider commits a clamped max release beyond the track edge', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^text$/i }).click();
+    await clickCostumeCanvas(page, 0.58, 0.44);
+    await page.keyboard.type('Hi');
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, 0.58, 0.44);
+
+    await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).not.toBeNull();
+    const initialFontSize = await readCurrentCostumeTextFontSize(page);
+    expect(initialFontSize).not.toBeNull();
+
+    const fontSizeSlider = page.getByTestId('costume-toolbar-properties').getByRole('slider').first();
+    await expect(fontSizeSlider).toBeVisible();
+
+    await previewRangeSliderValueWithoutCommit(page, fontSizeSlider, 120, { overshootPx: 32 });
+
+    await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).toBe(initialFontSize ?? null);
+
+    await commitRangeSliderValue(page);
+
+    await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).toBe(120);
   });
 
   test('costume rectangle tool commits plain path objects', async ({ page }) => {

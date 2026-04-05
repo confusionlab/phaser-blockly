@@ -537,14 +537,19 @@ async function setVectorStrokeWidth(page: Page, widthPercent: number): Promise<v
   });
 }
 
-async function previewRangeSliderValueWithoutCommit(_page: Page, slider: Locator, value: number): Promise<void> {
-  await slider.evaluate((element, targetValue) => {
+async function previewRangeSliderValueWithoutCommit(
+  page: Page,
+  slider: Locator,
+  value: number,
+  options?: { overshootPx?: number },
+): Promise<void> {
+  const pointerPath = await slider.evaluate((element, payload) => {
     const sliderElement = element as HTMLElement;
     const min = Number(sliderElement.getAttribute('aria-valuemin') ?? '0');
     const max = Number(sliderElement.getAttribute('aria-valuemax') ?? '100');
     const currentValue = Number(sliderElement.getAttribute('aria-valuenow') ?? String(min));
     const rect = sliderElement.getBoundingClientRect();
-    const clampedTarget = Math.max(min, Math.min(max, Number(targetValue)));
+    const clampedTarget = Math.max(min, Math.min(max, Number(payload.targetValue)));
     const range = max - min;
     const getClientX = (nextValue: number) => {
       if (range <= 0) {
@@ -553,46 +558,24 @@ async function previewRangeSliderValueWithoutCommit(_page: Page, slider: Locator
       return rect.left + ((nextValue - min) / range) * rect.width;
     };
     const clientY = rect.top + rect.height / 2;
-    sliderElement.dispatchEvent(new PointerEvent('pointerdown', {
-      bubbles: true,
-      button: 0,
-      buttons: 1,
-      clientX: getClientX(currentValue),
+    return {
+      startX: getClientX(currentValue),
+      endX: getClientX(clampedTarget) + (payload.overshootPx ?? 0),
       clientY,
-      pointerId: 1,
-    }));
-    sliderElement.dispatchEvent(new PointerEvent('pointermove', {
-      bubbles: true,
-      button: 0,
-      buttons: 1,
-      clientX: getClientX(clampedTarget),
-      clientY,
-      pointerId: 1,
-    }));
-  }, value);
-  await slider.page().waitForTimeout(250);
+    };
+  }, {
+    targetValue: value,
+    overshootPx: options?.overshootPx ?? 0,
+  });
+
+  await page.mouse.move(pointerPath.startX, pointerPath.clientY);
+  await page.mouse.down();
+  await page.mouse.move(pointerPath.endX, pointerPath.clientY, { steps: 8 });
+  await page.waitForTimeout(250);
 }
 
-async function commitRangeSliderValue(slider: Locator): Promise<void> {
-  await slider.evaluate((element) => {
-    const sliderElement = element as HTMLElement;
-    const min = Number(sliderElement.getAttribute('aria-valuemin') ?? '0');
-    const max = Number(sliderElement.getAttribute('aria-valuemax') ?? '100');
-    const currentValue = Number(sliderElement.getAttribute('aria-valuenow') ?? String(min));
-    const rect = sliderElement.getBoundingClientRect();
-    const range = max - min;
-    const clientX = range <= 0
-      ? rect.left + rect.width / 2
-      : rect.left + ((currentValue - min) / range) * rect.width;
-    sliderElement.dispatchEvent(new PointerEvent('pointerup', {
-      bubbles: true,
-      button: 0,
-      buttons: 0,
-      clientX,
-      clientY: rect.top + rect.height / 2,
-      pointerId: 1,
-    }));
-  });
+async function commitRangeSliderValue(page: Page): Promise<void> {
+  await page.mouse.up();
 }
 
 async function addVectorLayer(page: Page): Promise<void> {
@@ -1841,12 +1824,52 @@ test.describe('Background editor', () => {
       return styles[0]?.strokeWidth ?? null;
     }, { timeout: 10000 }).toBe(initialStrokeWidth ?? null);
 
-    await commitRangeSliderValue(strokeWidthSlider);
+    await commitRangeSliderValue(page);
 
     await expect.poll(async () => {
       const styles = await readSavedBackgroundVectorObjectPaintStyles(page);
       return styles[0]?.strokeWidth ?? null;
     }, { timeout: 10000 }).toBe(24);
+  });
+
+  test('background vector stroke-width slider commits a clamped max release beyond the track edge', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.36, editor.box.y + editor.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.56, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.46), y: Math.round(editor.box.height * 0.45) },
+    });
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectPaintStyles(page), { timeout: 10000 }).toHaveLength(1);
+    const initialStrokeWidth = (await readSavedBackgroundVectorObjectPaintStyles(page))[0]?.strokeWidth;
+    expect(initialStrokeWidth).not.toBeNull();
+
+    const strokeWidthSlider = page.getByTestId('costume-toolbar-properties').getByRole('slider').first();
+    await expect(strokeWidthSlider).toBeVisible();
+
+    await previewRangeSliderValueWithoutCommit(page, strokeWidthSlider, 50, { overshootPx: 32 });
+
+    await expect.poll(async () => {
+      const styles = await readSavedBackgroundVectorObjectPaintStyles(page);
+      return styles[0]?.strokeWidth ?? null;
+    }, { timeout: 10000 }).toBe(initialStrokeWidth ?? null);
+
+    await commitRangeSliderValue(page);
+
+    await expect.poll(async () => {
+      const styles = await readSavedBackgroundVectorObjectPaintStyles(page);
+      return styles[0]?.strokeWidth ?? null;
+    }, { timeout: 10000 }).toBe(50);
   });
 
   test('background rectangle tool commits plain path objects', async ({ page }) => {

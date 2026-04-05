@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 const toolbarSliderThumbClassName =
@@ -37,6 +37,7 @@ export function FloatingToolbarSlider({
   const latestValueRef = useRef(value);
   const sliderRef = useRef<HTMLDivElement | null>(null);
   const dragPointerIdRef = useRef<number | null>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
   const clampedValue = useMemo(() => {
     if (!Number.isFinite(value)) {
       return min;
@@ -91,6 +92,81 @@ export function FloatingToolbarSlider({
     return normalizeValue(latestValueRef.current + delta);
   }, [normalizeValue, step]);
 
+  const clearPointerDragListeners = useCallback(() => {
+    dragCleanupRef.current?.();
+    dragCleanupRef.current = null;
+  }, []);
+
+  const endPointerDrag = useCallback((options: { clientX?: number; commit: boolean }) => {
+    if (dragPointerIdRef.current === null) {
+      return;
+    }
+
+    dragPointerIdRef.current = null;
+    clearPointerDragListeners();
+
+    const nextValue = typeof options.clientX === 'number'
+      ? getValueFromClientX(options.clientX)
+      : latestValueRef.current;
+
+    if (typeof options.clientX === 'number') {
+      previewValue(nextValue);
+    }
+    if (options.commit) {
+      commitValue(nextValue);
+    }
+  }, [clearPointerDragListeners, commitValue, getValueFromClientX, previewValue]);
+
+  const beginPointerDrag = useCallback((pointerId: number, clientX: number) => {
+    dragPointerIdRef.current = pointerId;
+    clearPointerDragListeners();
+    previewValue(getValueFromClientX(clientX));
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (dragPointerIdRef.current !== event.pointerId) {
+        return;
+      }
+      previewValue(getValueFromClientX(event.clientX));
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      if (dragPointerIdRef.current !== event.pointerId) {
+        return;
+      }
+      endPointerDrag({
+        clientX: event.clientX,
+        commit: true,
+      });
+    };
+
+    const handlePointerCancel = (event: PointerEvent) => {
+      if (dragPointerIdRef.current !== event.pointerId) {
+        return;
+      }
+      endPointerDrag({ commit: false });
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, true);
+    window.addEventListener('pointerup', handlePointerUp, true);
+    window.addEventListener('pointercancel', handlePointerCancel, true);
+    dragCleanupRef.current = () => {
+      window.removeEventListener('pointermove', handlePointerMove, true);
+      window.removeEventListener('pointerup', handlePointerUp, true);
+      window.removeEventListener('pointercancel', handlePointerCancel, true);
+    };
+  }, [clearPointerDragListeners, endPointerDrag, getValueFromClientX, previewValue]);
+
+  useEffect(() => {
+    return () => {
+      dragPointerIdRef.current = null;
+      clearPointerDragListeners();
+    };
+  }, [clearPointerDragListeners]);
+
   return (
     <div
       className={cn('relative flex h-4 w-full touch-none items-center', className)}
@@ -125,33 +201,10 @@ export function FloatingToolbarSlider({
           if (event.button !== 0) {
             return;
           }
-          dragPointerIdRef.current = event.pointerId;
-          event.currentTarget.setPointerCapture(event.pointerId);
+          event.preventDefault();
           event.currentTarget.focus();
           onPointerDownCapture?.();
-          previewValue(getValueFromClientX(event.clientX));
-        }}
-        onPointerMove={(event) => {
-          if (dragPointerIdRef.current !== event.pointerId) {
-            return;
-          }
-          previewValue(getValueFromClientX(event.clientX));
-        }}
-        onPointerUp={(event) => {
-          if (dragPointerIdRef.current !== event.pointerId) {
-            return;
-          }
-          dragPointerIdRef.current = null;
-          previewValue(getValueFromClientX(event.clientX));
-          event.currentTarget.releasePointerCapture(event.pointerId);
-          commitValue();
-        }}
-        onPointerCancel={(event) => {
-          if (dragPointerIdRef.current !== event.pointerId) {
-            return;
-          }
-          dragPointerIdRef.current = null;
-          event.currentTarget.releasePointerCapture(event.pointerId);
+          beginPointerDrag(event.pointerId, event.clientX);
         }}
         onKeyDown={(event) => {
           let nextValue: number | null = null;
@@ -202,7 +255,9 @@ export function FloatingToolbarSlider({
         }}
         onBlurCapture={() => {
           setIsFocused(false);
-          dragPointerIdRef.current = null;
+          if (dragPointerIdRef.current !== null) {
+            endPointerDrag({ commit: false });
+          }
           onBlurCapture?.();
         }}
       />
