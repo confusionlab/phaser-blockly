@@ -61,6 +61,14 @@ async function dispatchWorldBoundaryShortcut(
 }
 
 test.describe('World boundary editor', () => {
+  test('hover help renders above the fullscreen editor chrome', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `World Boundary Help ${Date.now()}` });
+
+    await openWorldBoundaryEditor(page);
+    await page.getByRole('button', { name: /^boundary help$/i }).hover();
+    await expect(page.getByRole('dialog').filter({ hasText: 'Click to place the first points.' })).toBeVisible();
+  });
+
   test('undo and redo inside the fullscreen editor use the universal history timeline', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `World Boundary ${Date.now()}` });
     const baselineState = {

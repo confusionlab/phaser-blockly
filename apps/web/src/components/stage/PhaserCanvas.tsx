@@ -96,6 +96,12 @@ import {
   TRANSFORM_GIZMO_STROKE_WIDTH,
 } from '@/lib/editor/unifiedTransformGizmo';
 import type { TransformGizmoCorner, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
+import {
+  DEFAULT_EDITOR_SELECTION_RGB,
+  createSelectionFillCss,
+  getResolvedEditorSelectionTokens,
+  rgbToPhaserColor,
+} from '@/lib/ui/editorSelectionTokens';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
@@ -131,10 +137,7 @@ const TILED_BACKGROUND_LAYER_DEPTH = -950;
 const INVENTORY_PAGE_SIZE = 8;
 const COSTUME_CANVAS_SIZE = 1024;
 const INVENTORY_PREVIEW_SIZE = 40;
-const STAGE_GIZMO_COLOR = 0x0ea5e9;
-const STAGE_GIZMO_COLOR_CSS = 'rgb(14, 165, 233)';
-const STAGE_GIZMO_FILL_CSS = 'rgba(14, 165, 233, 0.08)';
-const STAGE_SELECTION_FILL_ALPHA = 0.06;
+const STAGE_GIZMO_COLOR = rgbToPhaserColor(DEFAULT_EDITOR_SELECTION_RGB);
 const MIN_STAGE_SURFACE_SIZE = 64;
 const STAGE_VIEWPORT_ZOOM_STEP = EDITOR_VIEWPORT_ZOOM_STEP;
 const STAGE_VIEWPORT_FIT_PADDING_PX = EDITOR_VIEWPORT_FIT_PADDING_PX;
@@ -383,33 +386,44 @@ function getResolvedComponentStageColor(): string {
   return color || COMPONENT_COLOR;
 }
 
+function getDefaultStageGizmoPalette(): StageGizmoPalette {
+  const selectionTokens = getResolvedEditorSelectionTokens();
+  return {
+    phaserColor: rgbToPhaserColor(selectionTokens.accentRgb),
+    strokeCss: selectionTokens.accent,
+    fillCss: selectionTokens.fill,
+    handleStrokeCss: selectionTokens.handleStroke,
+  };
+}
+
+function getStageSelectionFillAlpha() {
+  return getResolvedEditorSelectionTokens().fillAlpha;
+}
+
 function createStageGizmoPaletteFromCssColor(cssColor: string, fallbackPhaserColor: number): StageGizmoPalette {
+  const selectionFillAlpha = getStageSelectionFillAlpha();
   const rgb = resolveCssColorToRgb(cssColor);
   if (!rgb) {
+    const defaultPalette = getDefaultStageGizmoPalette();
     return {
       phaserColor: fallbackPhaserColor,
       strokeCss: cssColor,
-      fillCss: STAGE_GIZMO_FILL_CSS,
+      fillCss: defaultPalette.fillCss || createSelectionFillCss(DEFAULT_EDITOR_SELECTION_RGB, selectionFillAlpha),
       handleStrokeCss: cssColor,
     };
   }
 
   return {
-    phaserColor: (rgb.r << 16) | (rgb.g << 8) | rgb.b,
+    phaserColor: rgbToPhaserColor(rgb),
     strokeCss: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-    fillCss: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.08)`,
+    fillCss: createSelectionFillCss(rgb, selectionFillAlpha),
     handleStrokeCss: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
   };
 }
 
 function getStageGizmoPaletteForObject(object: GameObject | null | undefined): StageGizmoPalette {
   if (!object?.componentId) {
-    return {
-      phaserColor: STAGE_GIZMO_COLOR,
-      strokeCss: STAGE_GIZMO_COLOR_CSS,
-      fillCss: STAGE_GIZMO_FILL_CSS,
-      handleStrokeCss: STAGE_GIZMO_COLOR_CSS,
-    };
+    return getDefaultStageGizmoPalette();
   }
 
   return createStageGizmoPaletteFromCssColor(getResolvedComponentStageColor(), STAGE_GIZMO_COLOR);
@@ -427,12 +441,7 @@ function getStageGizmoPaletteForSelection(scene: Phaser.Scene, selectedIds: stri
     return createStageGizmoPaletteFromCssColor(getResolvedComponentStageColor(), STAGE_GIZMO_COLOR);
   }
 
-  return {
-    phaserColor: STAGE_GIZMO_COLOR,
-    strokeCss: STAGE_GIZMO_COLOR_CSS,
-    fillCss: STAGE_GIZMO_FILL_CSS,
-    handleStrokeCss: STAGE_GIZMO_COLOR_CSS,
-  };
+  return getDefaultStageGizmoPalette();
 }
 
 function getStageShellBackgroundColor(
@@ -2652,7 +2661,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         if (selectionRect) {
           const selectionPalette = getStageGizmoPaletteForObject(obj);
           selectionRect.setStrokeStyle(GIZMO_STROKE_PX, selectionPalette.phaserColor);
-          selectionRect.setFillStyle(selectionPalette.phaserColor, STAGE_SELECTION_FILL_ALPHA);
+          selectionRect.setFillStyle(selectionPalette.phaserColor, getStageSelectionFillAlpha());
         }
         // Update existing object - convert user coords to Phaser coords
         const cw = phaserScene.data.get('canvasWidth') as number || 800;
@@ -3641,7 +3650,7 @@ function createEditorScene(
   ) => {
     shape.setFillStyle(0xffffff, options?.interactiveAlpha ?? 0.001);
     if (options?.showStroke !== false) {
-      shape.setStrokeStyle(1.5, STAGE_GIZMO_COLOR, 1);
+      shape.setStrokeStyle(1.5, getDefaultStageGizmoPalette().phaserColor, 1);
     }
     shape.setName(name);
     shape.setVisible(false);
@@ -3911,7 +3920,7 @@ function createEditorScene(
 
     groupOverlayGraphics.clear();
     groupOverlayGraphics.lineStyle(TRANSFORM_GIZMO_STROKE_WIDTH * uiScale, palette.phaserColor, 1);
-    groupOverlayGraphics.fillStyle(palette.phaserColor, STAGE_SELECTION_FILL_ALPHA);
+    groupOverlayGraphics.fillStyle(palette.phaserColor, getStageSelectionFillAlpha());
     groupOverlayGraphics.beginPath();
     groupOverlayGraphics.moveTo(frameGeometry.corners.nw.x, frameGeometry.corners.nw.y);
     groupOverlayGraphics.lineTo(frameGeometry.corners.ne.x, frameGeometry.corners.ne.y);
@@ -4019,15 +4028,52 @@ function createEditorScene(
     setHandle('handle_rotate_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y, 'se');
   };
 
+  const getOrderedMarqueeHitIds = (minX: number, minY: number, maxX: number, maxY: number) => {
+    const hits = new Set<string>();
+    scene.children.each((child: Phaser.GameObjects.GameObject) => {
+      if (!(child instanceof Phaser.GameObjects.Container) || !child.getData('objectData')) return;
+      const objectHitRect = child.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+      const bounds = objectHitRect ? objectHitRect.getBounds() : child.getBounds();
+      const intersects = bounds.right >= minX && bounds.left <= maxX && bounds.bottom >= minY && bounds.top <= maxY;
+      if (intersects) {
+        hits.add(child.name);
+      }
+    });
+
+    const orderedSceneObjectIds = getOrderedSceneObjectIds();
+    return orderedSceneObjectIds.filter((id) => hits.has(id));
+  };
+
+  const getPreviewSelectionFromOrderedHitIds = (orderedHitIds: string[]) => {
+    const storeState = useEditorStore.getState();
+    const currentSelected = storeState.selectedObjectIds.length > 0
+      ? storeState.selectedObjectIds
+      : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+
+    if (marqueeMode === 'add') {
+      return Array.from(new Set([...currentSelected, ...orderedHitIds]));
+    }
+
+    return orderedHitIds;
+  };
+
   const drawMarquee = (pointer: Phaser.Input.Pointer) => {
     const minX = Math.min(marqueeStartX, pointer.worldX);
     const minY = Math.min(marqueeStartY, pointer.worldY);
+    const maxX = Math.max(marqueeStartX, pointer.worldX);
+    const maxY = Math.max(marqueeStartY, pointer.worldY);
     const width = Math.abs(pointer.worldX - marqueeStartX);
     const height = Math.abs(pointer.worldY - marqueeStartY);
+    const previewSelection = getPreviewSelectionFromOrderedHitIds(
+      getOrderedMarqueeHitIds(minX, minY, maxX, maxY),
+    );
+    const selectionPalette = previewSelection.length > 0
+      ? getStageGizmoPaletteForSelection(scene, previewSelection)
+      : getDefaultStageGizmoPalette();
     marqueeGraphics.clear();
-    marqueeGraphics.fillStyle(0x4a90d9, 0.12);
+    marqueeGraphics.fillStyle(selectionPalette.phaserColor, getStageSelectionFillAlpha());
     marqueeGraphics.fillRect(minX, minY, width, height);
-    marqueeGraphics.lineStyle(1, 0x4a90d9, 1);
+    marqueeGraphics.lineStyle(1, selectionPalette.phaserColor, 1);
     marqueeGraphics.strokeRect(minX, minY, width, height);
     marqueeGraphics.setVisible(true);
   };
@@ -4059,29 +4105,9 @@ function createEditorScene(
       return;
     }
 
-    const hits = new Set<string>();
-    scene.children.each((child: Phaser.GameObjects.GameObject) => {
-      if (!(child instanceof Phaser.GameObjects.Container) || !child.getData('objectData')) return;
-      const objectHitRect = child.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
-      const bounds = objectHitRect ? objectHitRect.getBounds() : child.getBounds();
-      const intersects = bounds.right >= minX && bounds.left <= maxX && bounds.bottom >= minY && bounds.top <= maxY;
-      if (intersects) {
-        hits.add(child.name);
-      }
-    });
-
-    const orderedSceneObjectIds = getOrderedSceneObjectIds();
-    const orderedHitIds = orderedSceneObjectIds.filter((id) => hits.has(id));
-
-    const storeState = useEditorStore.getState();
-    const currentSelected = storeState.selectedObjectIds.length > 0
-      ? storeState.selectedObjectIds
-      : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
-    let nextSelection: string[] = orderedHitIds;
-
-    if (marqueeMode === 'add') {
-      nextSelection = Array.from(new Set([...currentSelected, ...orderedHitIds]));
-    }
+    const nextSelection = getPreviewSelectionFromOrderedHitIds(
+      getOrderedMarqueeHitIds(minX, minY, maxX, maxY),
+    );
 
     selectObjects(nextSelection, nextSelection[0] ?? null);
     isMarqueeSelecting = false;
@@ -4423,7 +4449,7 @@ function createEditorScene(
     }
   };
 
-  const endTranslateDrag = (pointerId: number, worldX: number, worldY: number) => {
+  const endTranslateDrag = (pointerId: number, _worldX: number, _worldY: number) => {
     if (!activeTranslateDrag || activeTranslateDrag.pointerId !== pointerId) return;
 
     if (activeTranslateDrag.hasMoved) {
@@ -5122,7 +5148,7 @@ function createObjectVisual(
     const selectionPalette = getStageGizmoPaletteForObject(obj);
     selectionRect = scene.add.rectangle(0, 0, defaultSize + 8, defaultSize + 8);
     selectionRect.setStrokeStyle(GIZMO_STROKE_PX, selectionPalette.phaserColor);
-    selectionRect.setFillStyle(selectionPalette.phaserColor, STAGE_SELECTION_FILL_ALPHA);
+    selectionRect.setFillStyle(selectionPalette.phaserColor, getStageSelectionFillAlpha());
     selectionRect.setVisible(false);
     selectionRect.setName('selection');
     container.add(selectionRect);

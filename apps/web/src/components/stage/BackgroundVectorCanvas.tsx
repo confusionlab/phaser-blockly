@@ -57,8 +57,8 @@ import {
   isTextObject,
   normalizeVectorObjectRendering,
 } from '@/components/editors/costume/costumeCanvasVectorRuntime';
+import { useFabricVectorTextureOverlay } from '@/components/editors/shared/useFabricVectorTextureOverlay';
 import { useFabricVectorClipboardCommands } from '@/components/editors/shared/useFabricVectorClipboardCommands';
-import { renderVectorTextureOverlayForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
 import {
   appendLinearLocalHistorySnapshot,
   clearLinearLocalHistory,
@@ -385,6 +385,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const penOverlayDprRef = useRef(1);
   const vectorGuideCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
+  const resolveLiveVectorTexturePreviewObjectsRef = useRef<() => readonly any[]>(() => []);
   const loadedLayerKeyRef = useRef<string | null>(null);
   const loadRequestIdRef = useRef(0);
   const shapeDraftRef = useRef<VectorShapeDraft | null>(null);
@@ -428,6 +429,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const onVectorPointEditingChangeRef = useRef(onVectorPointEditingChange);
   const onVectorPointSelectionChangeRef = useRef(onVectorPointSelectionChange);
   const onVectorStyleSyncRef = useRef(onVectorStyleSync);
+  const { renderVectorTextureOverlay } = useFabricVectorTextureOverlay({
+    fabricCanvasRef,
+    resolveAdditionalObjects: () => resolveLiveVectorTexturePreviewObjectsRef.current(),
+  });
   const onVectorStyleCapabilitiesSyncRef = useRef(onVectorStyleCapabilitiesSync);
   const onCanZoomToSelectionChangeRef = useRef(onCanZoomToSelectionChange);
   const onCanvasContextMenuRef = useRef(onCanvasContextMenu);
@@ -654,16 +659,13 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     ctx.save();
     clearCanvasInCssPixels(ctx, viewport.width, viewport.height, vectorTextureOverlayDprRef.current);
-    renderVectorTextureOverlayForFabricCanvas(ctx, fabricCanvas, {
+    renderVectorTextureOverlay(ctx, {
       canvasWidth: viewport.width,
       canvasHeight: viewport.height,
       clear: false,
-      onTextureSourceReady: () => {
-        fabricCanvasRef.current?.requestRenderAll();
-      },
     });
     ctx.restore();
-  }, [viewport.height, viewport.width]);
+  }, [renderVectorTextureOverlay, viewport.height, viewport.width]);
 
   const clearVectorGuideOverlayContext = useCallback((ctx: CanvasRenderingContext2D) => {
     clearCanvasInCssPixels(ctx, viewport.width, viewport.height, vectorGuideOverlayDprRef.current);
@@ -867,6 +869,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     getBitmapFloatingSelectionObject,
     getZoomInvariantMetric,
     normalizeCanvasVectorStrokeUniform,
+    onVectorTexturePreviewChange: drawVectorTextureOverlay,
     restoreAllOriginalControls,
     restoreOriginalControls,
     saveHistory: recordHistorySnapshot,
@@ -897,6 +900,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const {
     commitCurrentPenPlacement,
     finalizePenDraft,
+    getPenDraftPreviewObject,
     penAnchorPlacementSessionRef,
     penDraftRef,
     penModifierStateRef,
@@ -915,6 +919,27 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     vectorStyleRef,
   });
   renderPenDraftGuideRef.current = renderPenDraftGuide;
+
+  const resolveLiveVectorTexturePreviewObjects = useCallback(() => {
+    const previewObjects: any[] = [];
+    if (activeToolRef.current === 'brush') {
+      const activeBrush = (fabricCanvasRef.current as {
+        freeDrawingBrush?: { getTexturePreviewObject?: () => any | null };
+      } | null)?.freeDrawingBrush;
+      const brushPreview = activeBrush?.getTexturePreviewObject?.();
+      if (brushPreview) {
+        previewObjects.push(brushPreview);
+      }
+    }
+    if (activeToolRef.current === 'pen') {
+      const penPreview = getPenDraftPreviewObject();
+      if (penPreview) {
+        previewObjects.push(penPreview);
+      }
+    }
+    return previewObjects;
+  }, [getPenDraftPreviewObject]);
+  resolveLiveVectorTexturePreviewObjectsRef.current = resolveLiveVectorTexturePreviewObjects;
 
   const finalizePenDraftWithOverlay = useCallback(() => {
     const didFinalize = finalizePenDraft();
@@ -1127,6 +1152,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     const vectorTextureCanvas = document.createElement('canvas');
     vectorTextureCanvas.className = 'pointer-events-none absolute inset-0 z-[1]';
     vectorTextureCanvas.setAttribute('aria-hidden', 'true');
+    vectorTextureCanvas.setAttribute('data-testid', 'background-vector-texture-overlay');
     hostElement.appendChild(vectorTextureCanvas);
     vectorTextureCanvasRef.current = vectorTextureCanvas;
     const vectorGuideCanvas = document.createElement('canvas');
@@ -1459,7 +1485,14 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       }
 
       if (interactive && activeToolRef.current === 'pen') {
-        if (updatePenAnchorPlacement(fabricCanvas.getScenePoint(opt.e))) {
+        const pointer = fabricCanvas.getScenePoint(opt.e);
+        if (updatePenAnchorPlacement(pointer)) {
+          fabricCanvas.requestRenderAll();
+          drawPenOverlay();
+          return;
+        }
+        if (penDraftRef.current) {
+          penDraftRef.current.previewPoint = new Point(pointer.x, pointer.y);
           fabricCanvas.requestRenderAll();
           drawPenOverlay();
         }

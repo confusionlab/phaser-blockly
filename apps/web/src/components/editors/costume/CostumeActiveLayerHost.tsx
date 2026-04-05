@@ -55,6 +55,7 @@ export function CostumeActiveLayerVisual({
 
       <canvas
         ref={vectorStrokeCanvasRef}
+        data-testid="costume-vector-texture-overlay"
         width={CANVAS_SIZE}
         height={CANVAS_SIZE}
         style={{

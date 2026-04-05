@@ -14,6 +14,7 @@ import {
   type TransformGizmoCorner,
   type TransformGizmoCorners,
 } from './unifiedTransformGizmo';
+import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
 
 export interface ScreenSpaceTransformOverlayOptions {
   corner?: TransformGizmoCorner | null;
@@ -35,18 +36,19 @@ export function renderScreenSpaceTransformOverlay(
   corners: TransformGizmoCorners,
   options: ScreenSpaceTransformOverlayOptions = {},
 ): void {
+  const selectionTokens = getResolvedEditorSelectionTokens();
   const {
     corner = null,
-    fillColor = TRANSFORM_GIZMO_FILL_COLOR,
-    handleFill = TRANSFORM_GIZMO_HANDLE_FILL,
+    fillColor = selectionTokens.fill || TRANSFORM_GIZMO_FILL_COLOR,
+    handleFill = selectionTokens.handleFill || TRANSFORM_GIZMO_HANDLE_FILL,
     handleRadius = TRANSFORM_GIZMO_HANDLE_RADIUS,
-    handleStroke = TRANSFORM_GIZMO_HANDLE_STROKE,
+    handleStroke = selectionTokens.handleStroke || TRANSFORM_GIZMO_HANDLE_STROKE,
     handleStrokeWidth = 2,
     proportionalGuide = false,
     proportionalGuideDiagonal = null,
     showFill = true,
     showHandles = true,
-    strokeColor = TRANSFORM_GIZMO_BORDER_COLOR,
+    strokeColor = selectionTokens.accent || TRANSFORM_GIZMO_BORDER_COLOR,
     strokeWidth = TRANSFORM_GIZMO_STROKE_WIDTH,
   } = options;
 

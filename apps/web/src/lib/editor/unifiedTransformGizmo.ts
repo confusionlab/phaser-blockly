@@ -1,3 +1,9 @@
+import {
+  DEFAULT_EDITOR_SELECTION_ACCENT,
+  DEFAULT_EDITOR_SELECTION_FILL,
+  DEFAULT_EDITOR_SELECTION_HANDLE_FILL,
+} from '@/lib/ui/editorSelectionTokens';
+
 export type TransformGizmoCorner = 'nw' | 'ne' | 'se' | 'sw';
 export type TransformGizmoEdge = 'horizontal' | 'vertical';
 export type TransformGizmoSide = 'n' | 'e' | 's' | 'w';
@@ -48,9 +54,9 @@ export interface EdgeScaleResult<TPoint extends TransformGizmoPoint = TransformG
   center: TPoint;
 }
 
-export const TRANSFORM_GIZMO_BORDER_COLOR = '#0ea5e9';
-export const TRANSFORM_GIZMO_FILL_COLOR = 'rgba(14, 165, 233, 0.08)';
-export const TRANSFORM_GIZMO_HANDLE_FILL = '#ffffff';
+export const TRANSFORM_GIZMO_BORDER_COLOR = DEFAULT_EDITOR_SELECTION_ACCENT;
+export const TRANSFORM_GIZMO_FILL_COLOR = DEFAULT_EDITOR_SELECTION_FILL;
+export const TRANSFORM_GIZMO_HANDLE_FILL = DEFAULT_EDITOR_SELECTION_HANDLE_FILL;
 export const TRANSFORM_GIZMO_HANDLE_STROKE = TRANSFORM_GIZMO_BORDER_COLOR;
 export const TRANSFORM_GIZMO_HANDLE_RADIUS = 7;
 export const TRANSFORM_GIZMO_STROKE_WIDTH = 1.5;

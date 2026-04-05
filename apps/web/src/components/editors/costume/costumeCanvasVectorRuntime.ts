@@ -45,12 +45,82 @@ export async function cloneFabricObjectWithVectorStyle<T extends { clone?: (...a
   });
 }
 
+export function createVectorTexturePreviewPathObject(options: {
+  fillColor?: string;
+  fillOpacity?: number;
+  fillTextureId?: VectorFillTextureId;
+  path: any[];
+  strokeBrushId: VectorStrokeBrushId;
+  strokeColor: string;
+  strokeDashArray?: number[] | null;
+  strokeDashOffset?: number;
+  strokeLineCap?: CanvasLineCap;
+  strokeLineJoin?: CanvasLineJoin;
+  strokeMiterLimit?: number;
+  strokeOpacity: number;
+  strokeWidth: number;
+}): VectorTexturePreviewPathObject {
+  return {
+    type: 'path',
+    path: options.path,
+    pathOffset: new Point(0, 0),
+    calcTransformMatrix: () => [1, 0, 0, 1, 0, 0],
+    fill: options.fillTextureId
+      ? getFabricFillValueForVectorTexture(
+          options.fillTextureId,
+          options.fillColor ?? '#000000',
+          options.fillOpacity ?? 1,
+        )
+      : null,
+    opacity: 1,
+    stroke: getFabricStrokeValueForVectorBrush(
+      options.strokeBrushId,
+      options.strokeColor,
+      options.strokeOpacity,
+    ),
+    strokeWidth: Math.max(0, options.strokeWidth),
+    strokeLineCap: options.strokeLineCap ?? 'round',
+    strokeLineJoin: options.strokeLineJoin ?? 'round',
+    strokeMiterLimit: options.strokeMiterLimit,
+    strokeDashArray: options.strokeDashArray,
+    strokeDashOffset: options.strokeDashOffset,
+    vectorFillTextureId: options.fillTextureId,
+    vectorFillColor: options.fillColor,
+    vectorFillOpacity: options.fillOpacity,
+    vectorStrokeBrushId: options.strokeBrushId,
+    vectorStrokeColor: options.strokeColor,
+    vectorStrokeOpacity: options.strokeOpacity,
+  };
+}
+
 export const VECTOR_POINT_CONTROL_STYLE = {
   cornerColor: 'rgba(0, 0, 0, 0)',
   cornerStrokeColor: 'rgba(0, 0, 0, 0)',
   cornerSize: HANDLE_SIZE,
   transparentCorners: false,
 };
+
+export interface VectorTexturePreviewPathObject {
+  calcTransformMatrix: () => [number, number, number, number, number, number];
+  fill: string | null;
+  opacity: number;
+  path: any[];
+  pathOffset: Point;
+  stroke: string;
+  strokeDashArray?: number[] | null;
+  strokeDashOffset?: number;
+  strokeLineCap: CanvasLineCap;
+  strokeLineJoin: CanvasLineJoin;
+  strokeMiterLimit?: number;
+  strokeWidth: number;
+  type: 'path';
+  vectorFillColor?: string;
+  vectorFillOpacity?: number;
+  vectorFillTextureId?: VectorFillTextureId;
+  vectorStrokeBrushId: VectorStrokeBrushId;
+  vectorStrokeColor: string;
+  vectorStrokeOpacity: number;
+}
 
 const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
 const MIN_VECTOR_PENCIL_DECIMATION = 1.1;
@@ -905,6 +975,7 @@ export function isVectorPointSelectableObject(obj: unknown): obj is Record<strin
 }
 
 interface VectorPencilBrushOptions {
+  onPreviewUpdated?: () => void;
   strokeBrushId: VectorStrokeBrushId;
   strokeColor: string;
   strokeOpacity: number;
@@ -912,20 +983,51 @@ interface VectorPencilBrushOptions {
 }
 
 export class VectorPencilBrush extends PencilBrush {
+  private readonly onPreviewUpdated?: () => void;
   private readonly strokeBrushId: VectorStrokeBrushId;
   private readonly strokeColor: string;
   private readonly strokeOpacityValue: number;
   private readonly strokeWidthValue: number;
+  private previewActive = false;
 
   constructor(canvas: FabricCanvas, options: VectorPencilBrushOptions) {
     super(canvas as any);
+    this.onPreviewUpdated = options.onPreviewUpdated;
     this.strokeBrushId = options.strokeBrushId;
     this.strokeColor = options.strokeColor;
     this.strokeOpacityValue = clampUnit(options.strokeOpacity);
     this.strokeWidthValue = Math.max(1, options.strokeWidth);
     this.width = this.strokeWidthValue;
-    this.color = options.strokeColor;
+    this.color = getFabricStrokeValueForVectorBrush(
+      this.strokeBrushId,
+      this.strokeColor,
+      this.strokeOpacityValue,
+    );
     this.decimate = getVectorPencilDecimation(this.strokeWidthValue);
+    this.strokeLineCap = 'round';
+    this.strokeLineJoin = 'round';
+  }
+
+  private notifyPreviewUpdated() {
+    this.onPreviewUpdated?.();
+  }
+
+  override onMouseDown(pointer: Point, options: any) {
+    this.previewActive = true;
+    super.onMouseDown(pointer, options);
+    this.notifyPreviewUpdated();
+  }
+
+  override onMouseMove(pointer: Point, options: any) {
+    super.onMouseMove(pointer, options);
+    this.notifyPreviewUpdated();
+  }
+
+  override onMouseUp(options: any) {
+    const result = super.onMouseUp(options);
+    this.previewActive = false;
+    this.notifyPreviewUpdated();
+    return result;
   }
 
   override convertPointsToSVGPath(points: Point[]) {
@@ -951,5 +1053,36 @@ export class VectorPencilBrush extends PencilBrush {
       vectorStrokeOpacity: this.strokeOpacityValue,
     } as any);
     return path;
+  }
+
+  getTexturePreviewObject(): VectorTexturePreviewPathObject | null {
+    if (!this.previewActive || this.strokeBrushId === DEFAULT_VECTOR_STROKE_BRUSH_ID || this._points.length === 0) {
+      return null;
+    }
+
+    const previewPoints = this._points.map((point) => new Point(point.x, point.y));
+    if (previewPoints.length === 2 && previewPoints[0]?.eq(previewPoints[1]!)) {
+      const widthAdjustment = this.width / 1000;
+      previewPoints[0].x -= widthAdjustment;
+      previewPoints[1].x += widthAdjustment;
+    }
+
+    const pathData = this.convertPointsToSVGPath(previewPoints);
+    if (!Array.isArray(pathData) || pathData.length === 0) {
+      return null;
+    }
+
+    return createVectorTexturePreviewPathObject({
+      path: pathData,
+      strokeBrushId: this.strokeBrushId,
+      strokeColor: this.strokeColor,
+      strokeDashArray: this.strokeDashArray,
+      strokeDashOffset: this.strokeDashOffset,
+      strokeLineCap: this.strokeLineCap,
+      strokeLineJoin: this.strokeLineJoin,
+      strokeMiterLimit: this.strokeMiterLimit,
+      strokeOpacity: this.strokeOpacityValue,
+      strokeWidth: this.strokeWidthValue,
+    });
   }
 }

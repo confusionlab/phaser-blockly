@@ -1,11 +1,9 @@
 import { useCallback, type MutableRefObject, type RefObject } from 'react';
 import { type Canvas as FabricCanvas } from 'fabric';
 import { getBrushPaintColor, getCompositeOperation, type BitmapBrushKind } from '@/lib/background/brushCore';
+import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
 import type { CostumeEditorMode } from '@/types';
 import { attachTextEditingContainer, isTextEditableObject } from './costumeTextCommands';
-import {
-  VECTOR_SELECTION_COLOR,
-} from './costumeCanvasShared';
 import {
   applyCanvasCursor,
   BitmapStampBrush,
@@ -40,6 +38,7 @@ interface UseCostumeCanvasToolControllerOptions {
   getBitmapFloatingSelectionObject: () => any | null;
   getZoomInvariantMetric: (value: number, zoom?: number) => number;
   normalizeCanvasVectorStrokeUniform: () => void;
+  onVectorTexturePreviewChange?: () => void;
   restoreAllOriginalControls: () => void;
   restoreOriginalControls: (obj: any) => void;
   saveHistory: () => void;
@@ -68,6 +67,7 @@ export function useCostumeCanvasToolController({
   getBitmapFloatingSelectionObject,
   getZoomInvariantMetric,
   normalizeCanvasVectorStrokeUniform,
+  onVectorTexturePreviewChange,
   restoreAllOriginalControls,
   restoreOriginalControls,
   saveHistory,
@@ -172,6 +172,7 @@ export function useCostumeCanvasToolController({
       fabricCanvas.isDrawingMode = true;
     } else if (isVectorPencil) {
       const brush = new VectorPencilBrush(fabricCanvas, {
+        onPreviewUpdated: onVectorTexturePreviewChange,
         strokeBrushId: vectorStyleRef.current.strokeBrushId,
         strokeColor: vectorStyleRef.current.strokeColor,
         strokeOpacity: vectorStyleRef.current.strokeOpacity,
@@ -202,8 +203,9 @@ export function useCostumeCanvasToolController({
     restoreAllOriginalControls();
     applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     fabricCanvas.selection = isVectorSelectionMode;
-    fabricCanvas.selectionColor = 'rgba(0, 94, 255, 0.14)';
-    fabricCanvas.selectionBorderColor = VECTOR_SELECTION_COLOR;
+    const selectionTokens = getResolvedEditorSelectionTokens();
+    fabricCanvas.selectionColor = selectionTokens.fill;
+    fabricCanvas.selectionBorderColor = selectionTokens.accent;
     fabricCanvas.selectionLineWidth = 2;
     fabricCanvas.selectionDashArray = [];
     fabricCanvas.forEachObject((obj: any) => {
@@ -321,6 +323,7 @@ export function useCostumeCanvasToolController({
     applyVectorPointEditingAppearance,
     bitmapBrushKindRef,
     brushColorRef,
+    brushOpacityRef,
     brushSizeRef,
     commitBitmapStampBrushStroke,
     editorModeRef,
@@ -328,6 +331,7 @@ export function useCostumeCanvasToolController({
     getBitmapFloatingSelectionObject,
     getZoomInvariantMetric,
     normalizeCanvasVectorStrokeUniform,
+    onVectorTexturePreviewChange,
     restoreAllOriginalControls,
     restoreOriginalControls,
     setVectorPointEditingTarget,

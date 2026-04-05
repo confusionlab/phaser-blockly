@@ -142,4 +142,68 @@ test.describe('vector texture renderer', () => {
     expect(result.insidePixels).toBeGreaterThan(600);
     expect(result.outsidePixels).toBe(0);
   });
+
+  test('renders transient textured preview paths passed as additional overlay objects', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForFabricCanvas } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 260;
+      const height = 220;
+      const overlayCanvas = document.createElement('canvas');
+      overlayCanvas.width = width;
+      overlayCanvas.height = height;
+      const overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+      if (!overlayCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      renderVectorTextureOverlayForFabricCanvas(overlayCtx, {
+        getObjects: () => [],
+        viewportTransform: [1.45, 0, 0, 1.45, 46, 28],
+      }, {
+        canvasWidth: width,
+        canvasHeight: height,
+        additionalObjects: [{
+          type: 'path',
+          path: [
+            ['M', 24, 28],
+            ['L', 94, 56],
+            ['L', 136, 108],
+          ],
+          pathOffset: { x: 0, y: 0 },
+          fill: null,
+          opacity: 1,
+          stroke: 'rgba(37, 99, 235, 0)',
+          strokeWidth: 20,
+          strokeLineCap: 'round',
+          strokeLineJoin: 'round',
+          vectorStrokeBrushId: 'marker',
+          vectorStrokeColor: '#2563eb',
+          vectorStrokeOpacity: 1,
+          calcTransformMatrix: () => [1, 0, 0, 1, 0, 0],
+        }],
+      });
+
+      const countVisiblePixelsInRect = (left: number, top: number, rectWidth: number, rectHeight: number) => {
+        const imageData = overlayCtx.getImageData(left, top, rectWidth, rectHeight).data;
+        let count = 0;
+        for (let index = 3; index < imageData.length; index += 4) {
+          if ((imageData[index] ?? 0) > 0) {
+            count += 1;
+          }
+        }
+        return count;
+      };
+
+      return {
+        transformedPreviewPixels: countVisiblePixelsInRect(70, 44, 150, 120),
+        topLeftPixels: countVisiblePixelsInRect(0, 0, 36, 36),
+      };
+    });
+
+    expect(result.transformedPreviewPixels).toBeGreaterThan(900);
+    expect(result.topLeftPixels).toBe(0);
+  });
 });

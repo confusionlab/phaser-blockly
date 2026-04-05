@@ -22,6 +22,7 @@ async function openCostumeEditor(page: Page): Promise<void> {
 async function addVectorLayer(page: Page): Promise<void> {
   await page.getByTestId('layer-add-button').click();
   await page.getByRole('menuitem', { name: /^vector$/i }).click();
+  await page.locator('[data-testid="layer-row"][data-layer-kind="vector"]').last().click();
 }
 
 async function addBitmapLayer(page: Page): Promise<void> {
@@ -361,6 +362,35 @@ async function readCostumeSelectionGizmoBluePixelCount(page: Page): Promise<numb
 
     return bluePixelCount;
   });
+}
+
+async function readOverlayOpaqueSampleCount(page: Page, selector: string): Promise<number> {
+  return await page.evaluate((targetSelector) => {
+    const canvas = document.querySelector(targetSelector);
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let opaqueSamples = 0;
+    for (let index = 3; index < data.length; index += 4 * 43) {
+      if ((data[index] ?? 0) > 0) {
+        opaqueSamples += 1;
+      }
+    }
+    return opaqueSamples;
+  }, selector);
+}
+
+async function setVectorStrokeBrush(page: Page, label: 'Marker' | 'Ink' | 'Chalk') {
+  const properties = page.getByTestId('costume-toolbar-properties');
+  await properties.getByRole('button', { name: /^solid$/i }).first().click();
+  await page.getByRole('menuitemradio', { name: new RegExp(`^${label}$`, 'i') }).click();
 }
 
 async function readHostedLayerInkSamples(page: Page): Promise<number> {
@@ -714,6 +744,57 @@ test.describe('Costume editor tools', () => {
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('vector textured pencil preview renders live before mouse-up in the costume editor', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await addVectorLayer(page);
+
+    await page.getByRole('button', { name: /^pencil$/i }).click();
+    await setVectorStrokeBrush(page, 'Chalk');
+
+    const box = await getCostumeCanvasBox(page);
+    const startX = box.x + box.width * 0.26;
+    const startY = box.y + box.height * 0.28;
+    const endX = box.x + box.width * 0.58;
+    const endY = box.y + box.height * 0.42;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 12 });
+
+    await expect.poll(
+      async () => readOverlayOpaqueSampleCount(page, '[data-testid="costume-vector-texture-overlay"]'),
+      { timeout: 10000 },
+    ).toBeGreaterThan(10);
+
+    await page.mouse.up();
+  });
+
+  test('vector textured pen preview renders live before the path is committed in the costume editor', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await addVectorLayer(page);
+
+    await page.getByRole('button', { name: /^pen$/i }).click();
+    await setVectorStrokeBrush(page, 'Marker');
+
+    const box = await getCostumeCanvasBox(page);
+    const anchorX = box.x + box.width * 0.34;
+    const anchorY = box.y + box.height * 0.3;
+    const hoverX = box.x + box.width * 0.62;
+    const hoverY = box.y + box.height * 0.52;
+
+    await page.mouse.click(anchorX, anchorY);
+    await page.mouse.move(hoverX, hoverY);
+
+    await expect.poll(
+      async () => readOverlayOpaqueSampleCount(page, '[data-testid="costume-vector-texture-overlay"]'),
+      { timeout: 10000 },
+    ).toBeGreaterThan(10);
   });
 
   test('triangle shapes draw where the gesture starts in the costume editor', async ({ page }) => {

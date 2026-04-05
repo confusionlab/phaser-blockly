@@ -13,6 +13,8 @@ import {
   VECTOR_POINT_MARQUEE_DRAG_THRESHOLD_PX,
   VECTOR_POINT_SELECTION_HIT_PADDING,
   VECTOR_POINT_SELECTION_MIN_SIZE,
+  VECTOR_SELECTION_COLOR,
+  VECTOR_SELECTION_CORNER_COLOR,
   mirrorPointAcrossAnchor,
   normalizeRadians,
   type MirroredPathAnchorDragSession,
@@ -465,8 +467,8 @@ export function useCostumeCanvasVectorPathController({
       if (!resolved || resolved.changed !== 'anchor') continue;
 
       const isSelected = selectedAnchors.has(resolved.anchorIndex);
-      (control as any).controlFill = isSelected ? '#0ea5e9' : '#ffffff';
-      (control as any).controlStroke = isSelected ? '#ffffff' : '#0ea5e9';
+      (control as any).controlFill = isSelected ? VECTOR_SELECTION_COLOR : VECTOR_SELECTION_CORNER_COLOR;
+      (control as any).controlStroke = isSelected ? VECTOR_SELECTION_CORNER_COLOR : VECTOR_SELECTION_COLOR;
     }
   }, [getSelectedPathAnchorIndices, resolveAnchorFromPathControlKey]);
 

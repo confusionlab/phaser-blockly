@@ -588,6 +588,12 @@ body :is(
   --sidebar-accent-foreground: oklch(0.216 0.006 56.043);
   --sidebar-border: oklch(0.923 0.003 48.717);
   --sidebar-ring: oklch(0.709 0.01 56.259);
+  --editor-selection-accent-rgb: 14, 165, 233;
+  --editor-selection-fill-alpha: 0.08;
+  --editor-selection-accent: rgb(var(--editor-selection-accent-rgb));
+  --editor-selection-accent-fill: rgba(var(--editor-selection-accent-rgb), var(--editor-selection-fill-alpha));
+  --editor-selection-handle-fill: #ffffff;
+  --editor-selection-handle-stroke: var(--editor-selection-accent);
   --editor-selection-surface-selected: #C6E2FF;
   --editor-selection-surface-drop-target: #EEF7FF;
   --editor-selection-surface-hover: #E7EAEE;

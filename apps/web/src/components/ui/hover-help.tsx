@@ -192,11 +192,12 @@ export function HoverHelp({
       {open && typeof document !== 'undefined' ? createPortal(
         <div
           ref={panelRef}
-          className="fixed z-50"
+          className="fixed"
           data-side={position.side}
           style={{
             left: position.left,
             top: position.top,
+            zIndex: 'var(--z-editor-popup)',
             visibility: position.ready ? 'visible' : 'hidden',
           }}
           onMouseEnter={() => setOpen(true)}

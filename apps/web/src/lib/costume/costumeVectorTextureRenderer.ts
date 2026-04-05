@@ -1023,6 +1023,7 @@ export function renderVectorTextureOverlayForFabricCanvas(
     viewportTransform?: number[] | null;
   },
   options: {
+    additionalObjects?: readonly any[];
     canvasSize?: number;
     canvasWidth?: number;
     canvasHeight?: number;
@@ -1038,7 +1039,10 @@ export function renderVectorTextureOverlayForFabricCanvas(
 
   renderVectorTextureOverlayForObjects(
     ctx,
-    fabricCanvas.getObjects() as any[],
+    [
+      ...(fabricCanvas.getObjects() as any[]),
+      ...(options.additionalObjects ?? []),
+    ],
     {
       ...options,
       clear: false,

@@ -11,6 +11,11 @@ import type {
 } from './CostumeToolbar';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 import { EDITOR_VIEWPORT_ZOOM_STEP } from '@/lib/editor/editorViewportPolicy';
+import {
+  DEFAULT_EDITOR_SELECTION_ACCENT,
+  DEFAULT_EDITOR_SELECTION_FILL,
+  DEFAULT_EDITOR_SELECTION_HANDLE_FILL,
+} from '@/lib/ui/editorSelectionTokens';
 
 export const CANVAS_SIZE = 1024;
 export const BASE_DISPLAY_SIZE = 480;
@@ -20,9 +25,9 @@ export const MAX_ZOOM = 10;
 export const ZOOM_STEP = EDITOR_VIEWPORT_ZOOM_STEP;
 export const MAX_PAN_OVERSCROLL_PX = 160;
 export const HANDLE_SIZE = 20;
-export const VECTOR_SELECTION_COLOR = '#005eff';
-export const VECTOR_SELECTION_CORNER_COLOR = '#ffffff';
-export const VECTOR_SELECTION_CORNER_STROKE = '#005eff';
+export const VECTOR_SELECTION_COLOR = DEFAULT_EDITOR_SELECTION_ACCENT;
+export const VECTOR_SELECTION_CORNER_COLOR = DEFAULT_EDITOR_SELECTION_HANDLE_FILL;
+export const VECTOR_SELECTION_CORNER_STROKE = DEFAULT_EDITOR_SELECTION_ACCENT;
 export const VECTOR_SELECTION_BORDER_OPACITY = 1;
 export const VECTOR_SELECTION_BORDER_SCALE = 2;
 export const CIRCLE_CUBIC_KAPPA = 0.5522847498307936;
@@ -30,7 +35,7 @@ export const VECTOR_POINT_EDIT_GUIDE_STROKE = '#cbd5e1';
 export const VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH = 6;
 export const VECTOR_POINT_HANDLE_GUIDE_STROKE = '#94a3b8';
 export const VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH = 2;
-export const VECTOR_POINT_SELECTION_BOX_FILL = 'rgba(0, 94, 255, 0.08)';
+export const VECTOR_POINT_SELECTION_BOX_FILL = DEFAULT_EDITOR_SELECTION_FILL;
 export const VECTOR_POINT_SELECTION_HANDLE_SIZE = 12;
 export const VECTOR_POINT_SELECTION_HIT_PADDING = 6;
 export const VECTOR_POINT_SELECTION_MIN_SIZE = 12;
@@ -707,24 +712,44 @@ export function buildPenDraftPathData(
   anchors: PenDraftAnchor[],
   closed: boolean,
 ): string {
-  if (anchors.length === 0) return '';
+  const commands = buildPenDraftPathCommands(anchors, closed);
+  if (commands.length === 0) return '';
 
   const round = (value: number) => Math.round(value * 1000) / 1000;
-  const commands: string[] = [`M ${round(anchors[0].point.x)} ${round(anchors[0].point.y)}`];
+  return commands.map((command) => (
+    command.length > 1
+      ? `${command[0]} ${command.slice(1).map((value) => round(Number(value))).join(' ')}`
+      : command[0]
+  )).join(' ');
+}
+
+export function buildPenDraftPathCommands(
+  anchors: PenDraftAnchor[],
+  closed: boolean,
+): Array<[string, ...number[]]> {
+  if (anchors.length === 0) return [];
+
+  const commands: Array<[string, ...number[]]> = [['M', anchors[0].point.x, anchors[0].point.y]];
 
   const appendSegment = (fromAnchor: PenDraftAnchor, toAnchor: PenDraftAnchor) => {
     const control1 = fromAnchor.outgoing;
     const control2 = toAnchor.incoming;
     if (!control1 && !control2) {
-      commands.push(`L ${round(toAnchor.point.x)} ${round(toAnchor.point.y)}`);
+      commands.push(['L', toAnchor.point.x, toAnchor.point.y]);
       return;
     }
 
     const resolvedControl1 = control1 ?? fromAnchor.point;
     const resolvedControl2 = control2 ?? toAnchor.point;
-    commands.push(
-      `C ${round(resolvedControl1.x)} ${round(resolvedControl1.y)} ${round(resolvedControl2.x)} ${round(resolvedControl2.y)} ${round(toAnchor.point.x)} ${round(toAnchor.point.y)}`,
-    );
+    commands.push([
+      'C',
+      resolvedControl1.x,
+      resolvedControl1.y,
+      resolvedControl2.x,
+      resolvedControl2.y,
+      toAnchor.point.x,
+      toAnchor.point.y,
+    ]);
   };
 
   for (let index = 1; index < anchors.length; index += 1) {
@@ -738,10 +763,10 @@ export function buildPenDraftPathData(
     if (hasClosingCurve) {
       appendSegment(lastAnchor, firstAnchor);
     }
-    commands.push('Z');
+    commands.push(['Z']);
   }
 
-  return commands.join(' ');
+  return commands;
 }
 
 export function buildPenDraftNodeHandleTypes(

@@ -5,8 +5,10 @@ import {
   PEN_TOOL_DRAG_THRESHOLD_PX,
   VECTOR_POINT_HANDLE_GUIDE_STROKE,
   VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH,
+  VECTOR_SELECTION_COLOR,
+  VECTOR_SELECTION_CORNER_COLOR,
   buildPenDraftNodeHandleTypes,
-  buildPenDraftPathData,
+  buildPenDraftPathCommands,
   clonePenDraftAnchor,
   cloneScenePoint,
   createPenDraftAnchor,
@@ -15,6 +17,7 @@ import {
   type PenDraftAnchor,
 } from './costumeCanvasShared';
 import {
+  createVectorTexturePreviewPathObject,
   getFabricFillValueForVectorTexture,
   getFabricStrokeValueForVectorBrush,
 } from './costumeCanvasVectorRuntime';
@@ -206,6 +209,41 @@ export function useCostumeCanvasPenController({
     syncSelectionState();
   }, [fabricCanvasRef, syncSelectionState]);
 
+  const getPenDraftPreviewObject = useCallback(() => {
+    const draft = penDraftRef.current;
+    if (!draft || draft.anchors.length === 0) {
+      return null;
+    }
+
+    const strokeWidth = Math.max(0, vectorStyleRef.current.strokeWidth);
+    if (strokeWidth <= 0 || vectorStyleRef.current.strokeBrushId === 'solid') {
+      return null;
+    }
+
+    const previewAnchors = [...draft.anchors];
+    if (!penAnchorPlacementSessionRef.current && draft.previewPoint) {
+      previewAnchors.push(createPenDraftAnchor(draft.previewPoint));
+    }
+    if (previewAnchors.length < 2) {
+      return null;
+    }
+
+    const pathCommands = buildPenDraftPathCommands(previewAnchors, false);
+    if (pathCommands.length === 0) {
+      return null;
+    }
+
+    return createVectorTexturePreviewPathObject({
+      path: pathCommands,
+      strokeBrushId: vectorStyleRef.current.strokeBrushId,
+      strokeColor: vectorStyleRef.current.strokeColor,
+      strokeLineCap: 'round',
+      strokeLineJoin: 'round',
+      strokeOpacity: vectorStyleRef.current.strokeOpacity,
+      strokeWidth,
+    });
+  }, [vectorStyleRef]);
+
   const finalizePenDraft = useCallback((options: { close?: boolean } = {}): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
     const draft = penDraftRef.current;
@@ -219,14 +257,14 @@ export function useCostumeCanvasPenController({
     }
 
     const shouldClose = options.close === true;
-    const pathData = buildPenDraftPathData(draft.anchors, shouldClose);
-    if (!pathData) {
+    const pathCommands = buildPenDraftPathCommands(draft.anchors, shouldClose);
+    if (pathCommands.length === 0) {
       discardPenDraft();
       return false;
     }
 
     const strokeWidth = Math.max(0, vectorStyleRef.current.strokeWidth);
-    const path = new Path(pathData, {
+    const path = new Path(pathCommands, {
       fill: shouldClose
         ? getFabricFillValueForVectorTexture(
             vectorStyleRef.current.fillTextureId,
@@ -345,6 +383,7 @@ export function useCostumeCanvasPenController({
     const activeAnchorIndex = penAnchorPlacementSessionRef.current?.anchorIndex ?? (draft.anchors.length - 1);
     const previewPoint = penAnchorPlacementSessionRef.current ? null : draft.previewPoint;
     const previewStrokeWidth = Math.max(1, vectorStyleRef.current.strokeWidth);
+    const texturedPreviewObject = getPenDraftPreviewObject();
 
     ctx.save();
     try {
@@ -387,9 +426,15 @@ export function useCostumeCanvasPenController({
           ctx.lineTo(previewPoint.x, previewPoint.y);
         }
       }
-      ctx.strokeStyle = vectorStyleRef.current.strokeColor;
-      ctx.lineWidth = previewStrokeWidth;
-      ctx.stroke();
+      if (!texturedPreviewObject) {
+        ctx.strokeStyle = getFabricStrokeValueForVectorBrush(
+          vectorStyleRef.current.strokeBrushId,
+          vectorStyleRef.current.strokeColor,
+          vectorStyleRef.current.strokeOpacity,
+        );
+        ctx.lineWidth = previewStrokeWidth;
+        ctx.stroke();
+      }
 
       ctx.strokeStyle = VECTOR_POINT_HANDLE_GUIDE_STROKE;
       ctx.lineWidth = getZoomInvariantMetric(VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH);
@@ -415,10 +460,10 @@ export function useCostumeCanvasPenController({
           if (!handlePoint) return;
           ctx.beginPath();
           ctx.arc(handlePoint.x, handlePoint.y, handleRadius, 0, Math.PI * 2);
-          ctx.fillStyle = '#ffffff';
+          ctx.fillStyle = VECTOR_SELECTION_CORNER_COLOR;
           ctx.fill();
           ctx.lineWidth = getZoomInvariantMetric(2);
-          ctx.strokeStyle = '#0ea5e9';
+          ctx.strokeStyle = VECTOR_SELECTION_COLOR;
           ctx.stroke();
         };
 
@@ -427,10 +472,10 @@ export function useCostumeCanvasPenController({
 
         ctx.beginPath();
         ctx.arc(anchor.point.x, anchor.point.y, getZoomInvariantMetric(HANDLE_SIZE / 2), 0, Math.PI * 2);
-        ctx.fillStyle = isActive ? '#0ea5e9' : '#ffffff';
+        ctx.fillStyle = isActive ? VECTOR_SELECTION_COLOR : VECTOR_SELECTION_CORNER_COLOR;
         ctx.fill();
         ctx.lineWidth = getZoomInvariantMetric(2);
-        ctx.strokeStyle = isActive ? '#ffffff' : '#0ea5e9';
+        ctx.strokeStyle = isActive ? VECTOR_SELECTION_CORNER_COLOR : VECTOR_SELECTION_COLOR;
         ctx.stroke();
       });
     } finally {
@@ -438,12 +483,13 @@ export function useCostumeCanvasPenController({
     }
 
     return true;
-  }, [getZoomInvariantMetric, vectorStyleRef]);
+  }, [getPenDraftPreviewObject, getZoomInvariantMetric, vectorStyleRef]);
 
   return {
     commitCurrentPenPlacement,
     discardPenDraft,
     finalizePenDraft,
+    getPenDraftPreviewObject,
     penAnchorPlacementSessionRef,
     penDraftRef,
     penModifierStateRef,

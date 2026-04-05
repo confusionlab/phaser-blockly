@@ -25,6 +25,7 @@ import type {
   CostumeEditorMode,
   CostumeVectorDocument,
 } from '@/types';
+import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
 import { CostumeCanvasStage } from './CostumeCanvasStage';
 import { type BitmapBrushKind } from '@/lib/background/brushCore';
 import {
@@ -330,7 +331,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const loadedSessionKeyRef = useRef<string | null>(null);
   const {
     createSnapshot,
-    lastCommittedSnapshotRef,
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
     persistedSnapshotRef,
@@ -466,6 +466,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const {
     commitCurrentPenPlacement,
     finalizePenDraft,
+    getPenDraftPreviewObject,
     penAnchorPlacementSessionRef,
     penDraftRef,
     penModifierStateRef,
@@ -483,6 +484,30 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncSelectionState,
     vectorStyleRef,
   });
+
+  const resolveLiveVectorTexturePreviewObjects = useCallback(() => {
+    if (editorModeRef.current !== 'vector') {
+      return [];
+    }
+
+    const previewObjects: any[] = [];
+    if (activeToolRef.current === 'brush') {
+      const activeBrush = (fabricCanvasRef.current as {
+        freeDrawingBrush?: { getTexturePreviewObject?: () => any | null };
+      } | null)?.freeDrawingBrush;
+      const brushPreview = activeBrush?.getTexturePreviewObject?.();
+      if (brushPreview) {
+        previewObjects.push(brushPreview);
+      }
+    }
+    if (activeToolRef.current === 'pen') {
+      const penPreview = getPenDraftPreviewObject();
+      if (penPreview) {
+        previewObjects.push(penPreview);
+      }
+    }
+    return previewObjects;
+  }, [getPenDraftPreviewObject]);
 
   const syncActiveLayerCanvasVisibility = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & {
@@ -545,6 +570,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return fabricCanvasRef.current;
   }, [isLoadRequestActive]);
 
+  const editorSelectionTokens = useMemo(() => getResolvedEditorSelectionTokens(), []);
+
   const drawBitmapSelectionOverlay = useCallback(() => {
     const overlayCtx = bitmapSelectionCtxRef.current;
     if (!overlayCtx) return;
@@ -553,15 +580,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const marquee = bitmapMarqueeRectRef.current;
     if (marquee && bitmapSelectionDragModeRef.current === 'marquee') {
-      overlayCtx.fillStyle = 'rgba(0, 102, 255, 0.1)';
+      overlayCtx.fillStyle = editorSelectionTokens.fill;
       overlayCtx.fillRect(marquee.x, marquee.y, marquee.width, marquee.height);
-      overlayCtx.strokeStyle = '#0066ff';
+      overlayCtx.strokeStyle = editorSelectionTokens.accent;
       overlayCtx.lineWidth = 2;
       overlayCtx.setLineDash([6, 6]);
       overlayCtx.strokeRect(marquee.x, marquee.y, marquee.width, marquee.height);
       overlayCtx.setLineDash([]);
     }
-  }, []);
+  }, [editorSelectionTokens]);
 
   const {
     commitBitmapSelection,
@@ -594,7 +621,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   } = useCostumeCanvasVectorBrushRenderer({
     editorModeRef,
     fabricCanvasRef,
+    resolvePreviewObjects: resolveLiveVectorTexturePreviewObjects,
   });
+
+  const refreshVectorTextureOverlay = useCallback(() => {
+    const overlayCanvas = vectorStrokeCanvasRef.current;
+    if (!overlayCanvas) {
+      return;
+    }
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+    renderVectorBrushStrokeOverlay(ctx);
+  }, [renderVectorBrushStrokeOverlay]);
 
   const getActiveLayerCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -842,6 +882,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     getBitmapFloatingSelectionObject,
     getZoomInvariantMetric,
     normalizeCanvasVectorStrokeUniform,
+    onVectorTexturePreviewChange: refreshVectorTextureOverlay,
     restoreAllOriginalControls,
     restoreOriginalControls,
     saveHistory,

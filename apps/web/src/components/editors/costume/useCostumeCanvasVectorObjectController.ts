@@ -17,6 +17,8 @@ import {
   VECTOR_POINT_HANDLE_GUIDE_STROKE,
   VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH,
   VECTOR_SELECTION_BORDER_SCALE,
+  VECTOR_SELECTION_CORNER_COLOR,
+  VECTOR_SELECTION_CORNER_STROKE,
   VECTOR_SELECTION_COLOR,
   getEditableVectorHandleMode,
   resolvePathNodeHandleTypeForControlDrag,
@@ -38,6 +40,7 @@ import {
   isVectorPointSelectableObject,
   VECTOR_POINT_CONTROL_STYLE,
 } from './costumeCanvasVectorRuntime';
+import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
 
 interface UseCostumeCanvasVectorObjectControllerOptions {
   activePathAnchorRef: MutableRefObject<{ path: any; anchorIndex: number } | null>;
@@ -468,11 +471,12 @@ export function useCostumeCanvasVectorObjectController({
     if (!hasPointSelectionMarqueeExceededThreshold(session)) return;
 
     const marqueeBounds = getSceneRectFromPoints(session.startPointerScene, session.currentPointerScene);
+    const selectionTokens = getResolvedEditorSelectionTokens();
 
     ctx.save();
     try {
-      ctx.fillStyle = 'rgba(0, 94, 255, 0.08)';
-      ctx.strokeStyle = VECTOR_SELECTION_COLOR;
+      ctx.fillStyle = selectionTokens.fill;
+      ctx.strokeStyle = selectionTokens.accent;
       ctx.lineWidth = getZoomInvariantMetric(2);
       ctx.setLineDash([getZoomInvariantMetric(6), getZoomInvariantMetric(4)]);
       ctx.fillRect(marqueeBounds.left, marqueeBounds.top, marqueeBounds.width, marqueeBounds.height);
@@ -511,24 +515,24 @@ export function useCostumeCanvasVectorObjectController({
         if (resolved.changed === 'anchor') {
           point = getAnchorPointForIndex(target, resolved.anchorIndex);
           if (point) {
-            ctx.fillStyle = '#ffffff';
-            ctx.strokeStyle = '#0ea5e9';
+            ctx.fillStyle = VECTOR_SELECTION_CORNER_COLOR;
+            ctx.strokeStyle = VECTOR_SELECTION_CORNER_STROKE;
           }
         } else if (resolved.changed === 'incoming') {
           const incomingCommandIndex = findIncomingCubicCommandIndex(target, resolved.anchorIndex);
           const incomingCommand = incomingCommandIndex >= 0 ? target.path?.[incomingCommandIndex] : null;
           if (incomingCommand && getCommandType(incomingCommand) === 'C') {
             point = new Point(Number(incomingCommand[3]), Number(incomingCommand[4]));
-            ctx.fillStyle = '#0ea5e9';
-            ctx.strokeStyle = '#ffffff';
+            ctx.fillStyle = VECTOR_SELECTION_COLOR;
+            ctx.strokeStyle = VECTOR_SELECTION_CORNER_COLOR;
           }
         } else if (resolved.changed === 'outgoing') {
           const outgoingCommandIndex = findOutgoingCubicCommandIndex(target, resolved.anchorIndex);
           const outgoingCommand = outgoingCommandIndex >= 0 ? target.path?.[outgoingCommandIndex] : null;
           if (outgoingCommand && getCommandType(outgoingCommand) === 'C') {
             point = new Point(Number(outgoingCommand[1]), Number(outgoingCommand[2]));
-            ctx.fillStyle = '#0ea5e9';
-            ctx.strokeStyle = '#ffffff';
+            ctx.fillStyle = VECTOR_SELECTION_COLOR;
+            ctx.strokeStyle = VECTOR_SELECTION_CORNER_COLOR;
           }
         }
 

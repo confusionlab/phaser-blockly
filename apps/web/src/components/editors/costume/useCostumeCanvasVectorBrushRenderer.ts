@@ -1,22 +1,27 @@
 import { useCallback, type MutableRefObject } from 'react';
 import type { Canvas as FabricCanvas } from 'fabric';
 import { getBitmapFillTexturePreset, type BitmapFillTextureId } from '@/lib/background/bitmapFillCore';
-import {
-  renderVectorTextureOverlayForFabricCanvas,
-  resolveSharedTextureSource,
-} from '@/lib/costume/costumeVectorTextureRenderer';
+import { resolveSharedTextureSource } from '@/lib/costume/costumeVectorTextureRenderer';
+import { useFabricVectorTextureOverlay } from '@/components/editors/shared/useFabricVectorTextureOverlay';
 import type { CostumeEditorMode } from '@/types';
 import { CANVAS_SIZE } from './costumeCanvasShared';
 
 interface UseCostumeCanvasVectorBrushRendererOptions {
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
+  resolvePreviewObjects?: () => readonly any[];
 }
 
 export function useCostumeCanvasVectorBrushRenderer({
   editorModeRef,
   fabricCanvasRef,
+  resolvePreviewObjects,
 }: UseCostumeCanvasVectorBrushRendererOptions) {
+  const { renderVectorTextureOverlay } = useFabricVectorTextureOverlay({
+    fabricCanvasRef,
+    resolveAdditionalObjects: resolvePreviewObjects,
+  });
+
   const resolveBitmapFillTextureSource = useCallback((textureId: BitmapFillTextureId) => {
     const preset = getBitmapFillTexturePreset(textureId);
     const texturePath = preset.texturePath?.trim();
@@ -40,14 +45,11 @@ export function useCostumeCanvasVectorBrushRenderer({
       return;
     }
 
-    renderVectorTextureOverlayForFabricCanvas(ctx, fabricCanvas, {
+    renderVectorTextureOverlay(ctx, {
       canvasSize: CANVAS_SIZE,
       clear: false,
-      onTextureSourceReady: () => {
-        fabricCanvasRef.current?.requestRenderAll();
-      },
     });
-  }, [editorModeRef, fabricCanvasRef]);
+  }, [editorModeRef, fabricCanvasRef, renderVectorTextureOverlay]);
 
   return {
     renderVectorBrushStrokeOverlay,
