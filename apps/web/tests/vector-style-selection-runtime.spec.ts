@@ -6,11 +6,13 @@ type FakeCenterPoint = { x: number; y: number };
 type FakeVectorObject = {
   center: FakeCenterPoint;
   fill: string;
+  group?: { offset: FakeCenterPoint };
   noScaleCache: boolean;
   positionByOriginCalls: FakeCenterPoint[];
   set: (props: Record<string, unknown>) => void;
   setCoords: () => void;
   setCoordsCalls: number;
+  setXYCalls: FakeCenterPoint[];
   stroke: string;
   strokeUniform: boolean;
   strokeWidth: number;
@@ -23,6 +25,7 @@ type FakeVectorObject = {
   vectorStrokeOpacity: number;
   getCenterPoint: () => FakeCenterPoint;
   setPositionByOrigin: (point: FakeCenterPoint) => void;
+  setXY?: (point: FakeCenterPoint) => void;
 };
 
 function createFakeVectorObject(): FakeVectorObject {
@@ -31,6 +34,7 @@ function createFakeVectorObject(): FakeVectorObject {
     fill: 'rgba(255, 0, 0, 1)',
     noScaleCache: false,
     positionByOriginCalls: [],
+    setXYCalls: [],
     set(props) {
       if (typeof props.strokeWidth === 'number' && Number.isFinite(props.strokeWidth)) {
         const delta = props.strokeWidth - this.strokeWidth;
@@ -80,6 +84,39 @@ test.describe('vector style selection runtime', () => {
     expect(target.strokeWidth).toBe(24);
     expect(target.center).toEqual(initialCenter);
     expect(target.positionByOriginCalls).toEqual([initialCenter]);
+    expect(target.setCoordsCalls).toBe(1);
+  });
+
+  test('preserves grouped object scene center when stroke width changes', () => {
+    const target = createFakeVectorObject();
+    target.group = { offset: { x: 300, y: 180 } };
+    target.center = {
+      x: target.group.offset.x + 120,
+      y: target.group.offset.y + 90,
+    };
+    target.setXY = (point) => {
+      target.setXYCalls.push({ ...point });
+      target.center = { ...point };
+    };
+    target.setPositionByOrigin = (point) => {
+      target.positionByOriginCalls.push({ ...point });
+      target.center = {
+        x: target.group!.offset.x + point.x,
+        y: target.group!.offset.y + point.y,
+      };
+    };
+
+    const initialCenter = target.getCenterPoint();
+
+    const didChange = applyVectorStyleUpdatesToSelection(target, {
+      strokeStyle: { strokeWidth: 24 },
+    });
+
+    expect(didChange).toBe(true);
+    expect(target.strokeWidth).toBe(24);
+    expect(target.center).toEqual(initialCenter);
+    expect(target.setXYCalls).toEqual([initialCenter]);
+    expect(target.positionByOriginCalls).toEqual([]);
     expect(target.setCoordsCalls).toBe(1);
   });
 });

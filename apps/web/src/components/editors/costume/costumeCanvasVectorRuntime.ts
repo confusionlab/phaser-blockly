@@ -507,6 +507,7 @@ type CenterPreservingVectorObject = VectorBrushStylableObject & {
   group?: unknown;
   setCoords?: () => void;
   setPositionByOrigin?: (point: unknown, originX: 'center', originY: 'center') => void;
+  setXY?: (point: unknown, originX?: 'center', originY?: 'center') => void;
 };
 
 export interface ApplyVectorStyleUpdatesToSelectionOptions {
@@ -802,8 +803,12 @@ export function applyVectorStyleUpdatesToSelection(
       ? normalizeVectorObjectRendering(target)
       : false;
 
-    if (strokeChanged && centerPoint && typeof target.setPositionByOrigin === 'function') {
-      target.setPositionByOrigin(centerPoint, 'center', 'center');
+    if (strokeChanged && centerPoint) {
+      if (typeof target.setXY === 'function') {
+        target.setXY(centerPoint, 'center', 'center');
+      } else if (typeof target.setPositionByOrigin === 'function') {
+        target.setPositionByOrigin(centerPoint, 'center', 'center');
+      }
     }
     if (fillChanged || strokeChanged || renderingChanged) {
       target.setCoords?.();

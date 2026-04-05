@@ -241,9 +241,16 @@ export function useCostumeCanvasToolController({
             : isVectorTextMode
               ? isTextEditableObject(obj)
               : (isBitmapFloatingSelectionMode && obj === floatingBitmapObject);
+      const evented = !layerInteractive
+        ? false
+        : isVectorSelectionMode
+          // Closed-group descendants stay hittable so double-click entry can resolve
+          // the clicked child from Fabric subTargets, but only direct targets remain selectable.
+          ? !!resolveVectorSelectionDirectTarget(obj, vectorSelectionPath)
+          : selectable;
 
       obj.selectable = selectable;
-      obj.evented = selectable;
+      obj.evented = evented;
       obj.hasControls = selectable;
       obj.hasBorders = selectable;
       obj.lockMovementX = !selectable || isVectorPointMode;
