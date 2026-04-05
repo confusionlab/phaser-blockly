@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
 async function readBackgroundChunkCount(page: Page): Promise<number> {
@@ -510,6 +510,21 @@ async function setVectorStrokeWidth(page: Page, widthPercent: number): Promise<v
       x: (box.width * clampedPercent) / 100,
       y: box.height / 2,
     },
+  });
+}
+
+async function previewRangeSliderValueWithoutCommit(slider: Locator, value: number): Promise<void> {
+  await slider.evaluate((element, nextValue) => {
+    const input = element as HTMLInputElement;
+    input.value = String(nextValue);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, value);
+}
+
+async function commitRangeSliderValue(slider: Locator): Promise<void> {
+  await slider.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
   });
 }
 
@@ -1725,6 +1740,46 @@ test.describe('Background editor', () => {
     const savedStyles = await readSavedBackgroundVectorObjectPaintStyles(page);
 
     expect(savedStyles.every((style) => typeof style.strokeWidth === 'number' && style.strokeWidth > 0)).toBe(true);
+  });
+
+  test('background vector stroke-width slider only commits on release', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.36, editor.box.y + editor.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.56, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.46), y: Math.round(editor.box.height * 0.45) },
+    });
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectPaintStyles(page), { timeout: 10000 }).toHaveLength(1);
+    const initialStrokeWidth = (await readSavedBackgroundVectorObjectPaintStyles(page))[0]?.strokeWidth;
+    expect(initialStrokeWidth).not.toBeNull();
+
+    const strokeWidthSlider = page.getByTestId('costume-toolbar-properties').getByRole('slider').first();
+    await expect(strokeWidthSlider).toBeVisible();
+
+    await previewRangeSliderValueWithoutCommit(strokeWidthSlider, 24);
+
+    await expect.poll(async () => {
+      const styles = await readSavedBackgroundVectorObjectPaintStyles(page);
+      return styles[0]?.strokeWidth ?? null;
+    }, { timeout: 10000 }).toBe(initialStrokeWidth ?? null);
+
+    await commitRangeSliderValue(strokeWidthSlider);
+
+    await expect.poll(async () => {
+      const styles = await readSavedBackgroundVectorObjectPaintStyles(page);
+      return styles[0]?.strokeWidth ?? null;
+    }, { timeout: 10000 }).toBe(24);
   });
 
   test('recovers from malformed saved vector documents and keeps them editable', async ({ page }) => {

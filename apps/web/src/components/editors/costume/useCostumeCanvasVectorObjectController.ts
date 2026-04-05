@@ -8,6 +8,7 @@ import {
 import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   type TransformGizmoCorner,
+  type TransformGizmoCorners,
 } from '@/lib/editor/unifiedTransformGizmo';
 import type { DrawingTool, VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
 import { vectorHandleModeToPathNodeHandleType } from './CostumeToolbar';
@@ -102,6 +103,29 @@ interface UseCostumeCanvasVectorObjectControllerOptions {
   vectorPointEditingTargetRef: MutableRefObject<any | null>;
 }
 
+export function getMappedObjectOverlayCorners(
+  target: any,
+  mapFabricOverlayPoint: (point: Point) => Point,
+): TransformGizmoCorners | null {
+  const coords = typeof target?.getCoords === 'function'
+    ? target.getCoords() as Array<{ x: number; y: number }> | undefined
+    : null;
+  if (
+    !Array.isArray(coords) ||
+    coords.length < 4 ||
+    !coords.every((coord) => Number.isFinite(coord?.x) && Number.isFinite(coord?.y))
+  ) {
+    return null;
+  }
+
+  return {
+    nw: mapFabricOverlayPoint(new Point(coords[0]!.x, coords[0]!.y)),
+    ne: mapFabricOverlayPoint(new Point(coords[1]!.x, coords[1]!.y)),
+    se: mapFabricOverlayPoint(new Point(coords[2]!.x, coords[2]!.y)),
+    sw: mapFabricOverlayPoint(new Point(coords[3]!.x, coords[3]!.y)),
+  };
+}
+
 export function useCostumeCanvasVectorObjectController({
   activePathAnchorRef,
   activeToolRef,
@@ -154,6 +178,10 @@ export function useCostumeCanvasVectorObjectController({
     const source = eventData?.e ?? eventData;
     return !!source?.altKey;
   }, []);
+
+  const mapObjectToOverlayCorners = useCallback((target: any): TransformGizmoCorners | null => {
+    return getMappedObjectOverlayCorners(target, mapFabricOverlayPoint);
+  }, [mapFabricOverlayPoint]);
 
   const sampleObjectOutlinePoints = useCallback((obj: any): { points: Point[]; closed: boolean } | null => {
     const type = getFabricObjectType(obj);
@@ -564,8 +592,8 @@ export function useCostumeCanvasVectorObjectController({
       return;
     }
 
-    const coords = activeObject.oCoords;
-    if (!coords?.tl || !coords?.tr || !coords?.br || !coords?.bl) {
+    const overlayCorners = mapObjectToOverlayCorners(activeObject);
+    if (!overlayCorners) {
       return;
     }
 
@@ -577,16 +605,11 @@ export function useCostumeCanvasVectorObjectController({
       } | null;
     }).__unifiedTransformGuide;
 
-    renderScreenSpaceTransformOverlay(ctx, {
-      nw: mapFabricOverlayPoint(new Point(coords.tl.x, coords.tl.y)),
-      ne: mapFabricOverlayPoint(new Point(coords.tr.x, coords.tr.y)),
-      se: mapFabricOverlayPoint(new Point(coords.br.x, coords.br.y)),
-      sw: mapFabricOverlayPoint(new Point(coords.bl.x, coords.bl.y)),
-    }, {
+    renderScreenSpaceTransformOverlay(ctx, overlayCorners, {
       proportionalGuide: !!guideState?.proportional && guideState.target === activeObject,
       corner: guideState?.proportional && guideState.target === activeObject ? guideState.corner : null,
     });
-  }, [mapFabricOverlayPoint, vectorPointEditingTargetRef]);
+  }, [mapObjectToOverlayCorners, vectorPointEditingTargetRef]);
 
   const renderHoveredObjectOutline = useCallback((ctx: CanvasRenderingContext2D, fabricCanvas: FabricCanvas) => {
     const hoveredTarget = hoveredVectorTargetRef?.current as any;
@@ -608,19 +631,12 @@ export function useCostumeCanvasVectorObjectController({
       }
     }
 
-    const coords = typeof hoveredTarget.getCoords === 'function'
-      ? hoveredTarget.getCoords() as Array<{ x: number; y: number }> | undefined
-      : null;
-    if (!Array.isArray(coords) || coords.length < 4) {
+    const overlayCorners = mapObjectToOverlayCorners(hoveredTarget);
+    if (!overlayCorners) {
       return;
     }
 
-    renderScreenSpaceTransformOverlay(ctx, {
-      nw: mapFabricOverlayPoint(new Point(coords[0].x, coords[0].y)),
-      ne: mapFabricOverlayPoint(new Point(coords[1].x, coords[1].y)),
-      se: mapFabricOverlayPoint(new Point(coords[2].x, coords[2].y)),
-      sw: mapFabricOverlayPoint(new Point(coords[3].x, coords[3].y)),
-    }, {
+    renderScreenSpaceTransformOverlay(ctx, overlayCorners, {
       showFill: false,
       showHandles: false,
       strokeWidth: getZoomInvariantMetric(1.5),
@@ -628,7 +644,7 @@ export function useCostumeCanvasVectorObjectController({
   }, [
     getZoomInvariantMetric,
     hoveredVectorTargetRef,
-    mapFabricOverlayPoint,
+    mapObjectToOverlayCorners,
     vectorPointEditingTargetRef,
   ]);
 

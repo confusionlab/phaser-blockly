@@ -49,6 +49,10 @@ import {
   clearVectorToolStyleMixedState,
 } from '@/components/editors/costume/costumeCanvasShared';
 import {
+  useToolbarSliderCommitBoundary,
+  type ToolbarSliderChangeMeta,
+} from '@/components/editors/shared/toolbarSliderCommitBoundary';
+import {
   DEFAULT_BACKGROUND_CHUNK_SIZE,
   getChunkBoundsFromKeys,
   getChunkKey,
@@ -718,6 +722,7 @@ export function BackgroundCanvasEditor() {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [activeChunkCount, setActiveChunkCount] = useState(0);
+  const [activeBitmapContentBounds, setActiveBitmapContentBounds] = useState<WorldRect | null>(null);
   const [chunkLimitWarning, setChunkLimitWarning] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -739,6 +744,7 @@ export function BackgroundCanvasEditor() {
   const [vectorStyleMixedState, setVectorStyleMixedState] = useState<VectorToolStyleMixedState>({});
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(true);
+  const { registerSliderChangeMeta, sliderCommitBoundaryState } = useToolbarSliderCommitBoundary();
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
   const vectorStyleRef = useRef(vectorStyle);
@@ -948,7 +954,8 @@ export function BackgroundCanvasEditor() {
 
   const syncActiveChunkCount = useCallback(() => {
     setActiveChunkCount(chunkKeySetRef.current.size);
-  }, []);
+    setActiveBitmapContentBounds(toWorldRect(getChunkBoundsFromKeys(chunkKeySetRef.current, chunkSize)));
+  }, [chunkSize]);
 
   const replaceActiveBitmapLayerState = useCallback((
     nextState: {
@@ -967,31 +974,18 @@ export function BackgroundCanvasEditor() {
     syncActiveChunkCount();
   }, [syncActiveChunkCount]);
 
-  const getBitmapContentBounds = useCallback(() => {
-    const chunkKeys = new Set<string>();
-    if (backgroundDocument) {
-      for (const layer of backgroundDocument.layers) {
-        const layerChunks = layer.id === backgroundDocument.activeLayerId && isBitmapBackgroundLayer(layer)
-          ? chunkDataRef.current
-          : (renderedLayerChunks[layer.id] ?? {});
-        Object.keys(layerChunks).forEach((key) => chunkKeys.add(key));
-      }
-    } else {
-      chunkKeySetRef.current.forEach((key) => chunkKeys.add(key));
+  const bitmapContentBounds = useMemo<WorldRect | null>(() => {
+    if (!backgroundDocument) {
+      return activeBitmapContentBounds;
     }
-    const bounds = getChunkBoundsFromKeys(chunkKeys, chunkSize);
-    if (!bounds) {
-      return null;
-    }
-    return {
-      left: bounds.left,
-      right: bounds.right,
-      bottom: bounds.bottom,
-      top: bounds.top,
-      width: bounds.right - bounds.left,
-      height: bounds.top - bounds.bottom,
-    };
-  }, [backgroundDocument, chunkSize, renderedLayerChunks]);
+
+    return backgroundDocument.layers.reduce<WorldRect | null>((combinedBounds, layer) => {
+      const layerBounds = layer.id === backgroundDocument.activeLayerId && isBitmapBackgroundLayer(layer)
+        ? activeBitmapContentBounds
+        : toWorldRect(getChunkBoundsFromKeys(Object.keys(renderedLayerChunks[layer.id] ?? {}), chunkSize));
+      return mergeWorldRects(combinedBounds, layerBounds);
+    }, null);
+  }, [activeBitmapContentBounds, backgroundDocument, chunkSize, renderedLayerChunks]);
 
   const worldBoundaryContentBounds = useMemo<WorldRect | null>(() => {
     const bounds = getBoundsFromPoints(scene?.worldBoundary?.enabled ? (scene.worldBoundary.points || []) : []);
@@ -1010,7 +1004,7 @@ export function BackgroundCanvasEditor() {
 
   const fitToContent = useCallback(() => {
     const contentBounds = mergeWorldRects(
-      getBitmapContentBounds(),
+      bitmapContentBounds,
       toWorldRect(vectorCanvasRef.current?.getDocumentBounds() ?? null),
       worldBoundaryContentBounds,
     );
@@ -1019,11 +1013,11 @@ export function BackgroundCanvasEditor() {
       return;
     }
     fitToBounds(cameraBounds);
-  }, [cameraBounds, fitToBounds, getBitmapContentBounds, worldBoundaryContentBounds]);
+  }, [bitmapContentBounds, cameraBounds, fitToBounds, worldBoundaryContentBounds]);
 
   const showReturnToCenter = useMemo(() => {
     const hasVisibleContent = [
-      getBitmapContentBounds(),
+      bitmapContentBounds,
       editorMode === 'vector' ? (vectorCanvasRef.current?.getDocumentBounds() ?? null) : null,
       floatingSelectionRef.current ? getFloatingSelectionWorldBounds(floatingSelectionRef.current) : null,
       worldBoundaryContentBounds,
@@ -1038,7 +1032,7 @@ export function BackgroundCanvasEditor() {
       },
       hasVisibleContent,
     });
-  }, [camera, cameraBounds, editorMode, getBitmapContentBounds, worldBoundaryContentBounds]);
+  }, [bitmapContentBounds, camera, cameraBounds, editorMode, worldBoundaryContentBounds]);
 
   const zoomAtClientPoint = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     cancelCameraCenterAnimation();
@@ -3743,7 +3737,6 @@ export function BackgroundCanvasEditor() {
 
   const onWheel = useCallback((event: ReactWheelEvent<HTMLElement>) => {
     cancelCameraCenterAnimation();
-    event.preventDefault();
     const host = hostRef.current;
     if (!host) return;
     const rect = host.getBoundingClientRect();
@@ -3812,10 +3805,12 @@ export function BackgroundCanvasEditor() {
     }
     vectorCanvasRef.current?.alignSelection(action);
   }, [editorMode]);
-  const handleToolbarTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
+  const handleToolbarTextStyleChange = useCallback((updates: Partial<TextToolStyle>, meta?: ToolbarSliderChangeMeta) => {
+    registerSliderChangeMeta(meta);
     setTextStyle((previous) => ({ ...previous, ...updates }));
-  }, []);
-  const handleToolbarVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
+  }, [registerSliderChangeMeta]);
+  const handleToolbarVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>, meta?: ToolbarSliderChangeMeta) => {
+    registerSliderChangeMeta(meta);
     setLatestVectorStyleUpdates(updates);
     setVectorStyleChangeRevision((revision) => revision + 1);
     setVectorStyleMixedState((prev) => clearVectorToolStyleMixedState(prev, updates));
@@ -3834,7 +3829,7 @@ export function BackgroundCanvasEditor() {
       }
       return next;
     });
-  }, []);
+  }, [registerSliderChangeMeta]);
   const handleVectorSelectionChange = useCallback((hasSelection: boolean) => {
     setHasVectorSelection((previous) => (previous === hasSelection ? previous : hasSelection));
     if (!hasSelection) {
@@ -3904,7 +3899,7 @@ export function BackgroundCanvasEditor() {
     setBitmapBrushKind(kind);
   }, [busy]);
 
-  const handleToolbarBrushSizeChange = useCallback((size: number) => {
+  const handleToolbarBrushSizeChange = useCallback((size: number, _meta?: ToolbarSliderChangeMeta) => {
     if (busy) {
       return;
     }
@@ -3918,7 +3913,7 @@ export function BackgroundCanvasEditor() {
     setBitmapFillStyle((prev) => ({ ...prev, ...updates }));
   }, [busy]);
 
-  const handleToolbarBitmapShapeStyleChange = useCallback((updates: Partial<BitmapShapeStyle>) => {
+  const handleToolbarBitmapShapeStyleChange = useCallback((updates: Partial<BitmapShapeStyle>, _meta?: ToolbarSliderChangeMeta) => {
     if (busy) {
       return;
     }
@@ -4072,6 +4067,7 @@ export function BackgroundCanvasEditor() {
               vectorStyle={vectorStyle}
               vectorStyleChangeRevision={vectorStyleChangeRevision}
               latestVectorStyleUpdates={latestVectorStyleUpdates}
+              sliderCommitBoundaryState={sliderCommitBoundaryState}
               interactive={editorMode === 'vector'}
               onDirty={handleVectorDocumentCommit}
               onHistoryStateChange={handleVectorHistoryStateChange}
@@ -4102,16 +4098,16 @@ export function BackgroundCanvasEditor() {
             <BackgroundLayerPanel
               document={backgroundDocument}
               activeLayer={activeLayer}
-              onSelectLayer={(layerId) => { void handleSelectLayer(layerId); }}
-              onAddBitmapLayer={() => { void handleAddBitmapLayer(); }}
-              onAddVectorLayer={() => { void handleAddVectorLayer(); }}
-              onDuplicateLayer={(layerId) => { void handleDuplicateLayer(layerId); }}
-              onDeleteLayer={(layerId) => { void handleDeleteLayer(layerId); }}
-              onReorderLayer={(layerId, targetIndex) => { void handleReorderLayer(layerId, targetIndex); }}
-              onToggleVisibility={(layerId) => { void handleToggleLayerVisibility(layerId); }}
-              onToggleLocked={(layerId) => { void handleToggleLayerLocked(layerId); }}
-              onRenameLayer={(layerId, name) => { void handleRenameLayer(layerId, name); }}
-              onOpacityChange={(layerId, opacity) => { void handleLayerOpacityChange(layerId, opacity); }}
+              onSelectLayer={handleSelectLayer}
+              onAddBitmapLayer={handleAddBitmapLayer}
+              onAddVectorLayer={handleAddVectorLayer}
+              onDuplicateLayer={handleDuplicateLayer}
+              onDeleteLayer={handleDeleteLayer}
+              onReorderLayer={handleReorderLayer}
+              onToggleVisibility={handleToggleLayerVisibility}
+              onToggleLocked={handleToggleLayerLocked}
+              onRenameLayer={handleRenameLayer}
+              onOpacityChange={handleLayerOpacityChange}
             />
           ) : null}
         </div>

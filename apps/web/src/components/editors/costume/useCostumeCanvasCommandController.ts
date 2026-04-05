@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import type { Canvas as FabricCanvas } from 'fabric';
 import { applyBitmapBucketFill } from '@/lib/background/bitmapFillCore';
+import {
+  resolveStyleSliderCommitAction,
+  type ToolbarSliderCommitBoundaryState,
+} from '@/components/editors/shared/toolbarSliderCommitBoundary';
 import { useFabricVectorClipboardCommands } from '@/components/editors/shared/useFabricVectorClipboardCommands';
 import { getCanvas2dContext } from '@/utils/canvas2d';
 import {
@@ -84,6 +88,7 @@ interface UseCostumeCanvasCommandControllerOptions {
   suppressBitmapSelectionAutoCommitRef: MutableRefObject<boolean>;
   suppressHistoryRef: MutableRefObject<boolean>;
   syncSelectionState: () => void;
+  sliderCommitBoundaryState: ToolbarSliderCommitBoundaryState;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
   vectorGroupEditingPathRef: MutableRefObject<any[]>;
@@ -165,13 +170,16 @@ export function useCostumeCanvasCommandController({
   suppressBitmapSelectionAutoCommitRef,
   suppressHistoryRef,
   syncSelectionState,
+  sliderCommitBoundaryState,
   textStyle,
   vectorStyle,
   vectorGroupEditingPathRef,
   waitForFabricCanvas,
 }: UseCostumeCanvasCommandControllerOptions) {
   const pendingVectorStyleHistorySaveRef = useRef<number | null>(null);
+  const pendingSliderStyleCommitRef = useRef(false);
   const skipNextSelectionSyncedVectorStyleApplyRef = useRef(false);
+  const previousSliderCommitRevisionRef = useRef(sliderCommitBoundaryState.commitRevision);
 
   const scheduleVectorStyleHistorySave = useCallback(() => {
     if (typeof window === 'undefined') {
@@ -622,16 +630,26 @@ export function useCostumeCanvasCommandController({
   const syncActiveVectorStyle = useCallback((
     explicitVectorStyleUpdates?: Partial<VectorToolStyle>,
     previousVectorStyle?: VectorToolStyle,
+    commitBoundaryState?: ToolbarSliderCommitBoundaryState,
   ) => {
     const fabricCanvas = fabricCanvasRef.current;
-    if (!fabricCanvas || editorModeRef.current !== 'vector') return;
+    const commitRequested = previousSliderCommitRevisionRef.current !== (commitBoundaryState?.commitRevision ?? 0);
+    previousSliderCommitRevisionRef.current = commitBoundaryState?.commitRevision ?? 0;
+
+    if (!fabricCanvas || editorModeRef.current !== 'vector') {
+      pendingSliderStyleCommitRef.current = false;
+      return;
+    }
     const hasExplicitVectorStyleUpdates = !!explicitVectorStyleUpdates && Object.keys(explicitVectorStyleUpdates).length > 0;
-    if (!hasExplicitVectorStyleUpdates && skipNextSelectionSyncedVectorStyleApplyRef.current) {
+    if (!hasExplicitVectorStyleUpdates && !commitRequested && skipNextSelectionSyncedVectorStyleApplyRef.current) {
       skipNextSelectionSyncedVectorStyleApplyRef.current = false;
       return;
     }
     const activeObject = fabricCanvas.getActiveObject() as any;
-    if (!activeObject) return;
+    if (!activeObject) {
+      pendingSliderStyleCommitRef.current = false;
+      return;
+    }
 
     let changed = false;
     if (isTextObject(activeObject)) {
@@ -661,47 +679,64 @@ export function useCostumeCanvasCommandController({
           : previousVectorStyle
             ? getChangedVectorStyleUpdates(previousVectorStyle, vectorStyle)
             : vectorStyle;
-      if (Object.keys(vectorStyleUpdates).length === 0) {
-        return;
-      }
+      if (Object.keys(vectorStyleUpdates).length > 0) {
+        const fillStyleUpdates: Partial<Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>> = {};
+        const strokeStyleUpdates: Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>> = {};
 
-      const fillStyleUpdates: Partial<Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>> = {};
-      const strokeStyleUpdates: Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>> = {};
+        if ('fillColor' in vectorStyleUpdates) {
+          fillStyleUpdates.fillColor = vectorStyleUpdates.fillColor;
+        }
+        if ('fillOpacity' in vectorStyleUpdates) {
+          fillStyleUpdates.fillOpacity = vectorStyleUpdates.fillOpacity;
+        }
+        if ('fillTextureId' in vectorStyleUpdates) {
+          fillStyleUpdates.fillTextureId = vectorStyleUpdates.fillTextureId;
+        }
+        if ('strokeColor' in vectorStyleUpdates) {
+          strokeStyleUpdates.strokeColor = vectorStyleUpdates.strokeColor;
+        }
+        if ('strokeOpacity' in vectorStyleUpdates) {
+          strokeStyleUpdates.strokeOpacity = vectorStyleUpdates.strokeOpacity;
+        }
+        if ('strokeWidth' in vectorStyleUpdates) {
+          strokeStyleUpdates.strokeWidth = vectorStyleUpdates.strokeWidth;
+        }
+        if ('strokeBrushId' in vectorStyleUpdates) {
+          strokeStyleUpdates.strokeBrushId = vectorStyleUpdates.strokeBrushId;
+        }
 
-      if ('fillColor' in vectorStyleUpdates) {
-        fillStyleUpdates.fillColor = vectorStyleUpdates.fillColor;
+        changed = applyVectorStyleUpdatesToSelection(activeObject, {
+          fillStyle: fillStyleUpdates,
+          strokeStyle: strokeStyleUpdates,
+        }) || changed;
       }
-      if ('fillOpacity' in vectorStyleUpdates) {
-        fillStyleUpdates.fillOpacity = vectorStyleUpdates.fillOpacity;
-      }
-      if ('fillTextureId' in vectorStyleUpdates) {
-        fillStyleUpdates.fillTextureId = vectorStyleUpdates.fillTextureId;
-      }
-      if ('strokeColor' in vectorStyleUpdates) {
-        strokeStyleUpdates.strokeColor = vectorStyleUpdates.strokeColor;
-      }
-      if ('strokeOpacity' in vectorStyleUpdates) {
-        strokeStyleUpdates.strokeOpacity = vectorStyleUpdates.strokeOpacity;
-      }
-      if ('strokeWidth' in vectorStyleUpdates) {
-        strokeStyleUpdates.strokeWidth = vectorStyleUpdates.strokeWidth;
-      }
-      if ('strokeBrushId' in vectorStyleUpdates) {
-        strokeStyleUpdates.strokeBrushId = vectorStyleUpdates.strokeBrushId;
-      }
-
-      changed = applyVectorStyleUpdatesToSelection(activeObject, {
-        fillStyle: fillStyleUpdates,
-        strokeStyle: strokeStyleUpdates,
-      }) || changed;
     }
 
-    if (!changed) return;
+    const commitAction = resolveStyleSliderCommitAction({
+      commitRequested,
+      didChange: changed,
+      hasPendingPreviewCommit: pendingSliderStyleCommitRef.current,
+      isPreviewActive: commitBoundaryState?.isPreviewActive ?? false,
+    });
+    pendingSliderStyleCommitRef.current = commitAction.hasPendingPreviewCommit;
 
-    activeObject.setCoords?.();
-    fabricCanvas.requestRenderAll();
-    scheduleVectorStyleHistorySave();
-  }, [brushColorRef, editorModeRef, fabricCanvasRef, scheduleVectorStyleHistorySave, textStyle, vectorStyle]);
+    if (!changed && commitAction.action === 'none') {
+      return;
+    }
+
+    if (changed) {
+      activeObject.setCoords?.();
+      fabricCanvas.requestRenderAll();
+    }
+
+    if (commitAction.action === 'schedule') {
+      scheduleVectorStyleHistorySave();
+      return;
+    }
+    if (commitAction.action === 'commit-now') {
+      saveHistory();
+    }
+  }, [brushColorRef, editorModeRef, fabricCanvasRef, saveHistory, scheduleVectorStyleHistorySave, textStyle, vectorStyle]);
 
   return {
     alignSelection,

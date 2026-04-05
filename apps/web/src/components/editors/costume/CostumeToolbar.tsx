@@ -10,6 +10,7 @@ import {
 } from '@/components/editors/shared/FloatingBottomToolbar';
 import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
 import { FloatingToolbarSlider } from '@/components/editors/shared/FloatingToolbarSlider';
+import type { ToolbarSliderChangeMeta } from '@/components/editors/shared/toolbarSliderCommitBoundary';
 import {
   MousePointer2,
   PenTool,
@@ -250,7 +251,7 @@ interface ToolbarPreviewSliderProps {
   min: number;
   max: number;
   step?: number;
-  onValueChange: (value: number) => void;
+  onValueChange: (value: number, meta?: ToolbarSliderChangeMeta) => void;
   preview: React.ReactNode;
   previewEnabled?: boolean;
   labelDisplay?: 'left' | 'none';
@@ -277,6 +278,19 @@ const ToolbarPreviewSlider = memo(({
 }: ToolbarPreviewSliderProps) => {
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
   const closePreview = useCallback(() => setIsPreviewVisible(false), []);
+  const handleValuePreviewChange = useCallback((nextValue: number) => {
+    onValueChange(nextValue, {
+      source: 'slider',
+      phase: 'preview',
+    });
+  }, [onValueChange]);
+  const handleValueCommit = useCallback((nextValue: number) => {
+    onValueChange(nextValue, {
+      source: 'slider',
+      phase: 'commit',
+    });
+    closePreview();
+  }, [closePreview, onValueChange]);
 
   useEffect(() => {
     if (!previewEnabled) {
@@ -310,8 +324,8 @@ const ToolbarPreviewSlider = memo(({
         <FloatingToolbarSlider
           className={sliderClassName}
           value={value}
-          onValueChange={onValueChange}
-          onValueCommit={closePreview}
+          onValueChange={handleValuePreviewChange}
+          onValueCommit={handleValueCommit}
           onPointerDownCapture={() => {
             if (previewEnabled) {
               setIsPreviewVisible(true);
@@ -570,11 +584,11 @@ interface CostumeToolbarProps {
   onColorChange: (color: string) => void;
   onBrushOpacityChange: (opacity: number) => void;
   onBitmapBrushKindChange: (kind: BitmapBrushKind) => void;
-  onBrushSizeChange: (size: number) => void;
+  onBrushSizeChange: (size: number, meta?: ToolbarSliderChangeMeta) => void;
   onBitmapFillStyleChange: (updates: Partial<BitmapFillStyle>) => void;
-  onBitmapShapeStyleChange: (updates: Partial<BitmapShapeStyle>) => void;
-  onTextStyleChange: (updates: Partial<TextToolStyle>) => void;
-  onVectorStyleChange: (updates: Partial<VectorToolStyle>) => void;
+  onBitmapShapeStyleChange: (updates: Partial<BitmapShapeStyle>, meta?: ToolbarSliderChangeMeta) => void;
+  onTextStyleChange: (updates: Partial<TextToolStyle>, meta?: ToolbarSliderChangeMeta) => void;
+  onVectorStyleChange: (updates: Partial<VectorToolStyle>, meta?: ToolbarSliderChangeMeta) => void;
   toolAccessory?: ReactNode;
 }
 

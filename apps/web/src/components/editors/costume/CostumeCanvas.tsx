@@ -71,6 +71,7 @@ import { useCostumeCanvasVectorPathController } from './useCostumeCanvasVectorPa
 import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportController';
 import { syncCanvasSelectionGizmoAppearance } from './costumeCanvasSelectionGizmo';
 import { VectorSelectionContextMenu } from '@/components/editors/shared/VectorSelectionContextMenu';
+import type { ToolbarSliderCommitBoundaryState } from '@/components/editors/shared/toolbarSliderCommitBoundary';
 import type { FinishPendingEditsOptions } from '@/lib/editor/interactionSurface';
 import {
   EDITOR_VIEWPORT_FIT_PADDING_PX,
@@ -139,6 +140,7 @@ interface CostumeCanvasProps {
   vectorStyle: VectorToolStyle;
   vectorStyleChangeRevision: number;
   latestVectorStyleUpdates: Partial<VectorToolStyle>;
+  sliderCommitBoundaryState: ToolbarSliderCommitBoundaryState;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -175,6 +177,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   vectorStyle,
   vectorStyleChangeRevision,
   latestVectorStyleUpdates,
+  sliderCommitBoundaryState,
   canUndo,
   canRedo,
   onUndo,
@@ -790,6 +793,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncSelectionState,
     textStyle,
     vectorStyle,
+    sliderCommitBoundaryState,
     vectorGroupEditingPathRef,
     waitForFabricCanvas,
   });
@@ -1057,10 +1061,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const explicitVectorStyleUpdates = previousVectorStyleChangeRevisionRef.current !== vectorStyleChangeRevision
       ? latestVectorStyleUpdates
       : undefined;
-    syncActiveVectorStyle(explicitVectorStyleUpdates, previousVectorStyleRef.current);
+    syncActiveVectorStyle(explicitVectorStyleUpdates, previousVectorStyleRef.current, sliderCommitBoundaryState);
     previousVectorStyleRef.current = vectorStyle;
     previousVectorStyleChangeRevisionRef.current = vectorStyleChangeRevision;
-  }, [brushColor, latestVectorStyleUpdates, textStyle, vectorStyle, vectorStyleChangeRevision, syncActiveVectorStyle]);
+  }, [
+    brushColor,
+    latestVectorStyleUpdates,
+    sliderCommitBoundaryState,
+    textStyle,
+    vectorStyle,
+    vectorStyleChangeRevision,
+    syncActiveVectorStyle,
+  ]);
 
   useCostumeCanvasBitmapSelectionController({
     activeTool,

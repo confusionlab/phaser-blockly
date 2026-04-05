@@ -82,6 +82,21 @@ async function setBrushColorOpacity(page: Page, opacityPercent: number): Promise
   await colorButton.click();
 }
 
+async function previewRangeSliderValueWithoutCommit(slider: Locator, value: number): Promise<void> {
+  await slider.evaluate((element, nextValue) => {
+    const input = element as HTMLInputElement;
+    input.value = String(nextValue);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, value);
+}
+
+async function commitRangeSliderValue(slider: Locator): Promise<void> {
+  await slider.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  });
+}
+
 async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) {
   const box = await getCostumeCanvasBox(page);
   const targetX = box.x + box.width * xFactor;
@@ -687,6 +702,30 @@ async function readObjectCurrentCostumeVectorObjectPosition(
   }, { objectName });
 }
 
+async function readCurrentCostumeTextFontSize(page: Page): Promise<number | null> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const scene = project?.scenes?.[0];
+    const object = scene?.objects?.[0];
+    const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+    const vectorLayer = costume?.document?.layers?.find((layer) => layer.kind === 'vector');
+    if (!vectorLayer?.vector?.fabricJson) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{ fontSize?: unknown }>;
+      };
+      const entry = Array.isArray(parsed.objects) ? parsed.objects[0] : null;
+      return typeof entry?.fontSize === 'number' ? entry.fontSize : null;
+    } catch {
+      return null;
+    }
+  });
+}
+
 test.describe('Costume editor tools', () => {
   test('vector layers render shapes and reload cleanly after a tab round-trip', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
@@ -708,6 +747,34 @@ test.describe('Costume editor tools', () => {
 
     await expect(page.getByRole('button', { name: /^layer 2/i })).toBeVisible({ timeout: 10000 });
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+  });
+
+  test('costume text-size slider only commits on release', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^text$/i }).click();
+    await clickCostumeCanvas(page, 0.58, 0.44);
+    await page.keyboard.type('Hi');
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, 0.58, 0.44);
+
+    await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).not.toBeNull();
+    const initialFontSize = await readCurrentCostumeTextFontSize(page);
+    expect(initialFontSize).not.toBeNull();
+
+    const fontSizeSlider = page.getByTestId('costume-toolbar-properties').getByRole('slider').first();
+    await expect(fontSizeSlider).toBeVisible();
+
+    await previewRangeSliderValueWithoutCommit(fontSizeSlider, 72);
+
+    await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).toBe(initialFontSize ?? null);
+
+    await commitRangeSliderValue(fontSizeSlider);
+
+    await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).toBe(72);
   });
 
   test('vector copy and paste works across different objects and costumes', async ({ page }) => {

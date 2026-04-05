@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 const toolbarSliderThumbClassName =
@@ -14,7 +14,7 @@ interface FloatingToolbarSliderProps {
   onValueChange: (value: number) => void;
   className?: string;
   thumbClassName?: string;
-  onValueCommit?: () => void;
+  onValueCommit?: (value: number) => void;
   onPointerDownCapture?: () => void;
   onFocusCapture?: () => void;
   onBlurCapture?: () => void;
@@ -34,12 +34,17 @@ export function FloatingToolbarSlider({
   onBlurCapture,
 }: FloatingToolbarSliderProps) {
   const [isFocused, setIsFocused] = useState(false);
+  const latestValueRef = useRef(value);
+  const pointerCommitArmedRef = useRef(false);
+  const skipNextInputPointerCommitRef = useRef(false);
+  const pointerCommitCleanupRef = useRef<(() => void) | null>(null);
   const clampedValue = useMemo(() => {
     if (!Number.isFinite(value)) {
       return min;
     }
     return Math.max(min, Math.min(max, value));
   }, [max, min, value]);
+  latestValueRef.current = clampedValue;
   const progressPercent = useMemo(() => {
     if (max <= min) {
       return 0;
@@ -47,9 +52,52 @@ export function FloatingToolbarSlider({
     return ((clampedValue - min) / (max - min)) * 100;
   }, [clampedValue, max, min]);
 
-  const commitValue = () => {
-    onValueCommit?.();
-  };
+  const clearPointerCommitListeners = useCallback(() => {
+    pointerCommitCleanupRef.current?.();
+    pointerCommitCleanupRef.current = null;
+  }, []);
+
+  const commitValue = useCallback((nextValue?: number, options?: { fromInputPointerUp?: boolean; fromWindowPointerEnd?: boolean }) => {
+    if (options?.fromWindowPointerEnd) {
+      if (!pointerCommitArmedRef.current) {
+        return;
+      }
+      pointerCommitArmedRef.current = false;
+      skipNextInputPointerCommitRef.current = true;
+    }
+    if (options?.fromInputPointerUp && skipNextInputPointerCommitRef.current) {
+      skipNextInputPointerCommitRef.current = false;
+      return;
+    }
+    clearPointerCommitListeners();
+    onValueCommit?.(typeof nextValue === 'number' ? nextValue : latestValueRef.current);
+  }, [clearPointerCommitListeners, onValueCommit]);
+
+  const armPointerCommit = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    clearPointerCommitListeners();
+    pointerCommitArmedRef.current = true;
+    skipNextInputPointerCommitRef.current = false;
+
+    const handlePointerEnd = () => {
+      commitValue(undefined, { fromWindowPointerEnd: true });
+    };
+
+    window.addEventListener('pointerup', handlePointerEnd, true);
+    window.addEventListener('pointercancel', handlePointerEnd, true);
+    pointerCommitCleanupRef.current = () => {
+      window.removeEventListener('pointerup', handlePointerEnd, true);
+      window.removeEventListener('pointercancel', handlePointerEnd, true);
+    };
+  }, [clearPointerCommitListeners, commitValue]);
+
+  useEffect(() => {
+    return () => {
+      clearPointerCommitListeners();
+    };
+  }, [clearPointerCommitListeners]);
 
   return (
     <div
@@ -79,10 +127,17 @@ export function FloatingToolbarSlider({
         min={min}
         max={max}
         step={step}
-        onChange={(event) => onValueChange(Number(event.currentTarget.value))}
-        onPointerDownCapture={onPointerDownCapture}
-        onPointerUp={commitValue}
-        onKeyUp={commitValue}
+        onChange={(event) => {
+          const nextValue = Number(event.currentTarget.value);
+          latestValueRef.current = nextValue;
+          onValueChange(nextValue);
+        }}
+        onPointerDownCapture={() => {
+          armPointerCommit();
+          onPointerDownCapture?.();
+        }}
+        onPointerUp={(event) => commitValue(Number(event.currentTarget.value), { fromInputPointerUp: true })}
+        onKeyUp={(event) => commitValue(Number(event.currentTarget.value))}
         onFocusCapture={() => {
           setIsFocused(true);
           onFocusCapture?.();

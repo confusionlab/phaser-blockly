@@ -35,6 +35,10 @@ import {
   areVectorToolStyleMixedStatesEqual,
   clearVectorToolStyleMixedState,
 } from './costume/costumeCanvasShared';
+import {
+  useToolbarSliderCommitBoundary,
+  type ToolbarSliderChangeMeta,
+} from './shared/toolbarSliderCommitBoundary';
 import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
 import { getEffectiveObjectProps } from '@/types';
 import type { Costume, ColliderConfig, CostumeEditorMode } from '@/types';
@@ -375,6 +379,7 @@ export function CostumeEditor() {
   const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
   const [hasSelectedVectorPoints, setHasSelectedVectorPoints] = useState(false);
   const [hasTextSelection, setHasTextSelection] = useState(false);
+  const { registerSliderChangeMeta, sliderCommitBoundaryState } = useToolbarSliderCommitBoundary();
 
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -1568,7 +1573,8 @@ export function CostumeEditor() {
     setCanUngroupSelection(state.canUngroup);
   }, []);
 
-  const handleTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
+  const handleTextStyleChange = useCallback((updates: Partial<TextToolStyle>, meta?: ToolbarSliderChangeMeta) => {
+    registerSliderChangeMeta(meta);
     setTextStyle((prev) => {
       const next = { ...prev, ...updates };
       if (
@@ -1584,9 +1590,10 @@ export function CostumeEditor() {
       }
       return next;
     });
-  }, []);
+  }, [registerSliderChangeMeta]);
 
-  const handleVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
+  const handleVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>, meta?: ToolbarSliderChangeMeta) => {
+    registerSliderChangeMeta(meta);
     setLatestVectorStyleUpdates(updates);
     setVectorStyleChangeRevision((revision) => revision + 1);
     setVectorStyleMixedState((prev) => clearVectorToolStyleMixedState(prev, updates));
@@ -1605,7 +1612,7 @@ export function CostumeEditor() {
       }
       return next;
     });
-  }, []);
+  }, [registerSliderChangeMeta]);
 
   const handleVectorStyleSync = useCallback((snapshot: VectorToolStyleSelectionSnapshot) => {
     const nextStyle = { ...vectorStyleRef.current, ...snapshot.style };
@@ -1625,7 +1632,7 @@ export function CostumeEditor() {
     return didStyleChange || didMixedStateChange;
   }, []);
 
-  const handleBitmapShapeStyleChange = useCallback((updates: Partial<BitmapShapeStyle>) => {
+  const handleBitmapShapeStyleChange = useCallback((updates: Partial<BitmapShapeStyle>, _meta?: ToolbarSliderChangeMeta) => {
     setBitmapShapeStyle((prev) => {
       const next = { ...prev, ...updates };
       if (
@@ -1637,6 +1644,10 @@ export function CostumeEditor() {
       }
       return next;
     });
+  }, []);
+
+  const handleBrushSizeChange = useCallback((size: number, _meta?: ToolbarSliderChangeMeta) => {
+    setBrushSize(size);
   }, []);
 
   const handleBitmapFillStyleChange = useCallback((updates: Partial<BitmapFillStyle>) => {
@@ -1725,7 +1736,7 @@ export function CostumeEditor() {
             onColorChange={setBrushColor}
             onBrushOpacityChange={setBrushOpacity}
             onBitmapBrushKindChange={setBitmapBrushKind}
-            onBrushSizeChange={setBrushSize}
+            onBrushSizeChange={handleBrushSizeChange}
             onBitmapFillStyleChange={handleBitmapFillStyleChange}
             onBitmapShapeStyleChange={handleBitmapShapeStyleChange}
             onTextStyleChange={handleTextStyleChange}
@@ -1751,6 +1762,7 @@ export function CostumeEditor() {
             vectorStyle={vectorStyle}
             vectorStyleChangeRevision={vectorStyleChangeRevision}
             latestVectorStyleUpdates={latestVectorStyleUpdates}
+            sliderCommitBoundaryState={sliderCommitBoundaryState}
             canUndo={canUndo}
             canRedo={canRedo}
             onUndo={handleUndo}

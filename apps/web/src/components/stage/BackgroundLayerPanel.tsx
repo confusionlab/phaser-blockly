@@ -1,3 +1,4 @@
+import { memo, useCallback } from 'react';
 import type { BackgroundDocument, BackgroundLayer } from '@/types';
 import { LayerPanel } from '@/components/editors/shared/LayerPanel';
 import { MAX_BACKGROUND_LAYERS, getBackgroundLayerIndex } from '@/lib/background/backgroundDocument';
@@ -21,19 +22,23 @@ interface BackgroundLayerPanelProps {
   onOpacityChange: (layerId: string, opacity: number) => void;
 }
 
-export function BackgroundLayerPanel(props: BackgroundLayerPanelProps) {
+export const BackgroundLayerPanel = memo(function BackgroundLayerPanel(props: BackgroundLayerPanelProps) {
+  const getLayerThumbnailSignature = useCallback((layer: BackgroundLayer, size: number) => (
+    getBackgroundLayerThumbnailSignature(layer, props.document.chunkSize, size)
+  ), [props.document.chunkSize]);
+
+  const renderLayerThumbnailToDataUrl = useCallback((layer: BackgroundLayer, size: number) => (
+    renderBackgroundLayerThumbnailToDataUrl(layer, props.document.chunkSize, size)
+  ), [props.document.chunkSize]);
+
   return (
     <LayerPanel
       document={props.document}
       activeLayer={props.activeLayer}
       maxLayers={MAX_BACKGROUND_LAYERS}
       getLayerIndex={(layerId) => getBackgroundLayerIndex(props.document, layerId)}
-      getLayerThumbnailSignature={(layer, size) => (
-        getBackgroundLayerThumbnailSignature(layer as BackgroundLayer, props.document.chunkSize, size)
-      )}
-      renderLayerThumbnailToDataUrl={(layer, size) => (
-        renderBackgroundLayerThumbnailToDataUrl(layer as BackgroundLayer, props.document.chunkSize, size)
-      )}
+      getLayerThumbnailSignature={(layer, size) => getLayerThumbnailSignature(layer as BackgroundLayer, size)}
+      renderLayerThumbnailToDataUrl={(layer, size) => renderLayerThumbnailToDataUrl(layer as BackgroundLayer, size)}
       onSelectLayer={props.onSelectLayer}
       onAddBitmapLayer={props.onAddBitmapLayer}
       onAddVectorLayer={props.onAddVectorLayer}
@@ -46,4 +51,4 @@ export function BackgroundLayerPanel(props: BackgroundLayerPanelProps) {
       onOpacityChange={props.onOpacityChange}
     />
   );
-}
+});
