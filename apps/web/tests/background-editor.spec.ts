@@ -230,6 +230,43 @@ async function readSavedBackgroundVectorObjectPosition(
   });
 }
 
+async function readSavedBackgroundVectorObjectShapeSignature(page: Page): Promise<{
+  left: number | null;
+  pointCount: number;
+  top: number | null;
+  type: string | null;
+} | null> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const vectorLayer = project?.scenes[0]?.background?.document?.layers?.find(
+      (layer: { kind: string }) => layer.kind === 'vector',
+    ) as { vector?: { fabricJson?: string } } | undefined;
+    if (!vectorLayer?.vector?.fabricJson) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{ left?: unknown; top?: unknown; type?: unknown; points?: unknown[] }>;
+      };
+      const object = Array.isArray(parsed.objects) ? parsed.objects[0] : null;
+      if (!object) {
+        return null;
+      }
+
+      return {
+        left: typeof object.left === 'number' ? object.left : null,
+        pointCount: Array.isArray(object.points) ? object.points.length : 0,
+        top: typeof object.top === 'number' ? object.top : null,
+        type: typeof object.type === 'string' ? object.type.toLowerCase() : null,
+      };
+    } catch {
+      return null;
+    }
+  });
+}
+
 async function readObjectCurrentCostumeVectorObjectCount(page: Page, objectName: string): Promise<number> {
   return await page.evaluate(async ({ objectName }) => {
     const { useProjectStore } = await import('/src/store/projectStore.ts');
@@ -1016,6 +1053,64 @@ test.describe('Background editor', () => {
     await expect.poll(async () => await readSavedBackgroundVectorObjectCount(page), { timeout: 10000 }).toBe(1);
   });
 
+  test('clicking empty background canvas exits group editing to the root group without breaking the group', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await setToolbarColorOpacity(page, 'Stroke', 0);
+    await setToolbarColorOpacity(page, 'Fill', 100);
+    await setToolbarHexColor(page, 'Fill', '#22C55E');
+
+    const firstRectStart = { x: editor.box.x + editor.box.width * 0.32, y: editor.box.y + editor.box.height * 0.34 };
+    const firstRectEnd = { x: editor.box.x + editor.box.width * 0.47, y: editor.box.y + editor.box.height * 0.5 };
+    const firstCenter = { x: Math.round(editor.box.width * 0.395), y: Math.round(editor.box.height * 0.42) };
+
+    await page.mouse.move(firstRectStart.x, firstRectStart.y);
+    await page.mouse.down();
+    await page.mouse.move(firstRectEnd.x, firstRectEnd.y, { steps: 8 });
+    await page.mouse.up();
+
+    await setToolbarHexColor(page, 'Fill', '#2563EB');
+
+    const secondRectStart = { x: editor.box.x + editor.box.width * 0.54, y: editor.box.y + editor.box.height * 0.35 };
+    const secondRectEnd = { x: editor.box.x + editor.box.width * 0.71, y: editor.box.y + editor.box.height * 0.54 };
+    const secondCenter = { x: Math.round(editor.box.width * 0.625), y: Math.round(editor.box.height * 0.445) };
+
+    await page.mouse.move(secondRectStart.x, secondRectStart.y);
+    await page.mouse.down();
+    await page.mouse.move(secondRectEnd.x, secondRectEnd.y, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({ position: firstCenter });
+    await page.keyboard.down('Shift');
+    await vectorCanvas.click({ position: secondCenter });
+    await page.keyboard.up('Shift');
+    await page.keyboard.press('ControlOrMeta+G');
+
+    await expect.poll(async () => await readSavedBackgroundVectorObjectCount(page), { timeout: 10000 }).toBe(1);
+
+    await vectorCanvas.dblclick({ position: firstCenter });
+    await vectorCanvas.click({
+      position: {
+        x: Math.round(editor.box.width * 0.14),
+        y: Math.round(editor.box.height * 0.14),
+      },
+    });
+    await vectorCanvas.click({ position: firstCenter });
+    await setToolbarHexColor(page, 'Fill', '#EF4444');
+
+    await expect.poll(async () => {
+      const childColors = await readSavedBackgroundGroupedChildFillColors(page);
+      return childColors.length === 2 && childColors.every((color) => color === '#EF4444');
+    }, { timeout: 10000 }).toBe(true);
+    await expect.poll(async () => await readSavedBackgroundVectorObjectCount(page), { timeout: 10000 }).toBe(1);
+  });
+
   test('open background pen paths render textured fills', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 
@@ -1685,6 +1780,56 @@ test.describe('Background editor', () => {
     await closeBackgroundEditor(page);
     await expect(root).toBeHidden();
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(1);
+  });
+
+  test('triangle shapes use the shared draft geometry in the background editor', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const { root, box } = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+
+    await page.getByLabel('Open shape tools').click();
+    await page.getByRole('menuitem', { name: /^triangle$/i }).click();
+
+    await page.mouse.move(box.x + box.width * 0.36, box.y + box.height * 0.24);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.66, box.y + box.height * 0.6, { steps: 8 });
+    await page.mouse.up();
+
+    await closeBackgroundEditor(page);
+    await expect(root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectShapeSignature(page), { timeout: 10000 }).toEqual({
+      left: expect.any(Number),
+      pointCount: 3,
+      top: expect.any(Number),
+      type: 'polygon',
+    });
+  });
+
+  test('star shapes use the shared draft geometry in the background editor', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const { root, box } = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+
+    await page.getByLabel('Open shape tools').click();
+    await page.getByRole('menuitem', { name: /^star$/i }).click();
+
+    await page.mouse.move(box.x + box.width * 0.18, box.y + box.height * 0.48);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.42, box.y + box.height * 0.8, { steps: 8 });
+    await page.mouse.up();
+
+    await closeBackgroundEditor(page);
+    await expect(root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectShapeSignature(page), { timeout: 10000 }).toEqual({
+      left: expect.any(Number),
+      pointCount: 10,
+      top: expect.any(Number),
+      type: 'polygon',
+    });
   });
 });
 

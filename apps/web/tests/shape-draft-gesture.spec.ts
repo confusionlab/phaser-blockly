@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   buildPolygonShapeDraft,
+  getFabricShapeDraftObjectProps,
   resolveShapeDraft,
   translateShapeDraftResolution,
 } from '../src/components/editors/costume/costumeCanvasShared';
@@ -84,5 +85,25 @@ test.describe('shape draft gestures', () => {
       { x: 120, y: 120 },
       { x: 0, y: 120 },
     ]);
+  });
+
+  test('fabric shape draft geometry keeps rectangle and circle corners aligned while compensating stroke width', () => {
+    expect(
+      getFabricShapeDraftObjectProps('rectangle', { x: 120, y: 80 }, { x: 260, y: 220 }, 24),
+    ).toEqual({
+      left: 108,
+      top: 68,
+      width: 140,
+      height: 140,
+    });
+
+    expect(
+      getFabricShapeDraftObjectProps('circle', { x: 260, y: 220 }, { x: 120, y: 80 }, 24),
+    ).toEqual({
+      left: 108,
+      top: 68,
+      rx: 70,
+      ry: 70,
+    });
   });
 });

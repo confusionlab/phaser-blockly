@@ -533,6 +533,65 @@ export function buildPolygonShapeDraft(
   };
 }
 
+export function getFabricShapeDraftObjectProps(
+  type: ShapeDraftType,
+  start: { x: number; y: number },
+  current: { x: number; y: number },
+  strokeWidth: number,
+):
+  | { left: number; top: number; width: number; height: number }
+  | { left: number; top: number; rx: number; ry: number }
+  | { left: number; top: number; points: Array<{ x: number; y: number }> }
+  | { x1: number; y1: number; x2: number; y2: number } {
+  if (type === 'rectangle') {
+    const bounds = getStrokedShapeBoundsFromPathBounds(
+      start.x,
+      start.y,
+      current.x,
+      current.y,
+      strokeWidth,
+    );
+    return {
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+    };
+  }
+
+  if (type === 'circle') {
+    const bounds = getStrokedShapeBoundsFromPathBounds(
+      start.x,
+      start.y,
+      current.x,
+      current.y,
+      strokeWidth,
+    );
+    return {
+      left: bounds.left,
+      top: bounds.top,
+      rx: bounds.width * 0.5,
+      ry: bounds.height * 0.5,
+    };
+  }
+
+  if (type === 'triangle' || type === 'star') {
+    const polygonDraft = buildPolygonShapeDraft(type, start, current);
+    return {
+      left: polygonDraft.left,
+      top: polygonDraft.top,
+      points: polygonDraft.points,
+    };
+  }
+
+  return {
+    x1: start.x,
+    y1: start.y,
+    x2: current.x,
+    y2: current.y,
+  };
+}
+
 export function getEditableVectorHandleMode(mode: VectorHandleMode): Exclude<VectorHandleMode, 'multiple'> {
   return mode === 'multiple' ? 'linear' : mode;
 }

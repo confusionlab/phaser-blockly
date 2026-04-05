@@ -14,6 +14,7 @@ import {
   getVectorGroupEditingPathForTarget,
   isFabricGroupObject,
   resolveVectorGroupEntrySelectionTarget,
+  resolveVectorGroupEditingRootTarget,
   resolveVectorHoverTarget,
   sanitizeVectorGroupEditingPath,
 } from '@/lib/editor/fabricVectorSelection';
@@ -31,6 +32,7 @@ import {
 import {
   CANVAS_SIZE,
   buildPolygonShapeDraft,
+  getFabricShapeDraftObjectProps,
   getStrokedShapeBoundsFromPathBounds,
   isSpaceKeyEvent,
   resolveShapeDraft,
@@ -317,57 +319,72 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       return true;
     };
 
+    const queueRootVectorGroupSelectionRestore = () => {
+      if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'select' || vectorPointEditingTargetRef.current) {
+        return;
+      }
+
+      const rootGroup = resolveVectorGroupEditingRootTarget(
+        fabricCanvas,
+        vectorGroupEditingPathRef.current,
+      );
+      if (!rootGroup) {
+        return;
+      }
+
+      queueMicrotask(() => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) {
+          return;
+        }
+        if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'select' || vectorPointEditingTargetRef.current) {
+          return;
+        }
+        if (canvas.getActiveObject()) {
+          return;
+        }
+
+        const nextRootGroup = resolveVectorGroupEditingRootTarget(
+          canvas,
+          vectorGroupEditingPathRef.current,
+        );
+        if (!nextRootGroup) {
+          return;
+        }
+
+        vectorGroupEditingPathRef.current = [];
+        canvas.discardActiveObject();
+        canvas.setActiveObject(nextRootGroup as any);
+        callbacksRef.current.configureCanvasForTool();
+        callbacksRef.current.syncTextStyleFromSelection();
+        callbacksRef.current.syncVectorStyleFromSelection();
+        callbacksRef.current.syncTextSelectionState();
+        callbacksRef.current.syncSelectionState();
+        canvas.requestRenderAll();
+      });
+    };
+
     const applyResolvedShapeDraftToObject = (draft: ShapeDraftSession, start: Point, end: Point) => {
       const object = draft.object;
-
-      if (draft.type === 'rectangle') {
-        const bounds = getStrokedShapeBoundsFromPathBounds(
-          start.x,
-          start.y,
-          end.x,
-          end.y,
-          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
-        );
-        object.set(bounds);
-        return;
-      }
-
-      if (draft.type === 'circle') {
-        const bounds = getStrokedShapeBoundsFromPathBounds(
-          start.x,
-          start.y,
-          end.x,
-          end.y,
-          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
-        );
-        object.set({
-          left: bounds.left,
-          top: bounds.top,
-          rx: bounds.width / 2,
-          ry: bounds.height / 2,
-        });
-        return;
-      }
-
+      const nextProps = getFabricShapeDraftObjectProps(
+        draft.type,
+        start,
+        end,
+        typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
+      );
       if (draft.type === 'triangle' || draft.type === 'star') {
-        const polygonDraft = buildPolygonShapeDraft(draft.type, start, end);
+        const polygonProps = nextProps as { left: number; top: number; points: Array<{ x: number; y: number }> };
         object.set({
-          points: polygonDraft.points,
+          points: polygonProps.points,
         });
         object.setDimensions?.();
         object.set({
-          left: polygonDraft.left,
-          top: polygonDraft.top,
+          left: polygonProps.left,
+          top: polygonProps.top,
         });
         return;
       }
-
-      object.set({
-        x1: start.x,
-        y1: start.y,
-        x2: end.x,
-        y2: end.y,
-      });
+      object.set(nextProps);
     };
 
     const renderActiveShapeDraft = (pointerOverride?: Point) => {
@@ -1179,6 +1196,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         });
       }
       activePathAnchorRef.current = null;
+      queueRootVectorGroupSelectionRestore();
       callbacks.syncSelectionState();
     };
 

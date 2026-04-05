@@ -34,6 +34,8 @@ import type {
   VectorToolStyle,
 } from '@/components/editors/costume/CostumeToolbar';
 import {
+  buildPolygonShapeDraft,
+  getFabricShapeDraftObjectProps,
   getZoomInvariantCanvasMetric,
   type MirroredPathAnchorDragSession,
   type PathAnchorDragState,
@@ -195,41 +197,6 @@ interface BackgroundVectorCanvasProps {
   onVectorStyleCapabilitiesSync: (capabilities: VectorStyleCapabilities) => void;
   onCanZoomToSelectionChange: (canZoom: boolean) => void;
   onCanvasContextMenu?: (event: MouseEvent) => void;
-}
-
-function createPolygonShapePoints(kind: 'triangle' | 'star', start: WorldPoint, current: WorldPoint): { x: number; y: number }[] {
-  const left = Math.min(start.x, current.x);
-  const right = Math.max(start.x, current.x);
-  const top = Math.min(start.y, current.y);
-  const bottom = Math.max(start.y, current.y);
-  const width = Math.max(1, right - left);
-  const height = Math.max(1, bottom - top);
-  const centerX = left + width * 0.5;
-  const centerY = top + height * 0.5;
-
-  if (kind === 'triangle') {
-    return [
-      { x: centerX, y: top },
-      { x: left, y: bottom },
-      { x: right, y: bottom },
-    ];
-  }
-
-  const points: { x: number; y: number }[] = [];
-  const outerRadiusX = width * 0.5;
-  const outerRadiusY = height * 0.5;
-  const innerRadiusX = outerRadiusX * 0.45;
-  const innerRadiusY = outerRadiusY * 0.45;
-  for (let index = 0; index < 10; index += 1) {
-    const angle = (-Math.PI / 2) + index * (Math.PI / 5);
-    const radiusX = index % 2 === 0 ? outerRadiusX : innerRadiusX;
-    const radiusY = index % 2 === 0 ? outerRadiusY : innerRadiusY;
-    points.push({
-      x: centerX + Math.cos(angle) * radiusX,
-      y: centerY + Math.sin(angle) * radiusY,
-    });
-  }
-  return points;
 }
 
 function worldPointToScenePoint(point: WorldPoint): WorldPoint {
@@ -1438,6 +1405,51 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return true;
     };
 
+    const queueRootVectorGroupSelectionRestore = () => {
+      if (activeToolRef.current !== 'select' || vectorPointEditingTargetRef.current) {
+        return;
+      }
+
+      const rootGroup = resolveVectorGroupEditingRootTarget(
+        fabricCanvas,
+        vectorGroupEditingPathRef.current,
+      );
+      if (!rootGroup) {
+        return;
+      }
+
+      queueMicrotask(() => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) {
+          return;
+        }
+        if (activeToolRef.current !== 'select' || vectorPointEditingTargetRef.current) {
+          return;
+        }
+        if (canvas.getActiveObject()) {
+          return;
+        }
+
+        const nextRootGroup = resolveVectorGroupEditingRootTarget(
+          canvas,
+          vectorGroupEditingPathRef.current,
+        );
+        if (!nextRootGroup) {
+          return;
+        }
+
+        vectorGroupEditingPathRef.current = [];
+        canvas.discardActiveObject();
+        canvas.setActiveObject(nextRootGroup as any);
+        configureCanvasForTool();
+        syncTextStyleFromSelection();
+        syncVectorStyleFromSelection();
+        syncTextSelectionState();
+        syncSelectionState();
+        canvas.requestRenderAll();
+      });
+    };
+
     const handleMouseDown = (opt: any) => {
       if (!opt.e) {
         return;
@@ -1876,6 +1888,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         });
       }
       activePathAnchorRef.current = null;
+      queueRootVectorGroupSelectionRestore();
       syncTextSelectionState();
       syncSelectionState();
       onVectorStyleCapabilitiesSyncRef.current?.({ supportsFill: true });
@@ -2085,26 +2098,21 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
       const startScene = worldPointToScenePoint(startWorld);
       const commonStyle = buildVectorStyleProps(vectorStyleRef.current, tool !== 'line');
+      const strokeWidth = Math.max(0, vectorStyleRef.current.strokeWidth);
       let draft: VectorShapeDraft | null = null;
       if (tool === 'rectangle') {
         const rect = new Rect({
-          left: startScene.x,
-          top: startScene.y,
-          width: 1,
-          height: 1,
           originX: 'left',
           originY: 'top',
+          ...getFabricShapeDraftObjectProps(tool, startScene, startScene, strokeWidth),
           ...commonStyle,
         });
         draft = { tool, object: rect, start: startScene };
       } else if (tool === 'circle') {
         const ellipse = new Ellipse({
-          left: startScene.x,
-          top: startScene.y,
-          rx: 0.5,
-          ry: 0.5,
-          originX: 'center',
-          originY: 'center',
+          originX: 'left',
+          originY: 'top',
+          ...getFabricShapeDraftObjectProps(tool, startScene, startScene, strokeWidth),
           ...commonStyle,
         });
         draft = { tool, object: ellipse, start: startScene };
@@ -2114,7 +2122,12 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         });
         draft = { tool, object: line, start: startScene };
       } else if (tool === 'triangle' || tool === 'star') {
-        const polygon = new Polygon(createPolygonShapePoints(tool, startScene, startScene), {
+        const polygonDraft = buildPolygonShapeDraft(tool, startScene, startScene);
+        const polygon = new Polygon(polygonDraft.points, {
+          left: polygonDraft.left,
+          top: polygonDraft.top,
+          originX: 'center',
+          originY: 'center',
           ...commonStyle,
           objectCaching: false,
         });
@@ -2142,37 +2155,41 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       const currentScene = worldPointToScenePoint(currentWorld);
 
       if (draft.tool === 'rectangle') {
-        const left = Math.min(draft.start.x, currentScene.x);
-        const right = Math.max(draft.start.x, currentScene.x);
-        const top = Math.min(draft.start.y, currentScene.y);
-        const bottom = Math.max(draft.start.y, currentScene.y);
-        draft.object.set({
-          left,
-          top,
-          width: Math.max(1, right - left),
-          height: Math.max(1, bottom - top),
-        });
+        draft.object.set(getFabricShapeDraftObjectProps(
+          draft.tool,
+          draft.start,
+          currentScene,
+          typeof draft.object.strokeWidth === 'number' ? draft.object.strokeWidth : 0,
+        ));
       } else if (draft.tool === 'circle') {
-        const left = Math.min(draft.start.x, currentScene.x);
-        const right = Math.max(draft.start.x, currentScene.x);
-        const top = Math.min(draft.start.y, currentScene.y);
-        const bottom = Math.max(draft.start.y, currentScene.y);
-        draft.object.set({
-          left: left + (right - left) * 0.5,
-          top: top + (bottom - top) * 0.5,
-          rx: Math.max(0.5, (right - left) * 0.5),
-          ry: Math.max(0.5, (bottom - top) * 0.5),
-        });
+        draft.object.set(getFabricShapeDraftObjectProps(
+          draft.tool,
+          draft.start,
+          currentScene,
+          typeof draft.object.strokeWidth === 'number' ? draft.object.strokeWidth : 0,
+        ));
       } else if (draft.tool === 'line') {
-        draft.object.set({
-          x2: currentScene.x,
-          y2: currentScene.y,
-        });
+        draft.object.set(getFabricShapeDraftObjectProps(
+          draft.tool,
+          draft.start,
+          currentScene,
+          0,
+        ));
       } else {
+        const polygonProps = getFabricShapeDraftObjectProps(
+          draft.tool,
+          draft.start,
+          currentScene,
+          typeof draft.object.strokeWidth === 'number' ? draft.object.strokeWidth : 0,
+        ) as { left: number; top: number; points: Array<{ x: number; y: number }> };
         draft.object.set({
-          points: createPolygonShapePoints(draft.tool, draft.start, currentScene),
+          points: polygonProps.points,
         });
         draft.object.setDimensions?.();
+        draft.object.set({
+          left: polygonProps.left,
+          top: polygonProps.top,
+        });
       }
       draft.object.setCoords?.();
       fabricCanvas.requestRenderAll();
