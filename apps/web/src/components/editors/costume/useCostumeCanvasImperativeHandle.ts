@@ -17,6 +17,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
+  exitAllGroupEditing: () => boolean;
   flipSelection: (axis: any) => boolean;
   flushPendingEdits: (options?: FinishPendingEditsOptions) => Promise<boolean>;
   getComposedCanvasElement: () => HTMLCanvasElement;
@@ -56,6 +57,7 @@ export function useCostumeCanvasImperativeHandle({
   deleteSelection,
   duplicateSelection,
   exportCostumeState,
+  exitAllGroupEditing,
   flipSelection,
   flushPendingEdits,
   getComposedCanvasElement,
@@ -165,6 +167,8 @@ export function useCostumeCanvasImperativeHandle({
 
     isTextEditing,
 
+    exitAllGroupEditing,
+
     clearSelection,
 
     clear: () => {
@@ -197,6 +201,7 @@ export function useCostumeCanvasImperativeHandle({
     deleteSelection,
     duplicateSelection,
     exportCostumeState,
+    exitAllGroupEditing,
     flipSelection,
     flushPendingEdits,
     getComposedCanvasElement,

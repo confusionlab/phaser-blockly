@@ -1,7 +1,10 @@
 import { useCallback, type MutableRefObject } from 'react';
 import { Path, Point, controlsUtils, type Canvas as FabricCanvas, type Control } from 'fabric';
 import type { CostumeEditorMode } from '@/types';
-import { fabricCanvasContainsObject } from '@/lib/editor/fabricVectorSelection';
+import {
+  fabricCanvasContainsObject,
+  replaceFabricObjectInParentContainer,
+} from '@/lib/editor/fabricVectorSelection';
 import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   type TransformGizmoCorner,
@@ -269,14 +272,9 @@ export function useCostumeCanvasVectorObjectController({
     if (converted === obj) return obj;
 
     restoreOriginalControls(obj);
-    const stack = fabricCanvas.getObjects();
-    const originalObject = obj as any;
-    const index = stack.indexOf(originalObject);
-    fabricCanvas.remove(originalObject);
-    if (index >= 0) {
-      fabricCanvas.insertAt(index, converted);
-    } else {
-      fabricCanvas.add(converted);
+    const replaced = replaceFabricObjectInParentContainer(fabricCanvas as any, obj as any, converted as any);
+    if (!replaced) {
+      return null;
     }
     converted.setCoords();
     return converted;

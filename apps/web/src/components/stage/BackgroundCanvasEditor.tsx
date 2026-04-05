@@ -3228,6 +3228,10 @@ export function BackgroundCanvasEditor() {
           }
           return true;
         }
+        if (plainEscape && editorMode === 'vector' && (vectorCanvasRef.current?.exitAllGroupEditing() ?? false)) {
+          event.preventDefault();
+          return true;
+        }
         if (plainEscape) {
           event.preventDefault();
           void flushActiveInteraction({

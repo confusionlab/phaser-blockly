@@ -1,14 +1,23 @@
 import type { Canvas as FabricCanvas } from 'fabric';
 
 type FabricObjectLike = {
+  add?: (...objects: FabricObjectLike[]) => unknown;
   getObjects?: () => FabricObjectLike[];
   group?: unknown;
+  insertAt?: (index: number, ...objects: FabricObjectLike[]) => unknown;
   interactive?: boolean;
   parent?: unknown;
+  remove?: (...objects: FabricObjectLike[]) => unknown;
   set?: (properties: Record<string, unknown>) => unknown;
   setCoords?: () => void;
   subTargetCheck?: boolean;
   type?: unknown;
+};
+
+type FabricObjectContainerLike = Pick<FabricCanvas, 'getObjects'> & {
+  add?: (...objects: FabricObjectLike[]) => unknown;
+  insertAt?: (index: number, ...objects: FabricObjectLike[]) => unknown;
+  remove?: (...objects: FabricObjectLike[]) => unknown;
 };
 
 export interface VectorGroupingAvailability {
@@ -143,6 +152,53 @@ export function resolveVectorGroupEntrySelectionTarget(
   }
 
   return null;
+}
+
+export function resolveVectorGroupEditingRootTarget(
+  fabricCanvas: Pick<FabricCanvas, 'getObjects'> | null | undefined,
+  editingPath: unknown[],
+): FabricObjectLike | null {
+  const [rootGroup] = sanitizeVectorGroupEditingPath(fabricCanvas, editingPath);
+  return rootGroup ?? null;
+}
+
+export function replaceFabricObjectInParentContainer(
+  fabricCanvas: FabricObjectContainerLike | null | undefined,
+  target: FabricObjectLike,
+  replacement: FabricObjectLike,
+): boolean {
+  if (!fabricCanvas) {
+    return false;
+  }
+
+  const parentGroup = getFabricObjectDirectParentGroup(target) as FabricObjectContainerLike | null;
+  const container = parentGroup ?? fabricCanvas;
+  const stack = container.getObjects();
+  const index = stack.indexOf(target);
+  if (index < 0) {
+    return false;
+  }
+
+  if (typeof container.remove !== 'function') {
+    return false;
+  }
+
+  const canInsert = typeof container.insertAt === 'function' || typeof container.add === 'function';
+  if (!canInsert) {
+    return false;
+  }
+
+  container.remove(target);
+  if (typeof container.insertAt === 'function') {
+    container.insertAt(index, replacement);
+  } else {
+    container.add?.(replacement);
+  }
+  replacement.setCoords?.();
+  if (parentGroup) {
+    (parentGroup as FabricObjectLike).setCoords?.();
+  }
+  return true;
 }
 
 export function sanitizeVectorGroupEditingPath(

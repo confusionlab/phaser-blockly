@@ -1,10 +1,18 @@
 import { expect, test } from '@playwright/test';
-import { resolveVectorGroupEntrySelectionTarget } from '../src/lib/editor/fabricVectorSelection';
+import {
+  replaceFabricObjectInParentContainer,
+  resolveVectorGroupEditingRootTarget,
+  resolveVectorGroupEntrySelectionTarget,
+} from '../src/lib/editor/fabricVectorSelection';
 
 type FakeFabricObject = {
+  add?: (...objects: FakeFabricObject[]) => void;
   getObjects?: () => FakeFabricObject[];
   group?: FakeFabricObject | null;
+  insertAt?: (index: number, ...objects: FakeFabricObject[]) => void;
   parent?: FakeFabricObject | null;
+  remove?: (...objects: FakeFabricObject[]) => void;
+  setCoords?: () => void;
   type: string;
 };
 
@@ -50,5 +58,67 @@ test.describe('fabric vector selection', () => {
     );
 
     expect(resolved).toBe(directChild);
+  });
+
+  test('resolves the outermost edited group when exiting nested group editing', () => {
+    const leaf = createObject('rect');
+    const subgroup = createGroup([leaf]);
+    const rootGroup = createGroup([subgroup]);
+    const fabricCanvas = {
+      getObjects: () => [rootGroup],
+    };
+
+    const resolved = resolveVectorGroupEditingRootTarget(fabricCanvas, [rootGroup, subgroup]);
+
+    expect(resolved).toBe(rootGroup);
+  });
+
+  test('replaces a grouped child inside its parent container instead of duplicating it at root', () => {
+    const childA = createObject('rect');
+    const childB = createObject('rect');
+    const replacement = createObject('path');
+    const rootGroup = createGroup([childA, childB]);
+    const canvasChildren = [rootGroup];
+    const fabricCanvas = {
+      add(object: FakeFabricObject) {
+        canvasChildren.push(object);
+      },
+      getObjects: () => canvasChildren,
+      insertAt(index: number, ...objects: FakeFabricObject[]) {
+        canvasChildren.splice(index, 0, ...objects);
+      },
+      remove(...objects: FakeFabricObject[]) {
+        for (const object of objects) {
+          const index = canvasChildren.indexOf(object);
+          if (index >= 0) {
+            canvasChildren.splice(index, 1);
+          }
+        }
+      },
+    };
+
+    const groupChildren = [childA, childB];
+    rootGroup.getObjects = () => groupChildren;
+    rootGroup.insertAt = (index: number, ...objects: FakeFabricObject[]) => {
+      groupChildren.splice(index, 0, ...objects);
+      objects.forEach((object) => {
+        object.group = rootGroup;
+        object.parent = rootGroup;
+      });
+    };
+    rootGroup.remove = (...objects: FakeFabricObject[]) => {
+      for (const object of objects) {
+        const index = groupChildren.indexOf(object);
+        if (index >= 0) {
+          groupChildren.splice(index, 1);
+        }
+      }
+    };
+
+    const replaced = replaceFabricObjectInParentContainer(fabricCanvas, childA, replacement);
+
+    expect(replaced).toBe(true);
+    expect(fabricCanvas.getObjects()).toEqual([rootGroup]);
+    expect(rootGroup.getObjects?.()).toEqual([replacement, childB]);
   });
 });

@@ -464,6 +464,38 @@ async function readSavedCostumeGroupedChildFillColors(page: Page): Promise<strin
   });
 }
 
+async function readSavedCostumeGroupedChildTypes(page: Page): Promise<{
+  topLevelCount: number;
+  childTypes: string[];
+}> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const object = project?.scenes?.[0]?.objects?.[0];
+    const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+    const vectorLayer = costume?.document?.layers?.find((layer) => layer.kind === 'vector');
+    if (!vectorLayer?.vector?.fabricJson) {
+      return { topLevelCount: 0, childTypes: [] };
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{ type?: string; objects?: Array<{ type?: string }> }>;
+      };
+      const rootObjects = Array.isArray(parsed.objects) ? parsed.objects : [];
+      const [group] = rootObjects;
+      return {
+        topLevelCount: rootObjects.length,
+        childTypes: Array.isArray(group?.objects)
+          ? group.objects.map((child) => String(child?.type ?? '').trim().toLowerCase())
+          : [],
+      };
+    } catch {
+      return { topLevelCount: -1, childTypes: [] };
+    }
+  });
+}
+
 async function setVectorStrokeBrush(page: Page, label: 'Marker' | 'Ink' | 'Chalk') {
   const properties = page.getByTestId('costume-toolbar-properties');
   await properties.getByRole('button', { name: /^solid$/i }).first().click();
@@ -1319,6 +1351,306 @@ test.describe('Costume editor tools', () => {
       return childColors.length === 2
         && childColors.includes('#EF4444')
         && childColors.includes('#2563EB');
+    }, { timeout: 10000 }).toBe(true);
+  });
+
+  test('Escape exits costume group editing to the root group without breaking the group', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await addVectorLayer(page);
+
+    await page.evaluate(async () => {
+      const { useProjectStore } = await import('/src/store/projectStore.ts');
+      const project = useProjectStore.getState().project;
+      const scene = project?.scenes?.[0];
+      const object = scene?.objects?.[0];
+      const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+      if (!scene || !object || !costume?.id || !costume.assetId) {
+        throw new Error('Missing scene object costume for grouped Escape test.');
+      }
+
+      const fabricJson = JSON.stringify({
+        version: '7.0.0',
+        objects: [
+          {
+            type: 'rect',
+            version: '7.0.0',
+            originX: 'left',
+            originY: 'top',
+            left: 320,
+            top: 340,
+            width: 150,
+            height: 160,
+            fill: 'rgba(34, 197, 94, 0)',
+            stroke: 'rgba(34, 197, 94, 0)',
+            strokeWidth: 0,
+            vectorFillTextureId: 'grain',
+            vectorFillColor: '#22C55E',
+            vectorFillOpacity: 1,
+            vectorStrokeBrushId: 'solid',
+            vectorStrokeColor: '#22C55E',
+            vectorStrokeOpacity: 1,
+          },
+          {
+            type: 'rect',
+            version: '7.0.0',
+            originX: 'left',
+            originY: 'top',
+            left: 540,
+            top: 350,
+            width: 170,
+            height: 190,
+            fill: 'rgba(37, 99, 235, 0)',
+            stroke: 'rgba(37, 99, 235, 0)',
+            strokeWidth: 0,
+            vectorFillTextureId: 'grain',
+            vectorFillColor: '#2563EB',
+            vectorFillOpacity: 1,
+            vectorStrokeBrushId: 'solid',
+            vectorStrokeColor: '#2563EB',
+            vectorStrokeOpacity: 1,
+          },
+        ],
+      });
+
+      useProjectStore.getState().updateCostumeFromEditor(
+        {
+          sceneId: scene.id,
+          objectId: object.id,
+          costumeId: costume.id,
+        },
+        {
+          assetId: costume.assetId,
+          bounds: costume.bounds,
+          assetFrame: costume.assetFrame,
+          document: {
+            version: 1,
+            activeLayerId: 'group-escape-vector-layer',
+            layers: [
+              {
+                id: 'group-escape-vector-layer',
+                name: 'Vector Layer',
+                kind: 'vector',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                mask: null,
+                effects: [],
+                vector: {
+                  engine: 'fabric',
+                  version: 1,
+                  fabricJson,
+                },
+              },
+            ],
+          },
+        },
+      );
+    });
+
+    await roundTripThroughCodeTab(page);
+
+    const firstCenter = { x: 395, y: 420 };
+    const secondCenter = { x: 625, y: 445 };
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, firstCenter.x / 1000, firstCenter.y / 1000);
+    await page.keyboard.down('Shift');
+    await clickCostumeCanvas(page, secondCenter.x / 1000, secondCenter.y / 1000);
+    await page.keyboard.up('Shift');
+    await page.keyboard.press('ControlOrMeta+G');
+
+    await expect.poll(async () => {
+      return await page.evaluate(async () => {
+        const { useProjectStore } = await import('/src/store/projectStore.ts');
+        const project = useProjectStore.getState().project;
+        const object = project?.scenes?.[0]?.objects?.[0];
+        const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+        const vectorLayer = costume?.document?.layers?.find((layer) => layer.kind === 'vector');
+        if (!vectorLayer?.vector?.fabricJson) {
+          return 0;
+        }
+        try {
+          const parsed = JSON.parse(vectorLayer.vector.fabricJson) as { objects?: unknown[] };
+          return Array.isArray(parsed.objects) ? parsed.objects.length : 0;
+        } catch {
+          return -1;
+        }
+      });
+    }, { timeout: 10000 }).toBe(1);
+
+    await doubleClickCostumeCanvas(page, firstCenter.x / 1000, firstCenter.y / 1000);
+    await page.keyboard.press('Escape');
+    const fillButton = page.getByRole('button', { name: /^(fill|fill \(mixed\))$/i }).first();
+    await fillButton.click();
+    const hexInput = page.getByTestId('compact-color-picker-hex-input');
+    await expect(hexInput).toBeVisible();
+    await hexInput.fill('#EF4444');
+    await hexInput.press('Enter');
+    await fillButton.click();
+
+    await expect.poll(async () => {
+      const childColors = await readSavedCostumeGroupedChildFillColors(page);
+      return childColors.length === 2 && childColors.every((color) => color === '#EF4444');
+    }, { timeout: 10000 }).toBe(true);
+    await expect.poll(async () => {
+      return await page.evaluate(async () => {
+        const { useProjectStore } = await import('/src/store/projectStore.ts');
+        const project = useProjectStore.getState().project;
+        const object = project?.scenes?.[0]?.objects?.[0];
+        const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+        const vectorLayer = costume?.document?.layers?.find((layer) => layer.kind === 'vector');
+        if (!vectorLayer?.vector?.fabricJson) {
+          return 0;
+        }
+        try {
+          const parsed = JSON.parse(vectorLayer.vector.fabricJson) as { objects?: unknown[] };
+          return Array.isArray(parsed.objects) ? parsed.objects.length : 0;
+        } catch {
+          return -1;
+        }
+      });
+    }, { timeout: 10000 }).toBe(1);
+  });
+
+  test('editing a grouped costume shape path converts it in place instead of duplicating it', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await addVectorLayer(page);
+
+    await page.evaluate(async () => {
+      const { useProjectStore } = await import('/src/store/projectStore.ts');
+      const project = useProjectStore.getState().project;
+      const scene = project?.scenes?.[0];
+      const object = scene?.objects?.[0];
+      const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+      if (!scene || !object || !costume?.id || !costume.assetId) {
+        throw new Error('Missing scene object costume for grouped path edit test.');
+      }
+
+      const fabricJson = JSON.stringify({
+        version: '7.0.0',
+        objects: [
+          {
+            type: 'rect',
+            version: '7.0.0',
+            originX: 'left',
+            originY: 'top',
+            left: 320,
+            top: 340,
+            width: 150,
+            height: 160,
+            fill: 'rgba(34, 197, 94, 0)',
+            stroke: 'rgba(34, 197, 94, 0)',
+            strokeWidth: 0,
+            vectorFillTextureId: 'grain',
+            vectorFillColor: '#22C55E',
+            vectorFillOpacity: 1,
+            vectorStrokeBrushId: 'solid',
+            vectorStrokeColor: '#22C55E',
+            vectorStrokeOpacity: 1,
+          },
+          {
+            type: 'rect',
+            version: '7.0.0',
+            originX: 'left',
+            originY: 'top',
+            left: 540,
+            top: 350,
+            width: 170,
+            height: 190,
+            fill: 'rgba(37, 99, 235, 0)',
+            stroke: 'rgba(37, 99, 235, 0)',
+            strokeWidth: 0,
+            vectorFillTextureId: 'grain',
+            vectorFillColor: '#2563EB',
+            vectorFillOpacity: 1,
+            vectorStrokeBrushId: 'solid',
+            vectorStrokeColor: '#2563EB',
+            vectorStrokeOpacity: 1,
+          },
+        ],
+      });
+
+      useProjectStore.getState().updateCostumeFromEditor(
+        {
+          sceneId: scene.id,
+          objectId: object.id,
+          costumeId: costume.id,
+        },
+        {
+          assetId: costume.assetId,
+          bounds: costume.bounds,
+          assetFrame: costume.assetFrame,
+          document: {
+            version: 1,
+            activeLayerId: 'group-path-edit-vector-layer',
+            layers: [
+              {
+                id: 'group-path-edit-vector-layer',
+                name: 'Vector Layer',
+                kind: 'vector',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                mask: null,
+                effects: [],
+                vector: {
+                  engine: 'fabric',
+                  version: 1,
+                  fabricJson,
+                },
+              },
+            ],
+          },
+        },
+      );
+    });
+
+    await roundTripThroughCodeTab(page);
+
+    const firstCenter = { x: 395, y: 420 };
+    const secondCenter = { x: 625, y: 445 };
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, firstCenter.x / 1000, firstCenter.y / 1000);
+    await page.keyboard.down('Shift');
+    await clickCostumeCanvas(page, secondCenter.x / 1000, secondCenter.y / 1000);
+    await page.keyboard.up('Shift');
+    await page.keyboard.press('ControlOrMeta+G');
+
+    await expect.poll(async () => {
+      return await page.evaluate(async () => {
+        const { useProjectStore } = await import('/src/store/projectStore.ts');
+        const project = useProjectStore.getState().project;
+        const object = project?.scenes?.[0]?.objects?.[0];
+        const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+        const vectorLayer = costume?.document?.layers?.find((layer) => layer.kind === 'vector');
+        if (!vectorLayer?.vector?.fabricJson) {
+          return 0;
+        }
+        try {
+          const parsed = JSON.parse(vectorLayer.vector.fabricJson) as { objects?: unknown[] };
+          return Array.isArray(parsed.objects) ? parsed.objects.length : 0;
+        } catch {
+          return -1;
+        }
+      });
+    }, { timeout: 10000 }).toBe(1);
+
+    await doubleClickCostumeCanvas(page, firstCenter.x / 1000, firstCenter.y / 1000);
+    await doubleClickCostumeCanvas(page, firstCenter.x / 1000, firstCenter.y / 1000);
+
+    await expect.poll(async () => {
+      const structure = await readSavedCostumeGroupedChildTypes(page);
+      return structure.topLevelCount === 1
+        && structure.childTypes.length === 2
+        && structure.childTypes.filter((type) => type === 'path').length === 1
+        && structure.childTypes.filter((type) => type === 'rect').length === 1;
     }, { timeout: 10000 }).toBe(true);
   });
 

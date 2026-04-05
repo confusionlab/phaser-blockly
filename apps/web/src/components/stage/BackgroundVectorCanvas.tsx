@@ -98,6 +98,7 @@ import {
   getVectorGroupEditingPathForTarget,
   isFabricGroupObject,
   resolveVectorGroupEntrySelectionTarget,
+  resolveVectorGroupEditingRootTarget,
   resolveVectorHoverTarget,
   sanitizeVectorGroupEditingPath,
 } from '@/lib/editor/fabricVectorSelection';
@@ -162,6 +163,7 @@ export interface BackgroundVectorCanvasHandle {
   flipSelection: (axis: SelectionFlipAxis) => void;
   rotateSelection: () => void;
   alignSelection: (action: AlignAction) => boolean;
+  exitAllGroupEditing: () => boolean;
   getSelectionBounds: () => WorldBounds | null;
   getDocumentBounds: () => WorldBounds | null;
 }
@@ -2012,6 +2014,64 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     setMirroredPathAnchorDragSessionMoveMode,
   });
 
+  const exitAllGroupEditing = useCallback(() => {
+    if (activeToolRef.current !== 'select' || editorModeRef.current !== 'vector') {
+      return false;
+    }
+
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) {
+      return false;
+    }
+
+    const rootGroup = resolveVectorGroupEditingRootTarget(
+      fabricCanvas,
+      vectorGroupEditingPathRef.current,
+    );
+    if (!rootGroup) {
+      return false;
+    }
+
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    const hasTransientInteraction = (
+      !!penAnchorPlacementSessionRef.current ||
+      !!penDraftRef.current ||
+      !!pointSelectionTransformSessionRef.current ||
+      !!pointSelectionMarqueeSessionRef.current ||
+      !!insertedPathAnchorDragSessionRef.current ||
+      !!mirroredPathAnchorDragSessionRef.current ||
+      !!shapeDraftRef.current ||
+      !!(isTextEditableObject(activeObject) && activeObject?.isEditing)
+    );
+    if (hasTransientInteraction) {
+      return false;
+    }
+
+    hoveredVectorTargetRef.current = null;
+    vectorGroupEditingPathRef.current = [];
+    if (vectorPointEditingTargetRef.current) {
+      restoreAllOriginalControls();
+      setVectorPointEditingTarget(null);
+    }
+    fabricCanvas.discardActiveObject();
+    fabricCanvas.setActiveObject(rootGroup);
+    configureCanvasForTool();
+    syncTextStyleFromSelection();
+    syncVectorStyleFromSelection();
+    syncTextSelectionState();
+    syncSelectionState();
+    fabricCanvas.requestRenderAll();
+    return true;
+  }, [
+    configureCanvasForTool,
+    restoreAllOriginalControls,
+    setVectorPointEditingTarget,
+    syncSelectionState,
+    syncTextSelectionState,
+    syncTextStyleFromSelection,
+    syncVectorStyleFromSelection,
+  ]);
+
   useImperativeHandle(ref, () => ({
     beginShape(tool, startWorld) {
       const fabricCanvas = fabricCanvasRef.current;
@@ -2335,6 +2395,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     alignSelection(action) {
       return alignCanvasSelection(action);
     },
+    exitAllGroupEditing,
     getSelectionBounds() {
       const selectionBounds = getSelectionBoundsSnapshot()?.bounds ?? null;
       return selectionBounds ? sceneBoundsToWorldBounds(selectionBounds) : null;
@@ -2372,6 +2433,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     deleteCanvasSelection,
     duplicateSelection,
     drawPenOverlay,
+    exitAllGroupEditing,
     emitHistoryState,
     finalizePenDraft,
     flipCanvasSelection,

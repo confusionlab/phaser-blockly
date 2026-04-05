@@ -26,7 +26,10 @@ import type {
   CostumeVectorDocument,
 } from '@/types';
 import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
-import { fabricCanvasContainsObject } from '@/lib/editor/fabricVectorSelection';
+import {
+  fabricCanvasContainsObject,
+  resolveVectorGroupEditingRootTarget,
+} from '@/lib/editor/fabricVectorSelection';
 import { CostumeCanvasStage } from './CostumeCanvasStage';
 import { type BitmapBrushKind } from '@/lib/background/brushCore';
 import {
@@ -111,6 +114,7 @@ export interface CostumeCanvasHandle {
   rotateSelection: () => boolean;
   alignSelection: (action: AlignAction) => boolean;
   isTextEditing: () => boolean;
+  exitAllGroupEditing: () => boolean;
   clearSelection: () => boolean;
   clear: () => void;
   undo: () => void;
@@ -1203,6 +1207,52 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return true;
   }, [setVectorPointEditingTarget, syncSelectionState]);
 
+  const exitAllGroupEditing = useCallback(() => {
+    if (editorModeState !== 'vector' || activeTool !== 'select') {
+      return false;
+    }
+
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas || hasActiveInteraction()) {
+      return false;
+    }
+
+    const rootGroup = resolveVectorGroupEditingRootTarget(
+      fabricCanvas,
+      vectorGroupEditingPathRef.current,
+    );
+    if (!rootGroup) {
+      return false;
+    }
+
+    hoveredVectorTargetRef.current = null;
+    vectorGroupEditingPathRef.current = [];
+    if (vectorPointEditingTargetRef.current) {
+      restoreAllOriginalControls();
+      setVectorPointEditingTarget(null);
+    }
+    fabricCanvas.discardActiveObject();
+    fabricCanvas.setActiveObject(rootGroup);
+    configureCanvasForTool();
+    syncTextStyleFromSelection();
+    syncVectorStyleFromSelection();
+    syncTextSelectionState();
+    syncSelectionState();
+    fabricCanvas.requestRenderAll();
+    return true;
+  }, [
+    activeTool,
+    configureCanvasForTool,
+    editorModeState,
+    hasActiveInteraction,
+    restoreAllOriginalControls,
+    setVectorPointEditingTarget,
+    syncSelectionState,
+    syncTextSelectionState,
+    syncTextStyleFromSelection,
+    syncVectorStyleFromSelection,
+  ]);
+
   useEffect(() => {
     if (editorModeState === 'vector' && activeTool === 'pen') {
       return;
@@ -1255,6 +1305,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     deleteSelection,
     duplicateSelection,
     exportCostumeState,
+    exitAllGroupEditing,
     flipSelection,
     flushPendingEdits,
     getComposedCanvasElement,

@@ -923,6 +923,11 @@ export function CostumeEditor() {
             return true;
           }
           if (event.key === 'Escape') {
+            const didExitAllGroupEditing = canvas.exitAllGroupEditing();
+            if (didExitAllGroupEditing) {
+              event.preventDefault();
+              return true;
+            }
             const didClearSelection = canvas.clearSelection();
             if (didClearSelection) {
               event.preventDefault();
