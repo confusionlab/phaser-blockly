@@ -4,6 +4,9 @@ import { getBrushPaintColor, getCompositeOperation, type BitmapBrushKind } from 
 import {
   fabricCanvasContainsObject,
   forEachFabricObjectDeep,
+  isActiveSelectionObject,
+  isVectorSelectionDirectTarget,
+  resolveVectorSelectionDirectTarget,
   sanitizeVectorGroupEditingPath,
   syncVectorGroupInteractivity,
 } from '@/lib/editor/fabricVectorSelection';
@@ -213,10 +216,11 @@ export function useCostumeCanvasToolController({
     restoreAllOriginalControls();
     applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     fabricCanvas.selection = isVectorSelectionMode;
-    vectorGroupEditingPathRef.current = isVectorSelectionMode
+    const vectorSelectionPath = isVectorSelectionMode
       ? sanitizeVectorGroupEditingPath(fabricCanvas, vectorGroupEditingPathRef.current)
       : [];
-    syncVectorGroupInteractivity(fabricCanvas, vectorGroupEditingPathRef.current);
+    vectorGroupEditingPathRef.current = vectorSelectionPath;
+    syncVectorGroupInteractivity(fabricCanvas, vectorSelectionPath);
     const selectionTokens = getResolvedEditorSelectionTokens();
     fabricCanvas.selectionColor = selectionTokens.fill;
     fabricCanvas.selectionBorderColor = selectionTokens.accent;
@@ -231,7 +235,7 @@ export function useCostumeCanvasToolController({
       const selectable = !layerInteractive
         ? false
         : isVectorSelectionMode
-          ? true
+          ? isVectorSelectionDirectTarget(obj, vectorSelectionPath)
           : isVectorPointMode
             ? isVectorPointSelectableObject(obj)
             : isVectorTextMode
@@ -267,7 +271,14 @@ export function useCostumeCanvasToolController({
         }
       }
     });
-    if (hoveredVectorTargetRef && (!isVectorSelectionMode || !fabricCanvasContainsObject(fabricCanvas, hoveredVectorTargetRef.current))) {
+    if (
+      hoveredVectorTargetRef &&
+      (
+        !isVectorSelectionMode ||
+        !fabricCanvasContainsObject(fabricCanvas, hoveredVectorTargetRef.current) ||
+        !isVectorSelectionDirectTarget(hoveredVectorTargetRef.current, vectorSelectionPath)
+      )
+    ) {
       hoveredVectorTargetRef.current = null;
     }
 
@@ -283,6 +294,17 @@ export function useCostumeCanvasToolController({
     ) {
       fabricCanvas.setActiveObject(vectorPointEditingTargetRef.current);
       activeObject = vectorPointEditingTargetRef.current;
+    }
+    if (isVectorSelectionMode && activeObject && !isActiveSelectionObject(activeObject)) {
+      const resolvedActiveObject = resolveVectorSelectionDirectTarget(activeObject, vectorSelectionPath);
+      if (
+        resolvedActiveObject &&
+        resolvedActiveObject !== activeObject &&
+        fabricCanvasContainsObject(fabricCanvas, resolvedActiveObject)
+      ) {
+        fabricCanvas.setActiveObject(resolvedActiveObject as any);
+        activeObject = resolvedActiveObject;
+      }
     }
     if (activeObject) {
       if (isVectorPointMode && !isVectorPointSelectableObject(activeObject)) {

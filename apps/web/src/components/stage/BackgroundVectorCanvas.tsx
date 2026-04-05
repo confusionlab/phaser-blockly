@@ -1704,7 +1704,11 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         activeToolRef.current === 'select' &&
         !vectorPointEditingTargetRef.current
       ) {
-        setHoveredVectorTarget(resolveVectorHoverTarget(fabricCanvas as any, opt.e) as any);
+        setHoveredVectorTarget(resolveVectorHoverTarget(
+          fabricCanvas as any,
+          opt.e,
+          vectorGroupEditingPathRef.current,
+        ) as any);
       }
     };
 

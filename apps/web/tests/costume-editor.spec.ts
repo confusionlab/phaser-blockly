@@ -1483,6 +1483,7 @@ test.describe('Costume editor tools', () => {
 
     await doubleClickCostumeCanvas(page, firstCenter.x / 1000, firstCenter.y / 1000);
     await page.keyboard.press('Escape');
+    await clickCostumeCanvas(page, firstCenter.x / 1000, firstCenter.y / 1000);
     const fillButton = page.getByRole('button', { name: /^(fill|fill \(mixed\))$/i }).first();
     await fillButton.click();
     const hexInput = page.getByTestId('compact-color-picker-hex-input');

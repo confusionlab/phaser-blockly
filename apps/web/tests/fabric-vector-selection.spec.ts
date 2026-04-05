@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test';
 import {
+  isVectorSelectionDirectTarget,
   replaceFabricObjectInParentContainer,
   resolveVectorGroupEditingRootTarget,
   resolveVectorGroupEntrySelectionTarget,
+  resolveVectorSelectionDirectTarget,
 } from '../src/lib/editor/fabricVectorSelection';
 
 type FakeFabricObject = {
@@ -71,6 +73,28 @@ test.describe('fabric vector selection', () => {
     const resolved = resolveVectorGroupEditingRootTarget(fabricCanvas, [rootGroup, subgroup]);
 
     expect(resolved).toBe(rootGroup);
+  });
+
+  test('promotes closed-group descendants back to their group shell for direct selection', () => {
+    const leaf = createObject('rect');
+    const rootGroup = createGroup([leaf]);
+
+    expect(resolveVectorSelectionDirectTarget(leaf, [])).toBe(rootGroup);
+    expect(isVectorSelectionDirectTarget(leaf, [])).toBe(false);
+    expect(isVectorSelectionDirectTarget(rootGroup, [])).toBe(true);
+  });
+
+  test('keeps ancestor siblings targetable while editing a nested group', () => {
+    const editableLeaf = createObject('rect');
+    const editableGroup = createGroup([editableLeaf]);
+    const siblingLeaf = createObject('rect');
+    const siblingGroup = createGroup([siblingLeaf]);
+    const rootGroup = createGroup([editableGroup, siblingGroup]);
+
+    expect(resolveVectorSelectionDirectTarget(editableLeaf, [rootGroup, editableGroup])).toBe(editableLeaf);
+    expect(resolveVectorSelectionDirectTarget(siblingLeaf, [rootGroup, editableGroup])).toBe(siblingGroup);
+    expect(isVectorSelectionDirectTarget(siblingLeaf, [rootGroup, editableGroup])).toBe(false);
+    expect(isVectorSelectionDirectTarget(siblingGroup, [rootGroup, editableGroup])).toBe(true);
   });
 
   test('replaces a grouped child inside its parent container instead of duplicating it at root', () => {

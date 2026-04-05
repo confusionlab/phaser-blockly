@@ -1006,6 +1006,7 @@ test.describe('Background editor', () => {
 
     await vectorCanvas.dblclick({ position: firstCenter });
     await page.keyboard.press('Escape');
+    await vectorCanvas.click({ position: firstCenter });
     await setToolbarHexColor(page, 'Fill', '#EF4444');
 
     await expect.poll(async () => {

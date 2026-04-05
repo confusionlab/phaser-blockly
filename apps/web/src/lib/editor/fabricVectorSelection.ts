@@ -162,6 +162,37 @@ export function resolveVectorGroupEditingRootTarget(
   return rootGroup ?? null;
 }
 
+export function resolveVectorSelectionDirectTarget(
+  target: unknown,
+  editingPath: unknown[],
+): FabricObjectLike | null {
+  if (!target || typeof target !== 'object') {
+    return null;
+  }
+
+  const interactiveParentGroups = new Set(
+    editingPath.filter((candidate) => isFabricGroupObject(candidate)) as FabricObjectLike[],
+  );
+
+  let current: FabricObjectLike | null = target as FabricObjectLike;
+  while (current) {
+    const parentGroup = getFabricObjectDirectParentGroup(current);
+    if (!parentGroup || interactiveParentGroups.has(parentGroup)) {
+      return current;
+    }
+    current = parentGroup;
+  }
+
+  return null;
+}
+
+export function isVectorSelectionDirectTarget(
+  target: unknown,
+  editingPath: unknown[],
+): boolean {
+  return resolveVectorSelectionDirectTarget(target, editingPath) === target;
+}
+
 export function replaceFabricObjectInParentContainer(
   fabricCanvas: FabricObjectContainerLike | null | undefined,
   target: FabricObjectLike,
@@ -291,6 +322,7 @@ export function getVectorGroupingAvailability(activeObject: unknown): VectorGrou
 export function resolveVectorHoverTarget(
   fabricCanvas: (Pick<FabricCanvas, 'findTarget'> & Partial<Pick<FabricCanvas, 'getActiveObject'>>) | null | undefined,
   event: MouseEvent | PointerEvent | WheelEvent,
+  editingPath: unknown[] = [],
 ): unknown {
   if (!fabricCanvas || typeof fabricCanvas.findTarget !== 'function') {
     return null;
@@ -298,5 +330,8 @@ export function resolveVectorHoverTarget(
 
   const targetInfo = (fabricCanvas.findTarget as (event: MouseEvent | PointerEvent | WheelEvent) => { target?: unknown } | undefined)(event);
   const target = targetInfo?.target ?? null;
-  return isActiveSelectionObject(target) ? null : target;
+  if (isActiveSelectionObject(target)) {
+    return null;
+  }
+  return resolveVectorSelectionDirectTarget(target, editingPath);
 }

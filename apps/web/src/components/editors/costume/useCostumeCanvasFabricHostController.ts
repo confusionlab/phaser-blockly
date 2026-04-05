@@ -975,7 +975,11 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         !shapeDraftRef.current &&
         opt.e
       ) {
-        setHoveredVectorTarget(resolveVectorHoverTarget(fabricCanvas as any, opt.e) as any);
+        setHoveredVectorTarget(resolveVectorHoverTarget(
+          fabricCanvas as any,
+          opt.e,
+          vectorGroupEditingPathRef.current,
+        ) as any);
       }
 
       if (!shapeDraftRef.current || !opt.e) return;
