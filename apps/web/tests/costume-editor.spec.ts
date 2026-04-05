@@ -797,6 +797,27 @@ test.describe('Costume editor tools', () => {
     ).toBeGreaterThan(10);
   });
 
+  test('vector stroke width size preview shows textured output for textured brushes', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await addVectorLayer(page);
+
+    await page.getByRole('button', { name: /^pencil$/i }).click();
+    await setVectorStrokeBrush(page, 'Chalk');
+
+    const properties = page.getByTestId('costume-toolbar-properties');
+    const strokeWidthSlider = properties.getByRole('slider').first();
+    await strokeWidthSlider.focus();
+
+    const previewCanvas = page.getByTestId('vector-stroke-width-preview-canvas');
+    await expect(previewCanvas).toBeVisible();
+    await expect.poll(
+      async () => readOverlayOpaqueSampleCount(page, '[data-testid="vector-stroke-width-preview-canvas"]'),
+      { timeout: 10000 },
+    ).toBeGreaterThan(10);
+  });
+
   test('triangle shapes draw where the gesture starts in the costume editor', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');

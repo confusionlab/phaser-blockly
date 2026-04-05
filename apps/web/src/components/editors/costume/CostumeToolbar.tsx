@@ -60,6 +60,7 @@ import {
   VECTOR_FILL_TEXTURE_OPTIONS,
   type VectorFillTextureId,
 } from '@/lib/vector/vectorFillTextureCore';
+import { renderVectorStrokeBrushPreview } from '@/lib/costume/costumeVectorTextureRenderer';
 
 export type EditorMode = CostumeEditorMode;
 export type DrawingTool = 'select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'line' | 'text' | 'collider';
@@ -380,25 +381,94 @@ const BrushSizePreview = memo(({
 BrushSizePreview.displayName = 'BrushSizePreview';
 
 interface StrokeWidthPreviewProps {
+  brushId?: VectorStrokeBrushId;
   thickness: number;
   color: string;
+  opacity?: number;
   previewScale: number;
 }
 
 const StrokeWidthPreview = memo(({
+  brushId,
   thickness,
   color,
+  opacity = 1,
   previewScale,
 }: StrokeWidthPreviewProps) => {
   const displayThickness = Math.max(0, thickness * previewScale);
   const previewHeight = Math.max(72, displayThickness + 28);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    if (!brushId) {
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    const previewWidth = 136;
+    const dpr = window.devicePixelRatio || 1;
+    const backingWidth = Math.max(1, Math.round(previewWidth * dpr));
+    const backingHeight = Math.max(1, Math.round(previewHeight * dpr));
+    if (canvas.width !== backingWidth) {
+      canvas.width = backingWidth;
+    }
+    if (canvas.height !== backingHeight) {
+      canvas.height = backingHeight;
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    let disposed = false;
+    const drawPreview = () => {
+      if (disposed) {
+        return;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      renderVectorStrokeBrushPreview(ctx, {
+        brushId,
+        canvasWidth: previewWidth,
+        canvasHeight: previewHeight,
+        strokeColor: color,
+        strokeOpacity: opacity,
+        strokeWidth: displayThickness,
+        onTextureSourceReady: () => {
+          if (disposed) {
+            return;
+          }
+          window.requestAnimationFrame(drawPreview);
+        },
+      });
+    };
+
+    drawPreview();
+    return () => {
+      disposed = true;
+    };
+  }, [brushId, color, displayThickness, opacity, previewHeight]);
 
   return (
     <div
       className="flex w-[136px] items-center justify-center"
       style={{ minHeight: `${previewHeight}px` }}
     >
-      {displayThickness > 0 && (
+      {brushId ? (
+        <canvas
+          ref={canvasRef}
+          data-testid="vector-stroke-width-preview-canvas"
+          className="block"
+          style={{
+            width: '136px',
+            height: `${previewHeight}px`,
+          }}
+        />
+      ) : displayThickness > 0 ? (
         <div
           className="w-full rounded-full"
           style={{
@@ -406,7 +476,7 @@ const StrokeWidthPreview = memo(({
             backgroundColor: color,
           }}
         />
-      )}
+      ) : null}
     </div>
   );
 });
@@ -1043,8 +1113,10 @@ export const CostumeToolbar = memo(({
                           sliderClassName="w-16"
                           preview={(
                             <StrokeWidthPreview
+                              brushId={vectorStyle.strokeBrushId}
                               thickness={vectorStyle.strokeWidth}
                               color={vectorStyle.strokeColor}
+                              opacity={vectorStyle.strokeOpacity}
                               previewScale={previewScale}
                             />
                           )}
@@ -1297,8 +1369,10 @@ export const CostumeToolbar = memo(({
                           sliderClassName="w-16"
                           preview={(
                             <StrokeWidthPreview
+                              brushId={vectorStyle.strokeBrushId}
                               thickness={vectorStyle.strokeWidth}
                               color={vectorStyle.strokeColor}
+                              opacity={vectorStyle.strokeOpacity}
                               previewScale={previewScale}
                             />
                           )}

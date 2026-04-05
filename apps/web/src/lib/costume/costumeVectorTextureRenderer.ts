@@ -765,6 +765,77 @@ function drawVectorStrokeBrushPath(
   ctx.restore();
 }
 
+export function renderVectorStrokeBrushPreview(
+  ctx: CanvasRenderingContext2D,
+  options: {
+    brushId: VectorStrokeBrushId;
+    canvasHeight: number;
+    canvasWidth: number;
+    clear?: boolean;
+    onTextureSourceReady?: (() => void) | null;
+    strokeColor: string;
+    strokeOpacity?: number;
+    strokeWidth: number;
+  },
+) {
+  const canvasWidth = Math.max(1, options.canvasWidth);
+  const canvasHeight = Math.max(1, options.canvasHeight);
+  if (options.clear !== false) {
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  }
+
+  const strokeWidth = Math.max(0, options.strokeWidth);
+  if (strokeWidth <= 0) {
+    return;
+  }
+
+  const strokeOpacity = clampUnit(options.strokeOpacity ?? 1);
+  const inset = Math.min(
+    Math.max(12, strokeWidth / 2 + 6),
+    Math.max(12, (canvasWidth / 2) - 1),
+  );
+  const startX = inset;
+  const endX = Math.max(startX + 1, canvasWidth - inset);
+  const centerY = canvasHeight / 2;
+
+  if (options.brushId === DEFAULT_VECTOR_STROKE_BRUSH_ID) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = strokeWidth;
+    ctx.strokeStyle = Color(options.strokeColor).alpha(strokeOpacity).rgb().string();
+    ctx.beginPath();
+    ctx.moveTo(startX, centerY);
+    ctx.lineTo(endX, centerY);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  const renderStyle = resolveVectorStrokeBrushRenderStyle(
+    options.brushId,
+    options.strokeColor,
+    strokeWidth,
+    options.onTextureSourceReady,
+  );
+  if (!renderStyle) {
+    return;
+  }
+
+  ctx.save();
+  ctx.globalAlpha = strokeOpacity;
+  drawVectorStrokeBrushPath(
+    ctx,
+    [
+      new Point(startX, centerY),
+      new Point(endX, centerY),
+    ],
+    false,
+    renderStyle,
+  );
+  ctx.restore();
+}
+
 function traceVectorObjectLocalPath(ctx: CanvasRenderingContext2D, obj: any): boolean {
   const objectType = getFabricObjectType(obj);
 
