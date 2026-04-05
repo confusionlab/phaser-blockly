@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import {
   INITIAL_TOOLBAR_SLIDER_COMMIT_BOUNDARY_STATE,
   reduceToolbarSliderCommitBoundaryState,
+  resolveToolbarSliderPreviewScheduledCommit,
   resolveStyleSliderCommitAction,
 } from '../src/components/editors/shared/toolbarSliderCommitBoundary';
 
@@ -65,6 +66,26 @@ test.describe('toolbar slider commit boundary', () => {
     })).toEqual({
       action: 'schedule',
       hasPendingPreviewCommit: false,
+    });
+  });
+
+  test('defers scheduled commits once slider preview becomes active', () => {
+    expect(resolveToolbarSliderPreviewScheduledCommit({
+      hasPendingPreviewCommit: false,
+      hasScheduledCommit: true,
+      isPreviewActive: true,
+    })).toEqual({
+      hasPendingPreviewCommit: true,
+      shouldCancelScheduledCommit: true,
+    });
+
+    expect(resolveToolbarSliderPreviewScheduledCommit({
+      hasPendingPreviewCommit: false,
+      hasScheduledCommit: true,
+      isPreviewActive: false,
+    })).toEqual({
+      hasPendingPreviewCommit: false,
+      shouldCancelScheduledCommit: false,
     });
   });
 });

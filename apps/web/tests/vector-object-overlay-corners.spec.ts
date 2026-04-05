@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { getMappedObjectOverlayCorners } from '../src/components/editors/costume/useCostumeCanvasVectorObjectController';
+import {
+  getMappedObjectOverlayCorners,
+  getVectorObjectOutlinePointsForPathConversion,
+} from '../src/components/editors/costume/useCostumeCanvasVectorObjectController';
 
 test.describe('vector object overlay corners', () => {
   test('maps scene coordinates through the provided overlay mapper', () => {
@@ -50,5 +53,31 @@ test.describe('vector object overlay corners', () => {
         ];
       },
     }, (point) => point)).toBeNull();
+  });
+
+  test('converts rectangles from their geometric width and height instead of stroked coords', () => {
+    const outline = getVectorObjectOutlinePointsForPathConversion({
+      type: 'rect',
+      width: 100,
+      height: 40,
+      getCoords() {
+        return [
+          { x: 999, y: 999 },
+          { x: 999, y: 999 },
+          { x: 999, y: 999 },
+          { x: 999, y: 999 },
+        ];
+      },
+    }, (_target, x, y) => ({ x: x + 200, y: y + 300 }) as any);
+
+    expect(outline).toEqual({
+      points: [
+        { x: 150, y: 280 },
+        { x: 250, y: 280 },
+        { x: 250, y: 320 },
+        { x: 150, y: 320 },
+      ],
+      closed: true,
+    });
   });
 });

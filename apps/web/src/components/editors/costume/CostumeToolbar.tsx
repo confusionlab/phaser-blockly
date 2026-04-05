@@ -284,6 +284,12 @@ const ToolbarPreviewSlider = memo(({
       phase: 'preview',
     });
   }, [onValueChange]);
+  const handlePreviewInteractionStart = useCallback(() => {
+    onValueChange(value, {
+      source: 'slider',
+      phase: 'preview',
+    });
+  }, [onValueChange, value]);
   const handleValueCommit = useCallback((nextValue: number) => {
     onValueChange(nextValue, {
       source: 'slider',
@@ -327,11 +333,13 @@ const ToolbarPreviewSlider = memo(({
           onValueChange={handleValuePreviewChange}
           onValueCommit={handleValueCommit}
           onPointerDownCapture={() => {
+            handlePreviewInteractionStart();
             if (previewEnabled) {
               setIsPreviewVisible(true);
             }
           }}
           onFocusCapture={() => {
+            handlePreviewInteractionStart();
             if (previewEnabled) {
               setIsPreviewVisible(true);
             }
@@ -1093,7 +1101,7 @@ export const CostumeToolbar = memo(({
                       <ToolbarPreviewSlider
                         label="Stroke"
                         value={bitmapShapeStyle.strokeWidth}
-                        onValueChange={(strokeWidth) => onBitmapShapeStyleChange({ strokeWidth })}
+                        onValueChange={(strokeWidth, meta) => onBitmapShapeStyleChange({ strokeWidth }, meta)}
                         min={0}
                         max={50}
                         previewEnabled={sliderPreviewEnabled}
@@ -1152,7 +1160,7 @@ export const CostumeToolbar = memo(({
                         </DropdownMenu>
                         <ToolbarPreviewSlider
                           value={vectorStyle.strokeWidth}
-                          onValueChange={(strokeWidth) => onVectorStyleChange({ strokeWidth })}
+                          onValueChange={(strokeWidth, meta) => onVectorStyleChange({ strokeWidth }, meta)}
                           min={0}
                           max={50}
                           previewEnabled={sliderPreviewEnabled}
@@ -1221,7 +1229,7 @@ export const CostumeToolbar = memo(({
                     <ToolbarPreviewSlider
                       label="Size"
                       value={brushSize}
-                      onValueChange={onBrushSizeChange}
+                      onValueChange={(nextBrushSize, meta) => onBrushSizeChange(nextBrushSize, meta)}
                       min={1}
                       max={50}
                       previewEnabled={sliderPreviewEnabled}
@@ -1267,7 +1275,7 @@ export const CostumeToolbar = memo(({
                       <ToolbarPreviewSlider
                         label="Size"
                         value={textStyle.fontSize}
-                        onValueChange={(fontSize) => onTextStyleChange({ fontSize })}
+                        onValueChange={(fontSize, meta) => onTextStyleChange({ fontSize }, meta)}
                         min={8}
                         max={120}
                         previewEnabled={sliderPreviewEnabled}
@@ -1408,7 +1416,7 @@ export const CostumeToolbar = memo(({
                         </DropdownMenu>
                         <ToolbarPreviewSlider
                           value={vectorStyle.strokeWidth}
-                          onValueChange={(strokeWidth) => onVectorStyleChange({ strokeWidth })}
+                          onValueChange={(strokeWidth, meta) => onVectorStyleChange({ strokeWidth }, meta)}
                           min={0}
                           max={50}
                           previewEnabled={sliderPreviewEnabled}

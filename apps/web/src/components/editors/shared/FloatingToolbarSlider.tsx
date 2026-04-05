@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 const toolbarSliderThumbClassName =
@@ -35,9 +35,8 @@ export function FloatingToolbarSlider({
 }: FloatingToolbarSliderProps) {
   const [isFocused, setIsFocused] = useState(false);
   const latestValueRef = useRef(value);
-  const pointerCommitArmedRef = useRef(false);
-  const skipNextInputPointerCommitRef = useRef(false);
-  const pointerCommitCleanupRef = useRef<(() => void) | null>(null);
+  const sliderRef = useRef<HTMLDivElement | null>(null);
+  const dragPointerIdRef = useRef<number | null>(null);
   const clampedValue = useMemo(() => {
     if (!Number.isFinite(value)) {
       return min;
@@ -52,52 +51,45 @@ export function FloatingToolbarSlider({
     return ((clampedValue - min) / (max - min)) * 100;
   }, [clampedValue, max, min]);
 
-  const clearPointerCommitListeners = useCallback(() => {
-    pointerCommitCleanupRef.current?.();
-    pointerCommitCleanupRef.current = null;
-  }, []);
-
-  const commitValue = useCallback((nextValue?: number, options?: { fromInputPointerUp?: boolean; fromWindowPointerEnd?: boolean }) => {
-    if (options?.fromWindowPointerEnd) {
-      if (!pointerCommitArmedRef.current) {
-        return;
-      }
-      pointerCommitArmedRef.current = false;
-      skipNextInputPointerCommitRef.current = true;
+  const normalizeValue = useCallback((nextValue: number) => {
+    if (!Number.isFinite(nextValue)) {
+      return min;
     }
-    if (options?.fromInputPointerUp && skipNextInputPointerCommitRef.current) {
-      skipNextInputPointerCommitRef.current = false;
-      return;
+    const clamped = Math.max(min, Math.min(max, nextValue));
+    if (!Number.isFinite(step) || step <= 0) {
+      return clamped;
     }
-    clearPointerCommitListeners();
-    onValueCommit?.(typeof nextValue === 'number' ? nextValue : latestValueRef.current);
-  }, [clearPointerCommitListeners, onValueCommit]);
+    const stepped = Math.round((clamped - min) / step) * step + min;
+    return Math.max(min, Math.min(max, stepped));
+  }, [max, min, step]);
 
-  const armPointerCommit = useCallback(() => {
-    if (typeof window === 'undefined') {
-      return;
+  const previewValue = useCallback((nextValue: number) => {
+    const normalized = normalizeValue(nextValue);
+    latestValueRef.current = normalized;
+    onValueChange(normalized);
+  }, [normalizeValue, onValueChange]);
+
+  const commitValue = useCallback((nextValue?: number) => {
+    onValueCommit?.(typeof nextValue === 'number' ? normalizeValue(nextValue) : latestValueRef.current);
+  }, [normalizeValue, onValueCommit]);
+
+  const getValueFromClientX = useCallback((clientX: number) => {
+    const slider = sliderRef.current;
+    if (!slider) {
+      return latestValueRef.current;
     }
-    clearPointerCommitListeners();
-    pointerCommitArmedRef.current = true;
-    skipNextInputPointerCommitRef.current = false;
+    const rect = slider.getBoundingClientRect();
+    if (rect.width <= 0 || max <= min) {
+      return latestValueRef.current;
+    }
+    const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return min + percent * (max - min);
+  }, [max, min]);
 
-    const handlePointerEnd = () => {
-      commitValue(undefined, { fromWindowPointerEnd: true });
-    };
-
-    window.addEventListener('pointerup', handlePointerEnd, true);
-    window.addEventListener('pointercancel', handlePointerEnd, true);
-    pointerCommitCleanupRef.current = () => {
-      window.removeEventListener('pointerup', handlePointerEnd, true);
-      window.removeEventListener('pointercancel', handlePointerEnd, true);
-    };
-  }, [clearPointerCommitListeners, commitValue]);
-
-  useEffect(() => {
-    return () => {
-      clearPointerCommitListeners();
-    };
-  }, [clearPointerCommitListeners]);
+  const adjustValueByStep = useCallback((direction: -1 | 1, multiplier = 1) => {
+    const delta = (!Number.isFinite(step) || step <= 0 ? 1 : step) * multiplier * direction;
+    return normalizeValue(latestValueRef.current + delta);
+  }, [normalizeValue, step]);
 
   return (
     <div
@@ -120,30 +112,97 @@ export function FloatingToolbarSlider({
         )}
         style={{ left: `${progressPercent}%` }}
       />
-      <input
-        type="range"
-        className="absolute inset-0 m-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-        value={clampedValue}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(event) => {
-          const nextValue = Number(event.currentTarget.value);
-          latestValueRef.current = nextValue;
-          onValueChange(nextValue);
-        }}
-        onPointerDownCapture={() => {
-          armPointerCommit();
+      <div
+        ref={sliderRef}
+        role="slider"
+        tabIndex={0}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={clampedValue}
+        aria-orientation="horizontal"
+        className="absolute inset-0 cursor-pointer touch-none outline-none"
+        onPointerDown={(event) => {
+          if (event.button !== 0) {
+            return;
+          }
+          dragPointerIdRef.current = event.pointerId;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          event.currentTarget.focus();
           onPointerDownCapture?.();
+          previewValue(getValueFromClientX(event.clientX));
         }}
-        onPointerUp={(event) => commitValue(Number(event.currentTarget.value), { fromInputPointerUp: true })}
-        onKeyUp={(event) => commitValue(Number(event.currentTarget.value))}
+        onPointerMove={(event) => {
+          if (dragPointerIdRef.current !== event.pointerId) {
+            return;
+          }
+          previewValue(getValueFromClientX(event.clientX));
+        }}
+        onPointerUp={(event) => {
+          if (dragPointerIdRef.current !== event.pointerId) {
+            return;
+          }
+          dragPointerIdRef.current = null;
+          previewValue(getValueFromClientX(event.clientX));
+          event.currentTarget.releasePointerCapture(event.pointerId);
+          commitValue();
+        }}
+        onPointerCancel={(event) => {
+          if (dragPointerIdRef.current !== event.pointerId) {
+            return;
+          }
+          dragPointerIdRef.current = null;
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onKeyDown={(event) => {
+          let nextValue: number | null = null;
+          switch (event.key) {
+            case 'ArrowLeft':
+            case 'ArrowDown':
+              nextValue = adjustValueByStep(-1);
+              break;
+            case 'ArrowRight':
+            case 'ArrowUp':
+              nextValue = adjustValueByStep(1);
+              break;
+            case 'PageDown':
+              nextValue = adjustValueByStep(-1, 10);
+              break;
+            case 'PageUp':
+              nextValue = adjustValueByStep(1, 10);
+              break;
+            case 'Home':
+              nextValue = min;
+              break;
+            case 'End':
+              nextValue = max;
+              break;
+            default:
+              return;
+          }
+          event.preventDefault();
+          previewValue(nextValue);
+        }}
+        onKeyUp={(event) => {
+          if (
+            event.key === 'ArrowLeft' ||
+            event.key === 'ArrowDown' ||
+            event.key === 'ArrowRight' ||
+            event.key === 'ArrowUp' ||
+            event.key === 'PageDown' ||
+            event.key === 'PageUp' ||
+            event.key === 'Home' ||
+            event.key === 'End'
+          ) {
+            commitValue();
+          }
+        }}
         onFocusCapture={() => {
           setIsFocused(true);
           onFocusCapture?.();
         }}
         onBlurCapture={() => {
           setIsFocused(false);
+          dragPointerIdRef.current = null;
           onBlurCapture?.();
         }}
       />

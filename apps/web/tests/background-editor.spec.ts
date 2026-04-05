@@ -391,6 +391,30 @@ async function readSavedBackgroundVectorObjectPaintStyles(page: Page): Promise<A
   });
 }
 
+async function readSavedBackgroundVectorObjectTypes(page: Page): Promise<string[]> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const vectorLayer = project?.scenes[0]?.background?.document?.layers?.find(
+      (layer: { kind: string }) => layer.kind === 'vector',
+    ) as { vector?: { fabricJson?: string } } | undefined;
+    if (!vectorLayer?.vector?.fabricJson) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{ type?: unknown }>;
+      };
+      return Array.isArray(parsed.objects)
+        ? parsed.objects.map((object) => typeof object.type === 'string' ? object.type.toLowerCase() : '')
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 async function readBackgroundEditorCompositePixel(
   page: Page,
   sample: { x: number; y: number },
@@ -513,18 +537,61 @@ async function setVectorStrokeWidth(page: Page, widthPercent: number): Promise<v
   });
 }
 
-async function previewRangeSliderValueWithoutCommit(slider: Locator, value: number): Promise<void> {
-  await slider.evaluate((element, nextValue) => {
-    const input = element as HTMLInputElement;
-    input.value = String(nextValue);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+async function previewRangeSliderValueWithoutCommit(_page: Page, slider: Locator, value: number): Promise<void> {
+  await slider.evaluate((element, targetValue) => {
+    const sliderElement = element as HTMLElement;
+    const min = Number(sliderElement.getAttribute('aria-valuemin') ?? '0');
+    const max = Number(sliderElement.getAttribute('aria-valuemax') ?? '100');
+    const currentValue = Number(sliderElement.getAttribute('aria-valuenow') ?? String(min));
+    const rect = sliderElement.getBoundingClientRect();
+    const clampedTarget = Math.max(min, Math.min(max, Number(targetValue)));
+    const range = max - min;
+    const getClientX = (nextValue: number) => {
+      if (range <= 0) {
+        return rect.left + rect.width / 2;
+      }
+      return rect.left + ((nextValue - min) / range) * rect.width;
+    };
+    const clientY = rect.top + rect.height / 2;
+    sliderElement.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      clientX: getClientX(currentValue),
+      clientY,
+      pointerId: 1,
+    }));
+    sliderElement.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      clientX: getClientX(clampedTarget),
+      clientY,
+      pointerId: 1,
+    }));
   }, value);
+  await slider.page().waitForTimeout(250);
 }
 
 async function commitRangeSliderValue(slider: Locator): Promise<void> {
   await slider.evaluate((element) => {
-    const input = element as HTMLInputElement;
-    input.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    const sliderElement = element as HTMLElement;
+    const min = Number(sliderElement.getAttribute('aria-valuemin') ?? '0');
+    const max = Number(sliderElement.getAttribute('aria-valuemax') ?? '100');
+    const currentValue = Number(sliderElement.getAttribute('aria-valuenow') ?? String(min));
+    const rect = sliderElement.getBoundingClientRect();
+    const range = max - min;
+    const clientX = range <= 0
+      ? rect.left + rect.width / 2
+      : rect.left + ((currentValue - min) / range) * rect.width;
+    sliderElement.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true,
+      button: 0,
+      buttons: 0,
+      clientX,
+      clientY: rect.top + rect.height / 2,
+      pointerId: 1,
+    }));
   });
 }
 
@@ -1767,7 +1834,7 @@ test.describe('Background editor', () => {
     const strokeWidthSlider = page.getByTestId('costume-toolbar-properties').getByRole('slider').first();
     await expect(strokeWidthSlider).toBeVisible();
 
-    await previewRangeSliderValueWithoutCommit(strokeWidthSlider, 24);
+    await previewRangeSliderValueWithoutCommit(page, strokeWidthSlider, 24);
 
     await expect.poll(async () => {
       const styles = await readSavedBackgroundVectorObjectPaintStyles(page);
@@ -1780,6 +1847,24 @@ test.describe('Background editor', () => {
       const styles = await readSavedBackgroundVectorObjectPaintStyles(page);
       return styles[0]?.strokeWidth ?? null;
     }, { timeout: 10000 }).toBe(24);
+  });
+
+  test('background rectangle tool commits plain path objects', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.34, editor.box.y + editor.box.height * 0.32);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.52, { steps: 8 });
+    await page.mouse.up();
+
+    await closeBackgroundEditor(page);
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectTypes(page), { timeout: 10000 }).toEqual(['path']);
   });
 
   test('recovers from malformed saved vector documents and keeps them editable', async ({ page }) => {

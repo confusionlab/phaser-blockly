@@ -131,6 +131,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   commitCurrentPenPlacement: () => void;
   configureCanvasForTool: () => void;
   drawBitmapSelectionOverlay: () => void;
+  ensurePathLikeObjectForVectorTool: (target: any) => any | null;
   enforcePathAnchorHandleType: (path: any, anchorIndex: number, changed: any, dragState?: any) => void;
   flattenBitmapLayer: (commitObject?: any) => Promise<void>;
   getPathAnchorDragState: (path: any, anchorIndex: number) => any;
@@ -1067,6 +1068,10 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
           callbacks.configureCanvasForTool();
         })();
       } else {
+        const committedObject = callbacks.ensurePathLikeObjectForVectorTool(completedShapeDraft.object);
+        if (committedObject) {
+          committedObject.setCoords?.();
+        }
         callbacks.saveHistory();
         callbacks.configureCanvasForTool();
       }

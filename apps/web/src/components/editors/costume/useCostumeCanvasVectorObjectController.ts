@@ -126,6 +126,65 @@ export function getMappedObjectOverlayCorners(
   };
 }
 
+export function getVectorObjectOutlinePointsForPathConversion(
+  obj: any,
+  toCanvasPoint: (obj: any, x: number, y: number) => Point,
+): { points: Point[]; closed: boolean } | null {
+  const type = getFabricObjectType(obj);
+  if (!type) {
+    return null;
+  }
+
+  if (type === 'line' && typeof obj.calcLinePoints === 'function') {
+    const linePoints = obj.calcLinePoints() as { x1: number; y1: number; x2: number; y2: number };
+    return {
+      points: [
+        toCanvasPoint(obj, linePoints.x1, linePoints.y1),
+        toCanvasPoint(obj, linePoints.x2, linePoints.y2),
+      ],
+      closed: false,
+    };
+  }
+
+  if (type === 'rect') {
+    const width = Math.max(0, typeof obj.width === 'number' ? obj.width : 0);
+    const height = Math.max(0, typeof obj.height === 'number' ? obj.height : 0);
+    const halfWidth = width * 0.5;
+    const halfHeight = height * 0.5;
+    return {
+      points: [
+        toCanvasPoint(obj, -halfWidth, -halfHeight),
+        toCanvasPoint(obj, halfWidth, -halfHeight),
+        toCanvasPoint(obj, halfWidth, halfHeight),
+        toCanvasPoint(obj, -halfWidth, halfHeight),
+      ],
+      closed: true,
+    };
+  }
+
+  if ((type === 'polygon' || type === 'polyline') && Array.isArray(obj.points)) {
+    const pathOffset = obj.pathOffset ?? { x: 0, y: 0 };
+    return {
+      points: obj.points.map((point: { x: number; y: number }) => (
+        toCanvasPoint(obj, point.x - pathOffset.x, point.y - pathOffset.y)
+      )),
+      closed: type === 'polygon',
+    };
+  }
+
+  if (typeof obj.getCoords === 'function') {
+    const coords = obj.getCoords() as Array<{ x: number; y: number }> | undefined;
+    if (Array.isArray(coords) && coords.length >= 2) {
+      return {
+        points: coords.map((coord) => new Point(coord.x, coord.y)),
+        closed: coords.length >= 3,
+      };
+    }
+  }
+
+  return null;
+}
+
 export function useCostumeCanvasVectorObjectController({
   activePathAnchorRef,
   activeToolRef,
@@ -184,41 +243,7 @@ export function useCostumeCanvasVectorObjectController({
   }, [mapFabricOverlayPoint]);
 
   const sampleObjectOutlinePoints = useCallback((obj: any): { points: Point[]; closed: boolean } | null => {
-    const type = getFabricObjectType(obj);
-    if (!type) return null;
-
-    if (type === 'line' && typeof obj.calcLinePoints === 'function') {
-      const linePoints = obj.calcLinePoints() as { x1: number; y1: number; x2: number; y2: number };
-      return {
-        points: [
-          toCanvasPoint(obj, linePoints.x1, linePoints.y1),
-          toCanvasPoint(obj, linePoints.x2, linePoints.y2),
-        ],
-        closed: false,
-      };
-    }
-
-    if ((type === 'polygon' || type === 'polyline') && Array.isArray(obj.points)) {
-      const pathOffset = obj.pathOffset ?? { x: 0, y: 0 };
-      return {
-        points: obj.points.map((point: { x: number; y: number }) => (
-          toCanvasPoint(obj, point.x - pathOffset.x, point.y - pathOffset.y)
-        )),
-        closed: type === 'polygon',
-      };
-    }
-
-    if (typeof obj.getCoords === 'function') {
-      const coords = obj.getCoords() as Array<{ x: number; y: number }> | undefined;
-      if (Array.isArray(coords) && coords.length >= 2) {
-        return {
-          points: coords.map((coord) => new Point(coord.x, coord.y)),
-          closed: coords.length >= 3,
-        };
-      }
-    }
-
-    return null;
+    return getVectorObjectOutlinePointsForPathConversion(obj, toCanvasPoint);
   }, [toCanvasPoint]);
 
   const convertObjectToVectorPath = useCallback((obj: any): any | null => {

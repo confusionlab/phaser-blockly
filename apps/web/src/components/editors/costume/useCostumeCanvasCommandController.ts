@@ -3,6 +3,7 @@ import type { Canvas as FabricCanvas } from 'fabric';
 import { applyBitmapBucketFill } from '@/lib/background/bitmapFillCore';
 import {
   resolveStyleSliderCommitAction,
+  useToolbarSliderPreviewCommitDeferral,
   type ToolbarSliderCommitBoundaryState,
 } from '@/components/editors/shared/toolbarSliderCommitBoundary';
 import { useFabricVectorClipboardCommands } from '@/components/editors/shared/useFabricVectorClipboardCommands';
@@ -180,6 +181,12 @@ export function useCostumeCanvasCommandController({
   const pendingSliderStyleCommitRef = useRef(false);
   const skipNextSelectionSyncedVectorStyleApplyRef = useRef(false);
   const previousSliderCommitRevisionRef = useRef(sliderCommitBoundaryState.commitRevision);
+
+  useToolbarSliderPreviewCommitDeferral(
+    sliderCommitBoundaryState.isPreviewActive,
+    pendingVectorStyleHistorySaveRef,
+    pendingSliderStyleCommitRef,
+  );
 
   const scheduleVectorStyleHistorySave = useCallback(() => {
     if (typeof window === 'undefined') {

@@ -379,7 +379,16 @@ export function CostumeEditor() {
   const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
   const [hasSelectedVectorPoints, setHasSelectedVectorPoints] = useState(false);
   const [hasTextSelection, setHasTextSelection] = useState(false);
-  const { registerSliderChangeMeta, sliderCommitBoundaryState } = useToolbarSliderCommitBoundary();
+  const {
+    registerSliderChangeMeta,
+    sliderCommitBoundaryState,
+    sliderCommitBoundaryStateRef,
+  } = useToolbarSliderCommitBoundary();
+  const pendingSliderHistoryStateRef = useRef<{
+    liveCanvasState: ActiveLayerCanvasState;
+    sessionKey: string;
+  } | null>(null);
+  const previousSliderCommitRevisionRef = useRef(sliderCommitBoundaryState.commitRevision);
 
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -668,6 +677,13 @@ export function CostumeEditor() {
       flattenedPreviewRefreshTimeoutRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (!sliderCommitBoundaryState.isPreviewActive) {
+      return;
+    }
+    cancelFlattenedPreviewRefresh();
+  }, [cancelFlattenedPreviewRefresh, sliderCommitBoundaryState.isPreviewActive]);
 
   const prepareCostumeStateForPlay = useCallback(async () => {
     const session = currentSessionRef.current;
@@ -1184,6 +1200,13 @@ export function CostumeEditor() {
     if (!loadedSession || !isCanvasReadyForSession(loadedSession)) {
       return;
     }
+    if (sliderCommitBoundaryStateRef.current.isPreviewActive) {
+      pendingSliderHistoryStateRef.current = {
+        liveCanvasState,
+        sessionKey: loadedSession.key,
+      };
+      return;
+    }
 
     const persistedState = resolvePersistedStateWithCanvasState(
       liveCanvasState,
@@ -1209,6 +1232,55 @@ export function CostumeEditor() {
     getWorkingPersistedState,
     isCanvasReadyForSession,
     resolvePersistedStateWithCanvasState,
+    sliderCommitBoundaryStateRef,
+  ]);
+
+  useEffect(() => {
+    const commitRequested = previousSliderCommitRevisionRef.current !== sliderCommitBoundaryState.commitRevision;
+    previousSliderCommitRevisionRef.current = sliderCommitBoundaryState.commitRevision;
+    if (!commitRequested) {
+      return;
+    }
+
+    const pending = pendingSliderHistoryStateRef.current;
+    if (!pending) {
+      return;
+    }
+
+    const loadedSession = loadedSessionRef.current;
+    if (!loadedSession || loadedSession.key !== pending.sessionKey || !isCanvasReadyForSession(loadedSession)) {
+      pendingSliderHistoryStateRef.current = null;
+      return;
+    }
+
+    const persistedState = resolvePersistedStateWithCanvasState(
+      pending.liveCanvasState,
+      getWorkingPersistedState(),
+    );
+    pendingSliderHistoryStateRef.current = null;
+    if (!persistedState) {
+      return;
+    }
+
+    const didPersist = applyDocumentHistoryState(loadedSession, persistedState, {
+      recordHistory: true,
+      history: {
+        source: 'costume:document-change',
+        allowMerge: false,
+      },
+    });
+    if (!didPersist) {
+      return;
+    }
+
+    canvasRef.current?.markPersisted(loadedSession.key, pending.liveCanvasState);
+    scheduleFlattenedPreviewRefreshRef.current(loadedSession, persistedState.document);
+  }, [
+    applyDocumentHistoryState,
+    getWorkingPersistedState,
+    isCanvasReadyForSession,
+    resolvePersistedStateWithCanvasState,
+    sliderCommitBoundaryState.commitRevision,
   ]);
 
   const handleAddCostume = useCallback((costume: Costume) => {
@@ -1594,24 +1666,14 @@ export function CostumeEditor() {
 
   const handleVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>, meta?: ToolbarSliderChangeMeta) => {
     registerSliderChangeMeta(meta);
+    const next = { ...vectorStyleRef.current, ...updates };
+    if (areVectorToolStylesEqual(vectorStyleRef.current, next)) {
+      return;
+    }
     setLatestVectorStyleUpdates(updates);
     setVectorStyleChangeRevision((revision) => revision + 1);
     setVectorStyleMixedState((prev) => clearVectorToolStyleMixedState(prev, updates));
-    setVectorStyle((prev) => {
-      const next = { ...prev, ...updates };
-      if (
-        next.fillColor === prev.fillColor &&
-        next.fillTextureId === prev.fillTextureId &&
-        next.fillOpacity === prev.fillOpacity &&
-        next.strokeColor === prev.strokeColor &&
-        next.strokeOpacity === prev.strokeOpacity &&
-        next.strokeWidth === prev.strokeWidth &&
-        next.strokeBrushId === prev.strokeBrushId
-      ) {
-        return prev;
-      }
-      return next;
-    });
+    setVectorStyle(next);
   }, [registerSliderChangeMeta]);
 
   const handleVectorStyleSync = useCallback((snapshot: VectorToolStyleSelectionSnapshot) => {

@@ -82,18 +82,61 @@ async function setBrushColorOpacity(page: Page, opacityPercent: number): Promise
   await colorButton.click();
 }
 
-async function previewRangeSliderValueWithoutCommit(slider: Locator, value: number): Promise<void> {
-  await slider.evaluate((element, nextValue) => {
-    const input = element as HTMLInputElement;
-    input.value = String(nextValue);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+async function previewRangeSliderValueWithoutCommit(_page: Page, slider: Locator, value: number): Promise<void> {
+  await slider.evaluate((element, targetValue) => {
+    const sliderElement = element as HTMLElement;
+    const min = Number(sliderElement.getAttribute('aria-valuemin') ?? '0');
+    const max = Number(sliderElement.getAttribute('aria-valuemax') ?? '100');
+    const currentValue = Number(sliderElement.getAttribute('aria-valuenow') ?? String(min));
+    const rect = sliderElement.getBoundingClientRect();
+    const clampedTarget = Math.max(min, Math.min(max, Number(targetValue)));
+    const range = max - min;
+    const getClientX = (nextValue: number) => {
+      if (range <= 0) {
+        return rect.left + rect.width / 2;
+      }
+      return rect.left + ((nextValue - min) / range) * rect.width;
+    };
+    const clientY = rect.top + rect.height / 2;
+    sliderElement.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      clientX: getClientX(currentValue),
+      clientY,
+      pointerId: 1,
+    }));
+    sliderElement.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      clientX: getClientX(clampedTarget),
+      clientY,
+      pointerId: 1,
+    }));
   }, value);
+  await slider.page().waitForTimeout(250);
 }
 
 async function commitRangeSliderValue(slider: Locator): Promise<void> {
   await slider.evaluate((element) => {
-    const input = element as HTMLInputElement;
-    input.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    const sliderElement = element as HTMLElement;
+    const min = Number(sliderElement.getAttribute('aria-valuemin') ?? '0');
+    const max = Number(sliderElement.getAttribute('aria-valuemax') ?? '100');
+    const currentValue = Number(sliderElement.getAttribute('aria-valuenow') ?? String(min));
+    const rect = sliderElement.getBoundingClientRect();
+    const range = max - min;
+    const clientX = range <= 0
+      ? rect.left + rect.width / 2
+      : rect.left + ((currentValue - min) / range) * rect.width;
+    sliderElement.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true,
+      button: 0,
+      buttons: 0,
+      clientX,
+      clientY: rect.top + rect.height / 2,
+      pointerId: 1,
+    }));
   });
 }
 
@@ -726,6 +769,31 @@ async function readCurrentCostumeTextFontSize(page: Page): Promise<number | null
   });
 }
 
+async function readCurrentCostumeVectorObjectTypes(page: Page): Promise<string[]> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const scene = project?.scenes?.[0];
+    const object = scene?.objects?.[0];
+    const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+    const vectorLayer = costume?.document?.layers?.find((layer) => layer.kind === 'vector');
+    if (!vectorLayer?.vector?.fabricJson) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{ type?: unknown }>;
+      };
+      return Array.isArray(parsed.objects)
+        ? parsed.objects.map((entry) => typeof entry.type === 'string' ? entry.type.toLowerCase() : '')
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 test.describe('Costume editor tools', () => {
   test('vector layers render shapes and reload cleanly after a tab round-trip', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
@@ -768,13 +836,25 @@ test.describe('Costume editor tools', () => {
     const fontSizeSlider = page.getByTestId('costume-toolbar-properties').getByRole('slider').first();
     await expect(fontSizeSlider).toBeVisible();
 
-    await previewRangeSliderValueWithoutCommit(fontSizeSlider, 72);
+    await previewRangeSliderValueWithoutCommit(page, fontSizeSlider, 72);
 
     await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).toBe(initialFontSize ?? null);
 
     await commitRangeSliderValue(fontSizeSlider);
 
     await expect.poll(async () => readCurrentCostumeTextFontSize(page), { timeout: 10000 }).toBe(72);
+  });
+
+  test('costume rectangle tool commits plain path objects', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.26, 0.24, 0.52, 0.46);
+
+    await expect.poll(async () => readCurrentCostumeVectorObjectTypes(page), { timeout: 10000 }).toEqual(['path']);
   });
 
   test('vector copy and paste works across different objects and costumes', async ({ page }) => {

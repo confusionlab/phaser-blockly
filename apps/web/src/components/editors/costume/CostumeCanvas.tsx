@@ -968,6 +968,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     bitmapSelectionCtxRef,
     bitmapShapeStyleRef,
     brushColorRef,
+    ensurePathLikeObjectForVectorTool,
     clearSelectedPathAnchors,
     commitBitmapSelection,
     commitCurrentPenPlacement,
@@ -1173,6 +1174,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (editorModeRef.current === 'bitmap') {
         await flattenBitmapLayer(completedShapeDraft.object);
       } else {
+        const committedObject = ensurePathLikeObjectForVectorTool(completedShapeDraft.object);
+        if (committedObject) {
+          committedObject.setCoords?.();
+        }
         saveHistory();
       }
       configureCanvasForTool();

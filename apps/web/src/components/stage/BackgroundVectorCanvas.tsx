@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
 } from 'react';
 import {
   Canvas as FabricCanvas,
@@ -64,6 +65,7 @@ import {
 import { useFabricVectorClipboardCommands } from '@/components/editors/shared/useFabricVectorClipboardCommands';
 import {
   resolveStyleSliderCommitAction,
+  useToolbarSliderPreviewCommitDeferral,
   type ToolbarSliderCommitBoundaryState,
 } from '@/components/editors/shared/toolbarSliderCommitBoundary';
 import {
@@ -187,6 +189,7 @@ interface BackgroundVectorCanvasProps {
   vectorStyleChangeRevision: number;
   latestVectorStyleUpdates: Partial<VectorToolStyle>;
   sliderCommitBoundaryState: ToolbarSliderCommitBoundaryState;
+  sliderCommitBoundaryStateRef: MutableRefObject<ToolbarSliderCommitBoundaryState>;
   interactive: boolean;
   onDirty: () => void;
   onHistoryStateChange: (state: { canUndo: boolean; canRedo: boolean; isDirty: boolean }) => void;
@@ -348,6 +351,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   vectorStyleChangeRevision,
   latestVectorStyleUpdates,
   sliderCommitBoundaryState,
+  sliderCommitBoundaryStateRef,
   interactive,
   onDirty,
   onHistoryStateChange,
@@ -447,6 +451,12 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const previousVectorStyleChangeRevisionRef = useRef(vectorStyleChangeRevision);
   const previousSliderCommitRevisionRef = useRef(sliderCommitBoundaryState.commitRevision);
 
+  useToolbarSliderPreviewCommitDeferral(
+    sliderCommitBoundaryState.isPreviewActive,
+    pendingVectorStyleHistorySaveRef,
+    pendingSliderStyleCommitRef,
+  );
+
   activeToolRef.current = activeTool;
   brushColorRef.current = brushColor;
   textStyleRef.current = textStyle;
@@ -506,6 +516,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
   const recordHistorySnapshot = useMemo(() => () => {
     if (suppressDirtyRef.current) {
+      return false;
+    }
+    if (sliderCommitBoundaryStateRef.current.isPreviewActive) {
+      pendingSliderStyleCommitRef.current = true;
       return false;
     }
 
@@ -2214,7 +2228,9 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         return false;
       }
       ignoreCanvasHistoryEventsTemporarily();
-      skipNextObjectModifiedTargetRef.current = draft.object;
+      const committedObject = ensurePathLikeObjectForVectorTool(draft.object) ?? draft.object;
+      skipNextObjectModifiedTargetRef.current = committedObject;
+      committedObject.setCoords?.();
       draft.object.setCoords?.();
       shapeDraftRef.current = null;
       recordHistorySnapshot();
@@ -2320,6 +2336,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         const draft = shapeDraftRef.current;
         shapeDraftRef.current = null;
         if (draft) {
+          const committedObject = ensurePathLikeObjectForVectorTool(draft.object);
+          if (committedObject) {
+            committedObject.setCoords?.();
+          }
           recordHistorySnapshot();
           configureCanvasForTool();
         }

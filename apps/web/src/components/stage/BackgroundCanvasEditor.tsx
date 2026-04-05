@@ -744,7 +744,13 @@ export function BackgroundCanvasEditor() {
   const [vectorStyleMixedState, setVectorStyleMixedState] = useState<VectorToolStyleMixedState>({});
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(true);
-  const { registerSliderChangeMeta, sliderCommitBoundaryState } = useToolbarSliderCommitBoundary();
+  const {
+    registerSliderChangeMeta,
+    sliderCommitBoundaryState,
+    sliderCommitBoundaryStateRef,
+  } = useToolbarSliderCommitBoundary();
+  const pendingSliderVectorDocumentCommitRef = useRef(false);
+  const previousSliderCommitRevisionRef = useRef(sliderCommitBoundaryState.commitRevision);
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
   const vectorStyleRef = useRef(vectorStyle);
@@ -1333,15 +1339,29 @@ export function BackgroundCanvasEditor() {
   }, []);
 
   const handleVectorDocumentCommit = useCallback(() => {
+    if (sliderCommitBoundaryStateRef.current.isPreviewActive) {
+      pendingSliderVectorDocumentCommitRef.current = true;
+      return;
+    }
     const nextDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
     if (!nextDocument) {
       return;
     }
 
     commitBackgroundDocumentState(nextDocument, backgroundColorRef.current, 'scene:background-vector');
+    pendingSliderVectorDocumentCommitRef.current = false;
     vectorCanvasRef.current?.resetHistoryToCurrent();
     syncUndoRedoAvailability();
-  }, [commitBackgroundDocumentState, persistActiveLayerIntoDocument, syncUndoRedoAvailability]);
+  }, [commitBackgroundDocumentState, persistActiveLayerIntoDocument, sliderCommitBoundaryStateRef, syncUndoRedoAvailability]);
+
+  useEffect(() => {
+    const commitRequested = previousSliderCommitRevisionRef.current !== sliderCommitBoundaryState.commitRevision;
+    previousSliderCommitRevisionRef.current = sliderCommitBoundaryState.commitRevision;
+    if (!commitRequested || !pendingSliderVectorDocumentCommitRef.current) {
+      return;
+    }
+    handleVectorDocumentCommit();
+  }, [handleVectorDocumentCommit, sliderCommitBoundaryState.commitRevision]);
 
   const applyNextDocumentState = useCallback(async (
     nextDocument: BackgroundDocument,
@@ -3807,28 +3827,32 @@ export function BackgroundCanvasEditor() {
   }, [editorMode]);
   const handleToolbarTextStyleChange = useCallback((updates: Partial<TextToolStyle>, meta?: ToolbarSliderChangeMeta) => {
     registerSliderChangeMeta(meta);
-    setTextStyle((previous) => ({ ...previous, ...updates }));
-  }, [registerSliderChangeMeta]);
-  const handleToolbarVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>, meta?: ToolbarSliderChangeMeta) => {
-    registerSliderChangeMeta(meta);
-    setLatestVectorStyleUpdates(updates);
-    setVectorStyleChangeRevision((revision) => revision + 1);
-    setVectorStyleMixedState((prev) => clearVectorToolStyleMixedState(prev, updates));
-    setVectorStyle((prev) => {
-      const next = { ...prev, ...updates };
+    setTextStyle((previous) => {
+      const next = { ...previous, ...updates };
       if (
-        next.fillColor === prev.fillColor &&
-        next.fillTextureId === prev.fillTextureId &&
-        next.fillOpacity === prev.fillOpacity &&
-        next.strokeColor === prev.strokeColor &&
-        next.strokeOpacity === prev.strokeOpacity &&
-        next.strokeWidth === prev.strokeWidth &&
-        next.strokeBrushId === prev.strokeBrushId
+        next.fontFamily === previous.fontFamily &&
+        next.fontSize === previous.fontSize &&
+        next.fontWeight === previous.fontWeight &&
+        next.fontStyle === previous.fontStyle &&
+        next.underline === previous.underline &&
+        next.textAlign === previous.textAlign &&
+        next.opacity === previous.opacity
       ) {
-        return prev;
+        return previous;
       }
       return next;
     });
+  }, [registerSliderChangeMeta]);
+  const handleToolbarVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>, meta?: ToolbarSliderChangeMeta) => {
+    registerSliderChangeMeta(meta);
+    const next = { ...vectorStyleRef.current, ...updates };
+    if (areVectorToolStylesEqual(vectorStyleRef.current, next)) {
+      return;
+    }
+    setLatestVectorStyleUpdates(updates);
+    setVectorStyleChangeRevision((revision) => revision + 1);
+    setVectorStyleMixedState((prev) => clearVectorToolStyleMixedState(prev, updates));
+    setVectorStyle(next);
   }, [registerSliderChangeMeta]);
   const handleVectorSelectionChange = useCallback((hasSelection: boolean) => {
     setHasVectorSelection((previous) => (previous === hasSelection ? previous : hasSelection));
@@ -4068,6 +4092,7 @@ export function BackgroundCanvasEditor() {
               vectorStyleChangeRevision={vectorStyleChangeRevision}
               latestVectorStyleUpdates={latestVectorStyleUpdates}
               sliderCommitBoundaryState={sliderCommitBoundaryState}
+              sliderCommitBoundaryStateRef={sliderCommitBoundaryStateRef}
               interactive={editorMode === 'vector'}
               onDirty={handleVectorDocumentCommit}
               onHistoryStateChange={handleVectorHistoryStateChange}
