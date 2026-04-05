@@ -34,6 +34,8 @@ type FakeGroupObject = {
   setCoords: () => void;
   setCoordsCalls: number;
   type: string;
+  triggerLayout: () => void;
+  triggerLayoutCalls: number;
 };
 
 function createFakeGroupObject(type: 'group' | 'activeSelection', children: FakeVectorObject[], offset?: FakeCenterPoint): FakeGroupObject {
@@ -45,6 +47,10 @@ function createFakeGroupObject(type: 'group' | 'activeSelection', children: Fake
     },
     setCoordsCalls: 0,
     type,
+    triggerLayout() {
+      this.triggerLayoutCalls += 1;
+    },
+    triggerLayoutCalls: 0,
   };
 
   children.forEach((child) => {
@@ -145,6 +151,7 @@ test.describe('vector style selection runtime', () => {
     expect(target.positionByOriginCalls).toEqual([]);
     expect(target.setCoordsCalls).toBe(1);
     expect(target.group.setCoordsCalls).toBe(1);
+    expect(target.group.triggerLayoutCalls).toBe(1);
   });
 
   test('preserves multi-selection object scene center when stroke width changes', () => {
@@ -168,6 +175,7 @@ test.describe('vector style selection runtime', () => {
     expect(target.positionByOriginCalls).toEqual([]);
     expect(target.setCoordsCalls).toBe(1);
     expect(activeSelection.setCoordsCalls).toBe(1);
+    expect(activeSelection.triggerLayoutCalls).toBe(1);
   });
 
   test('recalculates ancestor group bounds when grouped stroke width changes', () => {
@@ -182,5 +190,6 @@ test.describe('vector style selection runtime', () => {
     expect(target.strokeWidth).toBe(24);
     expect(target.setCoordsCalls).toBe(1);
     expect(parentGroup.setCoordsCalls).toBe(1);
+    expect(parentGroup.triggerLayoutCalls).toBe(1);
   });
 });

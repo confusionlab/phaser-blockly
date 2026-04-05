@@ -515,6 +515,10 @@ type CoordRefreshableObject = {
   setCoords?: () => void;
 };
 
+type LayoutRefreshableObject = {
+  triggerLayout?: () => void;
+};
+
 export interface ApplyVectorStyleUpdatesToSelectionOptions {
   fillStyle?: VectorFillStyleUpdates;
   normalizeRendering?: boolean;
@@ -803,6 +807,36 @@ function collectUniqueCoordRefreshTargets(
   return refreshTargets;
 }
 
+function collectUniqueLayoutRefreshTargets(
+  selectionRoot: unknown,
+  targets: CenterPreservingVectorObject[],
+): LayoutRefreshableObject[] {
+  const refreshTargets: LayoutRefreshableObject[] = [];
+  const seen = new Set<unknown>();
+
+  const addRefreshTarget = (candidate: unknown) => {
+    if (!candidate || typeof candidate !== 'object' || seen.has(candidate)) {
+      return;
+    }
+    if (!isActiveSelectionObject(candidate) && !isFabricGroupObject(candidate)) {
+      return;
+    }
+    seen.add(candidate);
+    if (typeof (candidate as LayoutRefreshableObject).triggerLayout === 'function') {
+      refreshTargets.push(candidate as LayoutRefreshableObject);
+    }
+  };
+
+  addRefreshTarget(selectionRoot);
+  for (const target of targets) {
+    for (const ancestorGroup of [...getFabricAncestorGroups(target)].reverse()) {
+      addRefreshTarget(ancestorGroup);
+    }
+  }
+
+  return refreshTargets;
+}
+
 export function applyVectorStyleUpdatesToSelection(
   obj: unknown,
   {
@@ -813,6 +847,7 @@ export function applyVectorStyleUpdatesToSelection(
 ): boolean {
   const targets = getVectorStyleTargets(obj) as CenterPreservingVectorObject[];
   const coordRefreshTargets = collectUniqueCoordRefreshTargets(obj, targets);
+  const layoutRefreshTargets = collectUniqueLayoutRefreshTargets(obj, targets);
   let didChange = false;
 
   for (const target of targets) {
@@ -844,6 +879,9 @@ export function applyVectorStyleUpdatesToSelection(
   }
 
   if (didChange) {
+    layoutRefreshTargets.forEach((target) => {
+      target.triggerLayout?.();
+    });
     coordRefreshTargets.forEach((target) => {
       target.setCoords?.();
     });
