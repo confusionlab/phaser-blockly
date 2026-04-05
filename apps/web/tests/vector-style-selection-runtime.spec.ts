@@ -6,7 +6,7 @@ type FakeCenterPoint = { x: number; y: number };
 type FakeVectorObject = {
   center: FakeCenterPoint;
   fill: string;
-  group?: { offset: FakeCenterPoint };
+  group?: FakeGroupObject;
   noScaleCache: boolean;
   positionByOriginCalls: FakeCenterPoint[];
   set: (props: Record<string, unknown>) => void;
@@ -27,6 +27,32 @@ type FakeVectorObject = {
   setPositionByOrigin: (point: FakeCenterPoint) => void;
   setXY?: (point: FakeCenterPoint) => void;
 };
+
+type FakeGroupObject = {
+  getObjects: () => FakeVectorObject[];
+  offset?: FakeCenterPoint;
+  setCoords: () => void;
+  setCoordsCalls: number;
+  type: string;
+};
+
+function createFakeGroupObject(type: 'group' | 'activeSelection', children: FakeVectorObject[], offset?: FakeCenterPoint): FakeGroupObject {
+  const group: FakeGroupObject = {
+    getObjects: () => children,
+    offset,
+    setCoords() {
+      this.setCoordsCalls += 1;
+    },
+    setCoordsCalls: 0,
+    type,
+  };
+
+  children.forEach((child) => {
+    child.group = group;
+  });
+
+  return group;
+}
 
 function createFakeVectorObject(): FakeVectorObject {
   return {
@@ -89,10 +115,10 @@ test.describe('vector style selection runtime', () => {
 
   test('preserves grouped object scene center when stroke width changes', () => {
     const target = createFakeVectorObject();
-    target.group = { offset: { x: 300, y: 180 } };
+    target.group = createFakeGroupObject('group', [target], { offset: { x: 300, y: 180 } });
     target.center = {
-      x: target.group.offset.x + 120,
-      y: target.group.offset.y + 90,
+      x: target.group.offset!.x + 120,
+      y: target.group.offset!.y + 90,
     };
     target.setXY = (point) => {
       target.setXYCalls.push({ ...point });
@@ -118,5 +144,43 @@ test.describe('vector style selection runtime', () => {
     expect(target.setXYCalls).toEqual([initialCenter]);
     expect(target.positionByOriginCalls).toEqual([]);
     expect(target.setCoordsCalls).toBe(1);
+    expect(target.group.setCoordsCalls).toBe(1);
+  });
+
+  test('preserves multi-selection object scene center when stroke width changes', () => {
+    const target = createFakeVectorObject();
+    const activeSelection = createFakeGroupObject('activeSelection', [target]);
+    target.setXY = (point) => {
+      target.setXYCalls.push({ ...point });
+      target.center = { ...point };
+    };
+
+    const initialCenter = target.getCenterPoint();
+
+    const didChange = applyVectorStyleUpdatesToSelection(activeSelection, {
+      strokeStyle: { strokeWidth: 24 },
+    });
+
+    expect(didChange).toBe(true);
+    expect(target.strokeWidth).toBe(24);
+    expect(target.center).toEqual(initialCenter);
+    expect(target.setXYCalls).toEqual([initialCenter]);
+    expect(target.positionByOriginCalls).toEqual([]);
+    expect(target.setCoordsCalls).toBe(1);
+    expect(activeSelection.setCoordsCalls).toBe(1);
+  });
+
+  test('recalculates ancestor group bounds when grouped stroke width changes', () => {
+    const target = createFakeVectorObject();
+    const parentGroup = createFakeGroupObject('group', [target], { x: 300, y: 180 });
+
+    const didChange = applyVectorStyleUpdatesToSelection(parentGroup, {
+      strokeStyle: { strokeWidth: 24 },
+    });
+
+    expect(didChange).toBe(true);
+    expect(target.strokeWidth).toBe(24);
+    expect(target.setCoordsCalls).toBe(1);
+    expect(parentGroup.setCoordsCalls).toBe(1);
   });
 });

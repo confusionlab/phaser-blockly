@@ -9,6 +9,7 @@ import {
   type VectorStrokeBrushId,
 } from '@/lib/vector/vectorStrokeBrushCore';
 import {
+  getFabricAncestorGroups,
   getFabricChildObjects,
   getFabricObjectType as getSharedFabricObjectType,
   isActiveSelectionObject as isSharedActiveSelectionObject,
@@ -510,6 +511,10 @@ type CenterPreservingVectorObject = VectorBrushStylableObject & {
   setXY?: (point: unknown, originX?: 'center', originY?: 'center') => void;
 };
 
+type CoordRefreshableObject = {
+  setCoords?: () => void;
+};
+
 export interface ApplyVectorStyleUpdatesToSelectionOptions {
   fillStyle?: VectorFillStyleUpdates;
   normalizeRendering?: boolean;
@@ -770,6 +775,34 @@ function getRequestedStrokeWidth(
   return Math.max(0, typeof target.strokeWidth === 'number' && Number.isFinite(target.strokeWidth) ? target.strokeWidth : 0);
 }
 
+function collectUniqueCoordRefreshTargets(
+  selectionRoot: unknown,
+  targets: CenterPreservingVectorObject[],
+): CoordRefreshableObject[] {
+  const refreshTargets: CoordRefreshableObject[] = [];
+  const seen = new Set<unknown>();
+
+  const addRefreshTarget = (candidate: unknown) => {
+    if (!candidate || typeof candidate !== 'object' || seen.has(candidate)) {
+      return;
+    }
+    seen.add(candidate);
+    if (typeof (candidate as CoordRefreshableObject).setCoords === 'function') {
+      refreshTargets.push(candidate as CoordRefreshableObject);
+    }
+  };
+
+  addRefreshTarget(selectionRoot);
+  for (const target of targets) {
+    addRefreshTarget(target);
+    for (const ancestorGroup of getFabricAncestorGroups(target)) {
+      addRefreshTarget(ancestorGroup);
+    }
+  }
+
+  return refreshTargets;
+}
+
 export function applyVectorStyleUpdatesToSelection(
   obj: unknown,
   {
@@ -779,19 +812,14 @@ export function applyVectorStyleUpdatesToSelection(
   }: ApplyVectorStyleUpdatesToSelectionOptions,
 ): boolean {
   const targets = getVectorStyleTargets(obj) as CenterPreservingVectorObject[];
+  const coordRefreshTargets = collectUniqueCoordRefreshTargets(obj, targets);
   let didChange = false;
 
   for (const target of targets) {
     const requestedStrokeWidth = getRequestedStrokeWidth(target, strokeStyle);
-    const groupedByActiveSelection =
-      !!target.group &&
-      isActiveSelectionObject(target.group);
     const shouldPreserveCenter =
-      !groupedByActiveSelection &&
-      (
-        target.strokeUniform !== true ||
-        (requestedStrokeWidth !== null && target.strokeWidth !== requestedStrokeWidth)
-      );
+      target.strokeUniform !== true ||
+      (requestedStrokeWidth !== null && target.strokeWidth !== requestedStrokeWidth);
     const centerPoint = shouldPreserveCenter && typeof target.getCenterPoint === 'function'
       ? target.getCenterPoint()
       : null;
@@ -811,9 +839,14 @@ export function applyVectorStyleUpdatesToSelection(
       }
     }
     if (fillChanged || strokeChanged || renderingChanged) {
-      target.setCoords?.();
       didChange = true;
     }
+  }
+
+  if (didChange) {
+    coordRefreshTargets.forEach((target) => {
+      target.setCoords?.();
+    });
   }
 
   return didChange;
