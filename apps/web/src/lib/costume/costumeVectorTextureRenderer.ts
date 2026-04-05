@@ -1239,7 +1239,7 @@ function renderComposedVectorSceneNode(
 
   normalizeVectorObjectRendering(obj);
   const motionSnapshot = options.motionSnapshot;
-  if (motionSnapshot?.target === obj) {
+  if (motionSnapshot && motionSnapshot.target === obj) {
     ctx.drawImage(
       motionSnapshot.canvas,
       motionSnapshot.drawOffsetX,

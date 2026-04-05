@@ -83,9 +83,13 @@ function toTypedBackgroundConfig(background: LegacyBackgroundPersistenceShape): 
       ? background.chunks as Record<string, string>
       : undefined,
   );
+  const {
+    chunks: _chunks,
+    ...rest
+  } = background;
 
   return {
-    ...background,
+    ...rest,
     ...(Object.keys(chunks).length > 0 ? { chunks } : {}),
   };
 }

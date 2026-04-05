@@ -7,6 +7,7 @@ import {
   VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH,
   VECTOR_SELECTION_COLOR,
   VECTOR_SELECTION_CORNER_COLOR,
+  buildPenDraftPathData,
   buildPenDraftNodeHandleTypes,
   buildPenDraftPathCommands,
   clonePenDraftAnchor,
@@ -257,14 +258,14 @@ export function useCostumeCanvasPenController({
     }
 
     const shouldClose = options.close === true;
-    const pathCommands = buildPenDraftPathCommands(draft.anchors, shouldClose);
-    if (pathCommands.length === 0) {
+    const pathData = buildPenDraftPathData(draft.anchors, shouldClose);
+    if (!pathData) {
       discardPenDraft();
       return false;
     }
 
     const strokeWidth = Math.max(0, vectorStyleRef.current.strokeWidth);
-    const path = new Path(pathCommands, {
+    const path = new Path(pathData, {
       fill: shouldClose
         ? getFabricFillValueForVectorTexture(
             vectorStyleRef.current.fillTextureId,

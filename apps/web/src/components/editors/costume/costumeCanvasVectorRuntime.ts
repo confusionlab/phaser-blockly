@@ -1104,6 +1104,7 @@ export class VectorPencilBrush extends PencilBrush {
   private readonly onPreviewUpdated?: () => void;
   private readonly strokeBrushId: VectorStrokeBrushId;
   private readonly strokeColor: string;
+  private readonly strokeDashOffset = 0;
   private readonly strokeOpacityValue: number;
   private readonly strokeWidthValue: number;
   private previewActive = false;

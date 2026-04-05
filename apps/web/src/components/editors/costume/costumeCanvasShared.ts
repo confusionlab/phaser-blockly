@@ -839,8 +839,8 @@ export function buildPenDraftNodeHandleTypes(
 }
 
 export function areHistorySnapshotsEqual(
-  a: CanvasHistorySnapshot | null,
-  b: CanvasHistorySnapshot | null,
+  a: CanvasHistorySnapshot | null | undefined,
+  b: CanvasHistorySnapshot | null | undefined,
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return false;

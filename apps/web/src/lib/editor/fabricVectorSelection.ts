@@ -1,6 +1,6 @@
-import type { Canvas as FabricCanvas } from 'fabric';
+import type { Canvas as FabricCanvas, FabricObject } from 'fabric';
 
-type FabricObjectLike = {
+type FabricObjectLike = FabricObject & {
   add?: (...objects: FabricObjectLike[]) => unknown;
   getObjects?: () => FabricObjectLike[];
   group?: unknown;

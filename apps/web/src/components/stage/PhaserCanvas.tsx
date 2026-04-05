@@ -1192,6 +1192,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
 
     return {
       controller,
+      editorScene: phaserScene,
       phaserScene,
       projection: controller.getProjection(),
     };
