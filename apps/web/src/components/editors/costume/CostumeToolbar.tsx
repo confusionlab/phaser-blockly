@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
-import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import {
   FloatingBottomToolbarDock,
   FloatingPropertyToolbar,
@@ -274,7 +273,6 @@ const ToolbarPreviewSlider = memo(({
   thumbClassName,
 }: ToolbarPreviewSliderProps) => {
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
-  const anchorRef = useRef<HTMLDivElement>(null);
   const closePreview = useCallback(() => setIsPreviewVisible(false), []);
 
   useEffect(() => {
@@ -305,7 +303,7 @@ const ToolbarPreviewSlider = memo(({
       {labelDisplay === 'left' && label ? (
         <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
       ) : null}
-      <div ref={anchorRef} className="relative flex min-w-0 grow items-center">
+      <div className="relative flex min-w-0 grow items-center">
         <FloatingToolbarSlider
           className={sliderClassName}
           value={value}
@@ -327,21 +325,21 @@ const ToolbarPreviewSlider = memo(({
           step={step}
           thumbClassName={thumbClassName}
         />
+        {previewEnabled && isPreviewVisible ? (
+          <div
+            aria-hidden="true"
+            className={cn(
+              dropdownMenuContentClassName,
+              toolbarSliderPreviewSurfaceClassName,
+              'absolute left-1/2 bottom-[calc(100%+10px)] -translate-x-1/2',
+            )}
+            style={{ zIndex: 'var(--z-editor-popup)' }}
+          >
+            {preview}
+          </div>
+        ) : null}
       </div>
       <span className={cn('w-8 text-right text-xs text-muted-foreground', valueClassName)}>{value}</span>
-      <AnchoredPopupSurface
-        open={previewEnabled && isPreviewVisible}
-        anchorRef={anchorRef}
-        onClose={closePreview}
-        side="top"
-        align="center"
-        sideOffset={toolbarPopupSideOffset}
-        className={toolbarSliderPreviewSurfaceClassName}
-      >
-        <div aria-hidden="true">
-          {preview}
-        </div>
-      </AnchoredPopupSurface>
     </div>
   );
 });

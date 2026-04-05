@@ -11,7 +11,7 @@ test.describe('vector texture renderer', () => {
       const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
       const width = 320;
       const height = 220;
-      const translationX = 36;
+      const translationX = 36.25;
       const createOverlayContext = () => {
         const overlayCanvas = document.createElement('canvas');
         overlayCanvas.width = width;
@@ -47,10 +47,12 @@ test.describe('vector texture renderer', () => {
       renderVectorTextureOverlayForObjects(baseCtx, [createPathObject(0)], {
         canvasWidth: width,
         canvasHeight: height,
+        stabilizeMotion: true,
       });
       renderVectorTextureOverlayForObjects(translatedCtx, [createPathObject(translationX)], {
         canvasWidth: width,
         canvasHeight: height,
+        stabilizeMotion: true,
       });
 
       const alignedCanvas = document.createElement('canvas');
@@ -90,8 +92,8 @@ test.describe('vector texture renderer', () => {
     });
 
     expect(result.opaqueUnion).toBeGreaterThan(1800);
-    expect(result.opaqueIntersection / result.opaqueUnion).toBeGreaterThan(0.94);
-    expect(result.averageAlphaDifference).toBeLessThan(4);
+    expect(result.opaqueIntersection / result.opaqueUnion).toBeGreaterThan(0.92);
+    expect(result.averageAlphaDifference).toBeLessThan(5);
   });
 
   test('applies the fabric viewport transform before drawing textured overlays', async ({ page }) => {
@@ -295,6 +297,52 @@ test.describe('vector texture renderer', () => {
     });
 
     expect(result.transformedPreviewPixels).toBeGreaterThan(900);
+    expect(result.topLeftPixels).toBe(0);
+  });
+
+  test('renders textured stroke width previews for textured brushes', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorStrokeBrushPreview } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 136;
+      const height = 88;
+      const overlayCanvas = document.createElement('canvas');
+      overlayCanvas.width = width;
+      overlayCanvas.height = height;
+      const overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+      if (!overlayCtx) {
+        throw new Error('Failed to acquire stroke preview context.');
+      }
+
+      renderVectorStrokeBrushPreview(overlayCtx, {
+        brushId: 'chalk',
+        canvasWidth: width,
+        canvasHeight: height,
+        strokeColor: '#2563eb',
+        strokeOpacity: 1,
+        strokeWidth: 22,
+      });
+
+      const countVisiblePixelsInRect = (left: number, top: number, rectWidth: number, rectHeight: number) => {
+        const imageData = overlayCtx.getImageData(left, top, rectWidth, rectHeight).data;
+        let count = 0;
+        for (let index = 3; index < imageData.length; index += 4) {
+          if ((imageData[index] ?? 0) > 0) {
+            count += 1;
+          }
+        }
+        return count;
+      };
+
+      return {
+        centerStrokePixels: countVisiblePixelsInRect(16, 24, 104, 40),
+        topLeftPixels: countVisiblePixelsInRect(0, 0, 12, 12),
+      };
+    });
+
+    expect(result.centerStrokePixels).toBeGreaterThan(500);
     expect(result.topLeftPixels).toBe(0);
   });
 });

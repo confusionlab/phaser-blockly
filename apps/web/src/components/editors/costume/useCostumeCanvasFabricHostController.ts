@@ -97,6 +97,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   suppressBitmapSelectionAutoCommitRef: MutableRefObject<boolean>;
   textEditingHostRef: RefObject<HTMLDivElement | null>;
   textStyleRef: MutableRefObject<any>;
+  stabilizeTextureMotionRef: MutableRefObject<boolean>;
   vectorGuideCanvasRef: RefObject<HTMLCanvasElement | null>;
   vectorGuideCtxRef: MutableRefObject<CanvasRenderingContext2D | null>;
   vectorPointEditingTargetRef: MutableRefObject<any | null>;
@@ -189,6 +190,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       bitmapSelectionBusyRef,
       suppressBitmapSelectionAutoCommitRef,
       activePathAnchorRef,
+      stabilizeTextureMotionRef,
     } = callbacksRef.current;
 
     const fabricCanvasHost = fabricCanvasHostRef.current;
@@ -888,6 +890,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onMouseUp = () => {
       const callbacks = callbacksRef.current;
+      stabilizeTextureMotionRef.current = false;
       clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (penAnchorPlacementSessionRef.current) {
         callbacks.commitCurrentPenPlacement();
@@ -973,6 +976,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     };
 
     const onObjectModified = () => {
+      stabilizeTextureMotionRef.current = false;
       clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (editorModeRef.current === 'vector') {
         callbacksRef.current.saveHistory();
@@ -1016,6 +1020,10 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       callbacksRef.current.syncTextStyleFromSelection();
       callbacksRef.current.syncTextSelectionState();
       callbacksRef.current.saveHistory();
+    };
+
+    const onObjectMoving = () => {
+      stabilizeTextureMotionRef.current = true;
     };
 
     const onAfterRender = () => {
@@ -1077,6 +1085,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     fabricCanvas.on('mouse:up', onMouseUp);
     fabricCanvas.on('path:created', onPathCreated);
     fabricCanvas.on('object:modified', onObjectModified);
+    fabricCanvas.on('object:moving', onObjectMoving);
     fabricCanvas.on('selection:created', onSelectionChange);
     fabricCanvas.on('selection:updated', onSelectionChange);
     fabricCanvas.on('selection:cleared', onSelectionCleared);
@@ -1113,6 +1122,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       fabricCanvas.off('mouse:up', onMouseUp);
       fabricCanvas.off('path:created', onPathCreated);
       fabricCanvas.off('object:modified', onObjectModified);
+      fabricCanvas.off('object:moving', onObjectMoving);
       fabricCanvas.off('selection:created', onSelectionChange);
       fabricCanvas.off('selection:updated', onSelectionChange);
       fabricCanvas.off('selection:cleared', onSelectionCleared);

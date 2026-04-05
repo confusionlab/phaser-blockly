@@ -200,6 +200,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const vectorStrokeCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const vectorGuideCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const bitmapSelectionCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const stabilizeTextureMotionRef = useRef(false);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const documentLayers = costumeDocument?.layers ?? [];
   const activeDocumentLayer = useMemo(() => getActiveCostumeLayer(costumeDocument), [costumeDocument]);
@@ -622,6 +623,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     editorModeRef,
     fabricCanvasRef,
     resolvePreviewObjects: resolveLiveVectorTexturePreviewObjects,
+    stabilizeTextureMotionRef,
   });
 
   const refreshVectorTextureOverlay = useCallback(() => {
@@ -962,6 +964,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     vectorPointEditingTargetRef,
     vectorStrokeCanvasRef,
     vectorStrokeCtxRef,
+    stabilizeTextureMotionRef,
     vectorStyleRef,
     onFabricCanvasReady: resolveFabricCanvasReady,
     onFabricCanvasAfterRender: handleFabricCanvasAfterRender,

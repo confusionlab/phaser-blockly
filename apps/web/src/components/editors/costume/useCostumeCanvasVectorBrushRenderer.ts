@@ -10,12 +10,14 @@ interface UseCostumeCanvasVectorBrushRendererOptions {
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
   resolvePreviewObjects?: () => readonly any[];
+  stabilizeTextureMotionRef?: MutableRefObject<boolean>;
 }
 
 export function useCostumeCanvasVectorBrushRenderer({
   editorModeRef,
   fabricCanvasRef,
   resolvePreviewObjects,
+  stabilizeTextureMotionRef,
 }: UseCostumeCanvasVectorBrushRendererOptions) {
   const { renderVectorTextureOverlay } = useFabricVectorTextureOverlay({
     fabricCanvasRef,
@@ -48,8 +50,9 @@ export function useCostumeCanvasVectorBrushRenderer({
     renderVectorTextureOverlay(ctx, {
       canvasSize: CANVAS_SIZE,
       clear: false,
+      stabilizeMotion: stabilizeTextureMotionRef?.current === true,
     });
-  }, [editorModeRef, fabricCanvasRef, renderVectorTextureOverlay]);
+  }, [editorModeRef, fabricCanvasRef, renderVectorTextureOverlay, stabilizeTextureMotionRef]);
 
   return {
     renderVectorBrushStrokeOverlay,

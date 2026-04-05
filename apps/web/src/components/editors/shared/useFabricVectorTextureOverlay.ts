@@ -18,6 +18,7 @@ export function useFabricVectorTextureOverlay({
       canvasWidth?: number;
       canvasHeight?: number;
       clear?: boolean;
+      stabilizeMotion?: boolean;
     } = {},
   ) => {
     const fabricCanvas = fabricCanvasRef.current;

@@ -690,6 +690,9 @@ function drawVectorStrokeBrushPath(
   points: Point[],
   closed: boolean,
   renderStyle: VectorStrokeBrushRenderStyle,
+  options: {
+    stabilizeMotion?: boolean;
+  } = {},
 ) {
   if (renderStyle.kind !== 'bitmap-dab' || renderStyle.dabs.length === 0 || points.length < 2) {
     return;
@@ -709,6 +712,12 @@ function drawVectorStrokeBrushPath(
     totalLength,
     pathPoints.length,
     closed ? 1 : 0,
+  );
+  const stabilizeMotion = options.stabilizeMotion === true;
+  const snapMotionCoordinate = (value: number) => (
+    stabilizeMotion
+      ? Math.round(value * 2) / 2
+      : value
   );
 
   const renderDabAt = (distanceAlongPath: number, dabIndex: number) => {
@@ -739,8 +748,8 @@ function drawVectorStrokeBrushPath(
     const jitterOpacity = clampUnit(1 + (((opacityRandom * 2) - 1) * renderStyle.opacityJitter));
     const scatterAngle = scatterAngleRandom * Math.PI * 2;
     const scatterRadius = renderStyle.scatter > 0 ? scatterRadiusRandom * renderStyle.scatter : 0;
-    const renderX = point.x + Math.cos(scatterAngle) * scatterRadius;
-    const renderY = point.y + Math.sin(scatterAngle) * scatterRadius;
+    const renderX = snapMotionCoordinate(point.x + Math.cos(scatterAngle) * scatterRadius);
+    const renderY = snapMotionCoordinate(point.y + Math.sin(scatterAngle) * scatterRadius);
     const drawWidth = Math.max(1, dab.width * jitterScale);
     const drawHeight = Math.max(1, dab.height * jitterScale);
 
@@ -838,6 +847,7 @@ export function renderVectorStrokeBrushPreview(
     ],
     false,
     renderStyle,
+    {},
   );
   ctx.restore();
 }
@@ -984,6 +994,7 @@ export function renderVectorTextureOverlayForObjects(
     clear?: boolean;
     contextTransform?: number[] | null;
     onTextureSourceReady?: (() => void) | null;
+    stabilizeMotion?: boolean;
   } = {},
 ) {
   const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
@@ -1085,7 +1096,9 @@ export function renderVectorTextureOverlayForObjects(
     }
 
     for (const contour of contourPaths) {
-      drawVectorStrokeBrushPath(overlayCtx, contour.points, contour.closed, resolvedRenderStyle);
+      drawVectorStrokeBrushPath(overlayCtx, contour.points, contour.closed, resolvedRenderStyle, {
+        stabilizeMotion: options.stabilizeMotion,
+      });
     }
   }
 
@@ -1106,6 +1119,7 @@ export function renderVectorTextureOverlayForFabricCanvas(
     canvasHeight?: number;
     clear?: boolean;
     onTextureSourceReady?: (() => void) | null;
+    stabilizeMotion?: boolean;
   } = {},
 ) {
   const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
