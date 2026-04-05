@@ -114,7 +114,9 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   applyVectorPointControls: (target: any) => boolean;
   applyVectorPointEditingAppearance: (target: any) => void;
   beginPointSelectionTransformSession: (target: any, hit: any, pointer: Point, eventData?: Record<string, any> | null) => boolean;
+  captureVectorTextureMotionSnapshot: (target: any) => void;
   clearSelectedPathAnchors: (target?: any) => void;
+  clearVectorTextureMotionSnapshot: () => void;
   commitBitmapSelection: (options?: { behavior?: BitmapFloatingSelectionBehavior }) => Promise<boolean>;
   commitCurrentPenPlacement: () => void;
   configureCanvasForTool: () => void;
@@ -467,6 +469,10 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
       configureUnifiedObjectTransformForGesture(fabricCanvas, opt.e);
       syncUnifiedCanvasTransformGuideFromEvent(fabricCanvas, opt.e);
+
+      if (mode === 'vector' && tool === 'select' && opt.target) {
+        callbacks.captureVectorTextureMotionSnapshot(opt.target);
+      }
 
       if (mode === 'bitmap' && tool === 'select' && floatingBitmapObject) {
         if (!opt.target || opt.target !== floatingBitmapObject) {
@@ -891,6 +897,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     const onMouseUp = () => {
       const callbacks = callbacksRef.current;
       stabilizeTextureMotionRef.current = false;
+      callbacks.clearVectorTextureMotionSnapshot();
       clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (penAnchorPlacementSessionRef.current) {
         callbacks.commitCurrentPenPlacement();
@@ -977,6 +984,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onObjectModified = () => {
       stabilizeTextureMotionRef.current = false;
+      callbacksRef.current.clearVectorTextureMotionSnapshot();
       clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (editorModeRef.current === 'vector') {
         callbacksRef.current.saveHistory();
@@ -985,6 +993,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onSelectionChange = () => {
       const callbacks = callbacksRef.current;
+      callbacks.clearVectorTextureMotionSnapshot();
       const activeObject = fabricCanvas.getActiveObject() as any;
       if (
         editorModeRef.current === 'vector' &&
@@ -1022,8 +1031,11 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       callbacksRef.current.saveHistory();
     };
 
-    const onObjectMoving = () => {
+    const onObjectMoving = (event?: { target?: any }) => {
       stabilizeTextureMotionRef.current = true;
+      if (event?.target) {
+        callbacksRef.current.captureVectorTextureMotionSnapshot(event.target);
+      }
     };
 
     const onAfterRender = () => {
@@ -1037,6 +1049,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onSelectionCleared = () => {
       const callbacks = callbacksRef.current;
+      callbacks.clearVectorTextureMotionSnapshot();
       clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (
         editorModeRef.current === 'bitmap' &&

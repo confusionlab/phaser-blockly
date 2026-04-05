@@ -691,7 +691,8 @@ function drawVectorStrokeBrushPath(
   closed: boolean,
   renderStyle: VectorStrokeBrushRenderStyle,
   options: {
-    stabilizeMotion?: boolean;
+    motionOffsetX?: number;
+    motionOffsetY?: number;
   } = {},
 ) {
   if (renderStyle.kind !== 'bitmap-dab' || renderStyle.dabs.length === 0 || points.length < 2) {
@@ -713,12 +714,8 @@ function drawVectorStrokeBrushPath(
     pathPoints.length,
     closed ? 1 : 0,
   );
-  const stabilizeMotion = options.stabilizeMotion === true;
-  const snapMotionCoordinate = (value: number) => (
-    stabilizeMotion
-      ? Math.round(value * 2) / 2
-      : value
-  );
+  const motionOffsetX = Number.isFinite(options.motionOffsetX) ? Number(options.motionOffsetX) : 0;
+  const motionOffsetY = Number.isFinite(options.motionOffsetY) ? Number(options.motionOffsetY) : 0;
 
   const renderDabAt = (distanceAlongPath: number, dabIndex: number) => {
     const point = samplePointAlongPolyline(
@@ -748,8 +745,8 @@ function drawVectorStrokeBrushPath(
     const jitterOpacity = clampUnit(1 + (((opacityRandom * 2) - 1) * renderStyle.opacityJitter));
     const scatterAngle = scatterAngleRandom * Math.PI * 2;
     const scatterRadius = renderStyle.scatter > 0 ? scatterRadiusRandom * renderStyle.scatter : 0;
-    const renderX = snapMotionCoordinate(point.x + Math.cos(scatterAngle) * scatterRadius);
-    const renderY = snapMotionCoordinate(point.y + Math.sin(scatterAngle) * scatterRadius);
+    const renderX = point.x + Math.cos(scatterAngle) * scatterRadius + motionOffsetX;
+    const renderY = point.y + Math.sin(scatterAngle) * scatterRadius + motionOffsetY;
     const drawWidth = Math.max(1, dab.width * jitterScale);
     const drawHeight = Math.max(1, dab.height * jitterScale);
 
@@ -952,6 +949,17 @@ function traceScenePolylinePath(
   return true;
 }
 
+function resolveMotionStabilizationOffset(points: Point[]) {
+  const anchorPoint = points[0];
+  if (!anchorPoint) {
+    return { x: 0, y: 0 };
+  }
+  return {
+    x: (Math.round(anchorPoint.x * 2) / 2) - anchorPoint.x,
+    y: (Math.round(anchorPoint.y * 2) / 2) - anchorPoint.y,
+  };
+}
+
 function cutOutSolidStrokeFromTexturedFill(ctx: CanvasRenderingContext2D, obj: any): void {
   const brushId = getVectorObjectStrokeBrushId(obj);
   const strokeWidth = typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 0;
@@ -1096,8 +1104,12 @@ export function renderVectorTextureOverlayForObjects(
     }
 
     for (const contour of contourPaths) {
+      const motionOffset = options.stabilizeMotion
+        ? resolveMotionStabilizationOffset(contour.points)
+        : null;
       drawVectorStrokeBrushPath(overlayCtx, contour.points, contour.closed, resolvedRenderStyle, {
-        stabilizeMotion: options.stabilizeMotion,
+        motionOffsetX: motionOffset?.x ?? 0,
+        motionOffsetY: motionOffset?.y ?? 0,
       });
     }
   }

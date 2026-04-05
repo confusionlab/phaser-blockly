@@ -3796,9 +3796,11 @@ export function BackgroundCanvasEditor() {
     });
   }, []);
   const handleVectorSelectionChange = useCallback((hasSelection: boolean) => {
-    setHasVectorSelection(hasSelection);
+    setHasVectorSelection((previous) => (previous === hasSelection ? previous : hasSelection));
     if (!hasSelection) {
-      setVectorStyleMixedState({});
+      setVectorStyleMixedState((previous) => (
+        Object.keys(previous).length === 0 ? previous : {}
+      ));
     }
   }, []);
   const handleVectorTextSelectionChange = useCallback((hasTextSelection: boolean) => {

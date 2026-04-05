@@ -178,6 +178,7 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
       color: LIGHT_SURFACE_OUTLINE,
       visible: false,
     });
+    const outlineStateRef = React.useRef(outlineState);
 
     const updateOutline = React.useCallback(() => {
       const button = buttonRef.current;
@@ -186,11 +187,13 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
       }
 
       const nextState = getSwatchOutlineState(value, resolveSurfaceColor(button));
-      setOutlineState((currentState) => (
-        currentState.visible === nextState.visible && currentState.color === nextState.color
-          ? currentState
-          : nextState
-      ));
+      const currentState = outlineStateRef.current;
+      if (currentState.visible === nextState.visible && currentState.color === nextState.color) {
+        return;
+      }
+
+      outlineStateRef.current = nextState;
+      setOutlineState(nextState);
     }, [value]);
 
     const handleRef = React.useCallback((node: HTMLButtonElement | null) => {
@@ -200,7 +203,7 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
 
     React.useLayoutEffect(() => {
       updateOutline();
-    });
+    }, [updateOutline]);
 
     React.useEffect(() => {
       const button = buttonRef.current;

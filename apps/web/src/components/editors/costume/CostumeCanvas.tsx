@@ -61,7 +61,10 @@ import { useCostumeCanvasPenHotkeys } from './useCostumeCanvasPenHotkeys';
 import { useCostumeCanvasSelectionController } from './useCostumeCanvasSelectionController';
 import { useCostumeCanvasToolController } from './useCostumeCanvasToolController';
 import { useCostumeCanvasVectorHandleSync } from './useCostumeCanvasVectorHandleSync';
-import { useCostumeCanvasVectorBrushRenderer } from './useCostumeCanvasVectorBrushRenderer';
+import {
+  useCostumeCanvasVectorBrushRenderer,
+  type VectorTextureMotionSnapshot,
+} from './useCostumeCanvasVectorBrushRenderer';
 import { useCostumeCanvasVectorObjectController } from './useCostumeCanvasVectorObjectController';
 import { useCostumeCanvasVectorPathController } from './useCostumeCanvasVectorPathController';
 import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportController';
@@ -201,6 +204,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const vectorGuideCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const bitmapSelectionCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const stabilizeTextureMotionRef = useRef(false);
+  const vectorTextureMotionSnapshotRef = useRef<VectorTextureMotionSnapshot | null>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const documentLayers = costumeDocument?.layers ?? [];
   const activeDocumentLayer = useMemo(() => getActiveCostumeLayer(costumeDocument), [costumeDocument]);
@@ -617,6 +621,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   });
 
   const {
+    captureVectorTextureMotionSnapshot,
+    clearVectorTextureMotionSnapshot,
     renderVectorBrushStrokeOverlay,
     resolveBitmapFillTextureSource,
   } = useCostumeCanvasVectorBrushRenderer({
@@ -624,6 +630,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvasRef,
     resolvePreviewObjects: resolveLiveVectorTexturePreviewObjects,
     stabilizeTextureMotionRef,
+    vectorTextureMotionSnapshotRef,
   });
 
   const refreshVectorTextureOverlay = useCallback(() => {
@@ -918,6 +925,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     commitBitmapSelection,
     commitCurrentPenPlacement,
     configureCanvasForTool,
+    clearVectorTextureMotionSnapshot,
+    captureVectorTextureMotionSnapshot,
     drawBitmapSelectionOverlay,
     editorModeRef,
     enforcePathAnchorHandleType,

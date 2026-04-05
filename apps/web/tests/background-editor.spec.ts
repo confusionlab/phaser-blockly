@@ -511,6 +511,23 @@ async function closeBackgroundEditor(page: Page): Promise<void> {
 }
 
 test.describe('Background editor', () => {
+  test('opens background draw mode with an active vector layer without max-depth errors', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Open ${Date.now()}` });
+
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => {
+      pageErrors.push(error.message);
+    });
+
+    await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await expect(page.getByTestId('background-vector-layer-canvas')).toBeVisible();
+    await page.getByRole('button', { name: /^pencil$/i }).click();
+    await page.waitForTimeout(300);
+
+    expect(pageErrors.filter((message) => message.includes('Maximum update depth exceeded'))).toEqual([]);
+  });
+
   test('brush and eraser reuse the shared bitmap cursor overlay', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
     const { box } = await openBackgroundEditor(page);
