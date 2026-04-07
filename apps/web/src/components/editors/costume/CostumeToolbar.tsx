@@ -1092,7 +1092,7 @@ export const CostumeToolbar = memo(({
                           value={bitmapShapeStyle.fillColor}
                           open={openMenu === 'fill-color'}
                           onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
-                          onColorChange={(fillColor) => onBitmapShapeStyleChange({ fillColor })}
+                          onColorChange={(fillColor, meta) => onBitmapShapeStyleChange({ fillColor }, meta)}
                           labelDisplay="left"
                         />
                       )}
@@ -1102,7 +1102,7 @@ export const CostumeToolbar = memo(({
                         value={bitmapShapeStyle.strokeColor}
                         open={openMenu === 'stroke-color'}
                         onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
-                        onColorChange={(strokeColor) => onBitmapShapeStyleChange({ strokeColor })}
+                        onColorChange={(strokeColor, meta) => onBitmapShapeStyleChange({ strokeColor }, meta)}
                         labelDisplay="left"
                       />
 
@@ -1134,9 +1134,9 @@ export const CostumeToolbar = memo(({
                           mixed={hasMixedVectorStrokeColor}
                           open={openMenu === 'stroke-color'}
                           onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
-                          onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                          onColorChange={(strokeColor, meta) => onVectorStyleChange({ strokeColor }, meta)}
                           opacity={vectorStyle.strokeOpacity}
-                          onOpacityChange={(strokeOpacity) => onVectorStyleChange({ strokeOpacity })}
+                          onOpacityChange={(strokeOpacity, meta) => onVectorStyleChange({ strokeOpacity }, meta)}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1220,9 +1220,9 @@ export const CostumeToolbar = memo(({
                             mixed={hasMixedVectorFillColor}
                             open={openMenu === 'fill-color'}
                             onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
-                            onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                            onColorChange={(fillColor, meta) => onVectorStyleChange({ fillColor }, meta)}
                             opacity={vectorStyle.fillOpacity}
-                            onOpacityChange={(fillOpacity) => onVectorStyleChange({ fillOpacity })}
+                            onOpacityChange={(fillOpacity, meta) => onVectorStyleChange({ fillOpacity }, meta)}
                             labelDisplay="none"
                           />
                           <DropdownMenu
@@ -1414,9 +1414,9 @@ export const CostumeToolbar = memo(({
                           mixed={hasMixedVectorStrokeColor}
                           open={openMenu === 'stroke-color'}
                           onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
-                          onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                          onColorChange={(strokeColor, meta) => onVectorStyleChange({ strokeColor }, meta)}
                           opacity={vectorStyle.strokeOpacity}
-                          onOpacityChange={(strokeOpacity) => onVectorStyleChange({ strokeOpacity })}
+                          onOpacityChange={(strokeOpacity, meta) => onVectorStyleChange({ strokeOpacity }, meta)}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1500,9 +1500,9 @@ export const CostumeToolbar = memo(({
                             mixed={hasMixedVectorFillColor}
                             open={openMenu === 'fill-color'}
                             onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
-                            onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                            onColorChange={(fillColor, meta) => onVectorStyleChange({ fillColor }, meta)}
                             opacity={vectorStyle.fillOpacity}
-                            onOpacityChange={(fillOpacity) => onVectorStyleChange({ fillOpacity })}
+                            onOpacityChange={(fillOpacity, meta) => onVectorStyleChange({ fillOpacity }, meta)}
                             labelDisplay="none"
                           />
                           <DropdownMenu
