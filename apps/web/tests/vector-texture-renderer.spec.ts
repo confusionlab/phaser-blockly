@@ -63,6 +63,100 @@ test.describe('vector texture renderer', () => {
     expect(result.textureTileHeight).toBe(result.textureTileWidth);
   });
 
+  test('extends textured fill into the textured stroke fringe to avoid a hard interior edge', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 320;
+      const height = 240;
+      const sampleLeft = 116;
+      const sampleTop = 86;
+      const sampleWidth = 10;
+      const sampleHeight = 68;
+
+      const createOverlayContext = () => {
+        const overlayCanvas = document.createElement('canvas');
+        overlayCanvas.width = width;
+        overlayCanvas.height = height;
+        return overlayCanvas.getContext('2d', { willReadFrequently: true });
+      };
+      const strokeOnlyCtx = createOverlayContext();
+      const fillAndStrokeCtx = createOverlayContext();
+      if (!strokeOnlyCtx || !fillAndStrokeCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      const createRectObject = (includeFill: boolean) => ({
+        type: 'rect',
+        width: 72,
+        height: 72,
+        fill: includeFill ? 'rgba(37, 99, 235, 0)' : null,
+        opacity: 1,
+        stroke: 'rgba(37, 99, 235, 0)',
+        strokeWidth: 20,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+        vectorFillTextureId: includeFill ? 'crayon' : 'solid',
+        vectorFillColor: includeFill ? '#2563eb' : undefined,
+        vectorFillOpacity: includeFill ? 1 : undefined,
+        vectorStrokeBrushId: 'crayon',
+        vectorStrokeColor: '#2563eb',
+        vectorStrokeOpacity: 1,
+        calcTransformMatrix: () => [1, 0, 0, 1, 160, 120],
+      });
+
+      const waitForTextureReady = () => new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        renderVectorTextureOverlayForObjects(fillAndStrokeCtx, [createRectObject(true)], {
+          canvasWidth: width,
+          canvasHeight: height,
+          onTextureSourceReady: done,
+        });
+        setTimeout(done, 100);
+      });
+
+      await waitForTextureReady();
+      strokeOnlyCtx.clearRect(0, 0, width, height);
+      fillAndStrokeCtx.clearRect(0, 0, width, height);
+
+      renderVectorTextureOverlayForObjects(strokeOnlyCtx, [createRectObject(false)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+      renderVectorTextureOverlayForObjects(fillAndStrokeCtx, [createRectObject(true)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const strokeOnlyPixels = strokeOnlyCtx.getImageData(sampleLeft, sampleTop, sampleWidth, sampleHeight).data;
+      const fillAndStrokePixels = fillAndStrokeCtx.getImageData(sampleLeft, sampleTop, sampleWidth, sampleHeight).data;
+
+      let strokeOnlyAlphaTotal = 0;
+      let fillAndStrokeAlphaTotal = 0;
+      for (let index = 3; index < strokeOnlyPixels.length; index += 4) {
+        strokeOnlyAlphaTotal += strokeOnlyPixels[index] ?? 0;
+        fillAndStrokeAlphaTotal += fillAndStrokePixels[index] ?? 0;
+      }
+
+      const samplePixelCount = sampleWidth * sampleHeight;
+      return {
+        fillAndStrokeAverageAlpha: fillAndStrokeAlphaTotal / samplePixelCount,
+        strokeOnlyAverageAlpha: strokeOnlyAlphaTotal / samplePixelCount,
+      };
+    });
+
+    expect(result.strokeOnlyAverageAlpha).toBeGreaterThan(30);
+    expect(result.fillAndStrokeAverageAlpha).toBeGreaterThan(result.strokeOnlyAverageAlpha + 8);
+  });
+
   test('keeps textured stroke dab placement stable when the object translates', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');

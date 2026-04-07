@@ -43,25 +43,6 @@ function getAffineColumnScale(x: number, y: number) {
   return Math.max(0.0001, Math.sqrt((x * x) + (y * y)));
 }
 
-function createPatternScaleCancellationTransform(
-  objectTransform?: number[] | null,
-): DOMMatrix | null {
-  if (!objectTransform || typeof DOMMatrix === 'undefined') {
-    return null;
-  }
-
-  const scaleX = getAffineColumnScale(objectTransform[0] ?? 1, objectTransform[1] ?? 0);
-  const scaleY = getAffineColumnScale(objectTransform[2] ?? 0, objectTransform[3] ?? 1);
-  return new DOMMatrix([
-    1 / scaleX,
-    0,
-    0,
-    1 / scaleY,
-    0,
-    0,
-  ]);
-}
-
 function createPatternTextureAnchorTransform(
   objectTransform?: number[] | null,
 ): DOMMatrix | null {
@@ -96,6 +77,12 @@ function applyPatternTransform(
   }
   pattern.setTransform(transform);
 }
+
+type VectorStrokeContourSeedEntry = {
+  closed: boolean;
+  contourSeed: number;
+  points: Point[];
+};
 
 function rememberVectorStrokeBrushRenderStyle(
   cacheKey: string,
@@ -826,6 +813,30 @@ function getStableContourSeed(
   );
 }
 
+function getVectorStrokeContourSeedEntries(obj: any): VectorStrokeContourSeedEntry[] {
+  return getVectorObjectLocalContourPaths(obj).map((localContour, contourIndex) => ({
+    closed: localContour.closed,
+    contourSeed: getStableContourSeed(localContour.points, localContour.closed, contourIndex),
+    points: localContour.points,
+  }));
+}
+
+function getTransformedVectorStrokeContours(
+  obj: any,
+  contourSeeds: VectorStrokeContourSeedEntry[],
+): VectorStrokeContourSeedEntry[] {
+  const contourPaths = getVectorObjectContourPaths(obj);
+  if (contourPaths.length !== contourSeeds.length) {
+    return [];
+  }
+
+  return contourPaths.map((contour, contourIndex) => ({
+    closed: contour.closed,
+    contourSeed: contourSeeds[contourIndex]?.contourSeed ?? contourIndex,
+    points: contour.points,
+  }));
+}
+
 function drawVectorStrokeBrushDabsAlongPath(
   ctx: CanvasRenderingContext2D,
   points: Point[],
@@ -1009,6 +1020,101 @@ function drawVectorStrokeBrushTextureMaskPath(
   if (!rendered) {
     return false;
   }
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(maskCanvas, 0, 0);
+  ctx.restore();
+  return true;
+}
+
+function drawVectorFillTextureWithCombinedMask(
+  ctx: CanvasRenderingContext2D,
+  obj: any,
+  textureTile: HTMLCanvasElement,
+  options: {
+    canvasHeight: number;
+    canvasWidth: number;
+    contextTransform?: number[] | null;
+    fillOpacity: number;
+    strokeMaskContours?: VectorStrokeContourSeedEntry[];
+    strokeMaskRenderStyle?: Exclude<VectorStrokeBrushRenderStyle, { kind: 'solid' }> | null;
+  },
+) {
+  if (typeof obj.calcTransformMatrix !== 'function') {
+    return false;
+  }
+
+  const objectTransform = obj.calcTransformMatrix();
+  const maskCanvas = createScratchCanvas(options.canvasWidth, options.canvasHeight);
+  const maskCtx = getCanvas2dContext(maskCanvas);
+  if (!maskCtx) {
+    return false;
+  }
+
+  maskCtx.save();
+  if (options.contextTransform) {
+    applyContextTransform(maskCtx, options.contextTransform);
+  }
+
+  let rendered = false;
+  maskCtx.save();
+  maskCtx.transform(
+    objectTransform[0] ?? 1,
+    objectTransform[1] ?? 0,
+    objectTransform[2] ?? 0,
+    objectTransform[3] ?? 1,
+    objectTransform[4] ?? 0,
+    objectTransform[5] ?? 0,
+  );
+  if (traceVectorObjectLocalPath(maskCtx, obj)) {
+    maskCtx.fillStyle = '#ffffff';
+    maskCtx.fill();
+    rendered = true;
+  }
+  maskCtx.restore();
+
+  if (
+    options.strokeMaskRenderStyle
+    && options.strokeMaskContours
+    && options.strokeMaskContours.length > 0
+  ) {
+    maskCtx.imageSmoothingEnabled = true;
+    for (const contour of options.strokeMaskContours) {
+      rendered = drawVectorStrokeBrushDabsAlongPath(
+        maskCtx,
+        contour.points,
+        contour.closed,
+        options.strokeMaskRenderStyle,
+        { contourSeed: contour.contourSeed },
+      ) || rendered;
+    }
+  }
+
+  if (!rendered) {
+    maskCtx.restore();
+    return false;
+  }
+
+  const pattern = maskCtx.createPattern(textureTile, 'repeat');
+  if (!pattern) {
+    maskCtx.restore();
+    return false;
+  }
+  applyPatternTransform(
+    pattern,
+    createPatternTextureAnchorTransform(objectTransform),
+  );
+  maskCtx.globalCompositeOperation = 'source-in';
+  maskCtx.globalAlpha = options.fillOpacity;
+  maskCtx.fillStyle = pattern;
+  maskCtx.fillRect(
+    -options.canvasWidth,
+    -options.canvasHeight,
+    options.canvasWidth * 3,
+    options.canvasHeight * 3,
+  );
+  maskCtx.restore();
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1322,6 +1428,37 @@ function renderVectorTextureDecorationsForObject(
 
   let rendered = false;
 
+  const brushId = getVectorObjectStrokeBrushId(obj);
+  const strokeColor = getVectorObjectStrokeColor(obj);
+  const strokeWidth = typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 0;
+  const strokeOpacity = getVectorObjectStrokeOpacity(obj) ?? 1;
+  const strokeRenderStyle = (
+    brushId !== DEFAULT_VECTOR_STROKE_BRUSH_ID
+    && strokeColor
+    && strokeWidth > 0
+  )
+    ? resolveVectorStrokeBrushRenderStyle(
+        brushId,
+        strokeColor,
+        strokeWidth,
+        getVectorObjectStrokeWiggle(obj),
+        options.onTextureSourceReady,
+      )
+    : null;
+  const texturedStrokeRenderStyle = strokeRenderStyle && strokeRenderStyle.kind !== 'solid'
+    ? (
+        strokeOpacity === 1
+          ? strokeRenderStyle
+          : {
+              ...strokeRenderStyle,
+              dabs: strokeRenderStyle.dabs.map((dab) => ({
+                ...dab,
+                opacity: dab.opacity * strokeOpacity,
+              })),
+            }
+      )
+    : null;
+
   const fillTextureId = getVectorObjectFillTextureId(obj);
   const fillColor = getVectorObjectFillColor(obj);
   if (vectorObjectSupportsFill(obj) && fillTextureId !== DEFAULT_VECTOR_FILL_TEXTURE_ID && fillColor) {
@@ -1330,71 +1467,36 @@ function renderVectorTextureDecorationsForObject(
       fillColor,
       resolveVectorFillTextureSource(fillTextureId, options.onTextureSourceReady),
     );
-    if (textureTile && typeof obj.calcTransformMatrix === 'function') {
-      ctx.save();
-      const transform = obj.calcTransformMatrix();
-      ctx.transform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
-      if (traceVectorObjectLocalPath(ctx, obj)) {
-        const pattern = ctx.createPattern(textureTile, 'repeat');
-        if (pattern) {
-          applyPatternTransform(
-            pattern,
-            createPatternScaleCancellationTransform(transform),
-          );
-          ctx.fillStyle = pattern;
-          ctx.globalAlpha = getVectorObjectFillOpacity(obj) ?? 1;
-          ctx.clip();
-          ctx.fillRect(-canvasWidth, -canvasHeight, canvasWidth * 3, canvasHeight * 3);
-          rendered = true;
-        }
+    if (textureTile) {
+      const fillOpacity = getVectorObjectFillOpacity(obj) ?? 1;
+      const strokeMaskContours = texturedStrokeRenderStyle
+        ? getTransformedVectorStrokeContours(obj, getVectorStrokeContourSeedEntries(obj))
+        : [];
+      rendered = drawVectorFillTextureWithCombinedMask(ctx, obj, textureTile, {
+        canvasWidth,
+        canvasHeight,
+        contextTransform: options.contextTransform,
+        fillOpacity,
+        strokeMaskContours,
+        strokeMaskRenderStyle: texturedStrokeRenderStyle,
+      }) || rendered;
+      if (!texturedStrokeRenderStyle) {
+        // Remove the fill under a solid stroke so the object's base stroke remains visible.
+        cutOutSolidStrokeFromTexturedFill(ctx, obj);
       }
-      ctx.restore();
-      // Remove the fill under a solid stroke so the object's base stroke remains visible.
-      cutOutSolidStrokeFromTexturedFill(ctx, obj);
     }
   }
 
-  const brushId = getVectorObjectStrokeBrushId(obj);
   if (brushId !== DEFAULT_VECTOR_STROKE_BRUSH_ID) {
-    const strokeColor = getVectorObjectStrokeColor(obj);
-    const strokeWidth = typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 0;
     if (strokeColor && strokeWidth > 0) {
-      const renderStyle = resolveVectorStrokeBrushRenderStyle(
-        brushId,
-        strokeColor,
-        strokeWidth,
-        getVectorObjectStrokeWiggle(obj),
-        options.onTextureSourceReady,
-      );
-      if (renderStyle && renderStyle.kind !== 'solid') {
-        const objectOpacity = getVectorObjectStrokeOpacity(obj) ?? 1;
-        const resolvedRenderStyle = objectOpacity === 1
-          ? renderStyle
-          : {
-              ...renderStyle,
-              dabs: renderStyle.dabs.map((dab) => ({
-                ...dab,
-                opacity: dab.opacity * objectOpacity,
-              })),
-            };
-
-        const localContourPaths = getVectorObjectLocalContourPaths(obj);
-        const contourSeeds = localContourPaths.map((localContour, contourIndex) => ({
-          closed: localContour.closed,
-          contourSeed: getStableContourSeed(localContour.points, localContour.closed, contourIndex),
-          points: localContour.points,
-        }));
-        if (resolvedRenderStyle.kind === 'texture-mask-dab') {
+      if (texturedStrokeRenderStyle) {
+        const contourSeeds = getVectorStrokeContourSeedEntries(obj);
+        if (texturedStrokeRenderStyle.kind === 'texture-mask-dab') {
           if (typeof obj.calcTransformMatrix === 'function') {
-            const contourPaths = getVectorObjectContourPaths(obj);
-            const transformedContours = contourPaths.map((contour, contourIndex) => ({
-              closed: contour.closed,
-              contourSeed: contourSeeds[contourIndex]?.contourSeed ?? contourIndex,
-              points: contour.points,
-            }));
+            const transformedContours = getTransformedVectorStrokeContours(obj, contourSeeds);
             rendered = drawVectorStrokeBrushTextureMaskPath(
               ctx,
-              resolvedRenderStyle,
+              texturedStrokeRenderStyle,
               transformedContours,
               {
                 canvasWidth,
@@ -1406,11 +1508,11 @@ function renderVectorTextureDecorationsForObject(
           }
         } else {
           const contourPaths = getVectorObjectContourPaths(obj);
-          if (contourPaths.length === localContourPaths.length) {
+          if (contourPaths.length === contourSeeds.length) {
             for (let contourIndex = 0; contourIndex < contourPaths.length; contourIndex += 1) {
               const contour = contourPaths[contourIndex];
               const contourSeed = contourSeeds[contourIndex]?.contourSeed;
-              rendered = drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, resolvedRenderStyle, {
+              rendered = drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, texturedStrokeRenderStyle, {
                 contourSeed,
               }) || rendered;
             }
