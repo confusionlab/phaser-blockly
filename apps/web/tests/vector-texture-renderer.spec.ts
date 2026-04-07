@@ -26,6 +26,43 @@ test.describe('vector texture renderer', () => {
     expect(result.strokeMaskPath).toBe('/vector-materials/crayon/dab-mask.png');
   });
 
+  test('uses the shared crayon texture as a masked stroke field when assets are available', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { createVectorStrokeBrushRenderStyle } = await import('/src/lib/vector/vectorStrokeBrushCore.ts');
+      const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error(`Failed to load ${src}`));
+        image.src = src;
+      });
+
+      const [textureSource, maskSource] = await Promise.all([
+        loadImage('/vector-materials/crayon/texture.png'),
+        loadImage('/vector-materials/crayon/dab-mask.png'),
+      ]);
+
+      const renderStyle = createVectorStrokeBrushRenderStyle('crayon', '#2563eb', 18, {
+        textureSource,
+        maskSource,
+      });
+
+      return {
+        dabCount: 'dabs' in renderStyle ? renderStyle.dabs.length : 0,
+        kind: renderStyle.kind,
+        textureTileHeight: 'textureTile' in renderStyle ? renderStyle.textureTile.height : null,
+        textureTileWidth: 'textureTile' in renderStyle ? renderStyle.textureTile.width : null,
+      };
+    });
+
+    expect(result.kind).toBe('texture-mask-dab');
+    expect(result.dabCount).toBe(1);
+    expect(result.textureTileWidth).toBeGreaterThan(0);
+    expect(result.textureTileHeight).toBe(result.textureTileWidth);
+  });
+
   test('keeps textured stroke dab placement stable when the object translates', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');

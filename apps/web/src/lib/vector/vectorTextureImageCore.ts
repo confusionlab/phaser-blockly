@@ -163,6 +163,75 @@ export function createTintedTextureFromSource(options: {
   return canvas;
 }
 
+export function createAlphaMaskFromSource(options: {
+  minSampleSize?: number;
+  opacity?: number;
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+}): HTMLCanvasElement {
+  const canvas = createTextureCanvas(options.width, options.height);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return canvas;
+  }
+
+  const sampleDimensions = resolveTextureSampleDimensions(
+    options.width,
+    options.height,
+    options.minSampleSize,
+  );
+
+  const sourceCanvas = drawSourceToCanvas(
+    options.source,
+    sampleDimensions.width,
+    sampleDimensions.height,
+  );
+  const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+  if (!sourceCtx) {
+    return canvas;
+  }
+
+  const sourcePixels = sourceCtx.getImageData(
+    0,
+    0,
+    sampleDimensions.width,
+    sampleDimensions.height,
+  ).data;
+  const sampledCanvas = createTextureCanvas(sampleDimensions.width, sampleDimensions.height);
+  const sampledCtx = sampledCanvas.getContext('2d');
+  if (!sampledCtx) {
+    return canvas;
+  }
+
+  const output = sampledCtx.createImageData(sampleDimensions.width, sampleDimensions.height);
+  const opacity = clampUnit(options.opacity ?? 1);
+
+  for (let pixelIndex = 0; pixelIndex < output.data.length; pixelIndex += 4) {
+    const alpha = clampUnit(sampleSourceStrength(sourcePixels, pixelIndex) * opacity);
+    output.data[pixelIndex] = 255;
+    output.data[pixelIndex + 1] = 255;
+    output.data[pixelIndex + 2] = 255;
+    output.data[pixelIndex + 3] = Math.round(alpha * 255);
+  }
+
+  sampledCtx.putImageData(output, 0, 0);
+  ctx.clearRect(0, 0, options.width, options.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(
+    sampledCanvas,
+    0,
+    0,
+    sampleDimensions.width,
+    sampleDimensions.height,
+    0,
+    0,
+    options.width,
+    options.height,
+  );
+  return canvas;
+}
+
 export function canvasHasVisibleAlpha(
   canvas: HTMLCanvasElement,
   minimumAlpha = 1,

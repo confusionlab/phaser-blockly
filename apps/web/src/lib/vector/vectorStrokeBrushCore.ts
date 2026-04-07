@@ -1,6 +1,7 @@
 import { createVectorCrayonDab } from './vectorCrayonTextureCore';
 import { getVectorTextureMaterial } from './vectorTextureMaterialCore';
 import {
+  createAlphaMaskFromSource,
   canvasHasVisibleAlpha,
   createTintedTextureFromSource,
 } from './vectorTextureImageCore';
@@ -21,6 +22,8 @@ export interface VectorStrokeBrushPreset {
   maskPath?: string;
   texturePath?: string;
   dabAspectRatio: number;
+  textureOpacity?: number;
+  textureTileSize?: number;
   spacingRatio: number;
   opacity: number;
   opacityJitter: number;
@@ -37,9 +40,8 @@ export interface VectorStrokeBrushBitmapDab {
   width: number;
 }
 
-export interface VectorStrokeBrushRenderStyle {
+interface VectorStrokeBrushDabRenderStyleBase {
   dabs: VectorStrokeBrushBitmapDab[];
-  kind: 'solid' | 'bitmap-dab';
   opacityJitter: number;
   rotationJitter: number;
   scaleJitter: number;
@@ -47,6 +49,31 @@ export interface VectorStrokeBrushRenderStyle {
   spacing: number;
   wiggle: number;
 }
+
+export interface VectorStrokeBrushSolidRenderStyle {
+  dabs: [];
+  kind: 'solid';
+  opacityJitter: 0;
+  rotationJitter: 0;
+  scaleJitter: 0;
+  scatter: 0;
+  spacing: number;
+  wiggle: number;
+}
+
+export interface VectorStrokeBrushBitmapDabRenderStyle extends VectorStrokeBrushDabRenderStyleBase {
+  kind: 'bitmap-dab';
+}
+
+export interface VectorStrokeBrushTextureMaskRenderStyle extends VectorStrokeBrushDabRenderStyleBase {
+  kind: 'texture-mask-dab';
+  textureTile: HTMLCanvasElement;
+}
+
+export type VectorStrokeBrushRenderStyle =
+  | VectorStrokeBrushSolidRenderStyle
+  | VectorStrokeBrushBitmapDabRenderStyle
+  | VectorStrokeBrushTextureMaskRenderStyle;
 
 export interface CreateVectorStrokeBrushRenderStyleOptions {
   maskSource?: CanvasImageSource | null;
@@ -86,6 +113,8 @@ export const VECTOR_STROKE_BRUSH_PRESETS: Record<VectorStrokeBrushId, VectorStro
     texturePath: CRAYON_MATERIAL.texturePath,
     maskPath: CRAYON_MATERIAL.strokeMaskPath,
     dabAspectRatio: CRAYON_MATERIAL.stroke.dabAspectRatio,
+    textureOpacity: CRAYON_MATERIAL.fill.opacity,
+    textureTileSize: CRAYON_MATERIAL.fill.tileSize,
     spacingRatio: CRAYON_MATERIAL.stroke.spacingRatio,
     opacity: CRAYON_MATERIAL.stroke.opacity,
     opacityJitter: CRAYON_MATERIAL.stroke.opacityJitter,
@@ -155,9 +184,47 @@ export function createVectorStrokeBrushRenderStyle(
   const dabWidth = Math.max(MINIMUM_DAB_SIZE, Math.round(dabHeight * preset.dabAspectRatio));
   const textureSource = options.textureSource;
   const maskSource = options.maskSource;
+  if (textureSource && maskSource) {
+    const textureTileSize = Math.max(
+      MINIMUM_DAB_SIZE,
+      Math.round(preset.textureTileSize ?? dabWidth),
+    );
+    const textureTile = createTintedTextureFromSource({
+      color: strokeColor,
+      textureSource,
+      width: textureTileSize,
+      height: textureTileSize,
+      opacity: preset.textureOpacity ?? 1,
+    });
+    const maskDab = createAlphaMaskFromSource({
+      source: maskSource,
+      width: dabWidth,
+      height: dabHeight,
+      opacity: 1,
+      minSampleSize: 48,
+    });
+    if (canvasHasVisibleAlpha(maskDab) && canvasHasVisibleAlpha(textureTile)) {
+      return {
+        kind: 'texture-mask-dab',
+        dabs: [{
+          image: maskDab,
+          width: maskDab.width,
+          height: maskDab.height,
+          opacity: preset.opacity,
+        }],
+        spacing: Math.max(1, strokeWidth * preset.spacingRatio),
+        opacityJitter: preset.opacityJitter,
+        rotationJitter: preset.rotationJitter,
+        scaleJitter: preset.scaleJitter,
+        scatter: strokeWidth * preset.scatterRatio,
+        textureTile,
+        wiggle,
+      };
+    }
+  }
+
   const dabCount = textureSource ? 1 : preset.variantCount;
   const dabs: VectorStrokeBrushBitmapDab[] = [];
-
   for (let index = 0; index < dabCount; index += 1) {
     const seed = index + 1;
     const image = textureSource

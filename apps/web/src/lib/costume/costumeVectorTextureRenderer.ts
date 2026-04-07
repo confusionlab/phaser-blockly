@@ -32,6 +32,13 @@ const vectorTextureCache = new Map<string, HTMLImageElement | null>();
 const vectorTexturePending = new Set<string>();
 const vectorTextureReadyListeners = new Map<string, Set<() => void>>();
 
+function createScratchCanvas(width: number, height: number) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width));
+  canvas.height = Math.max(1, Math.round(height));
+  return canvas;
+}
+
 function rememberVectorStrokeBrushRenderStyle(
   cacheKey: string,
   renderStyle: VectorStrokeBrushRenderStyle,
@@ -761,26 +768,26 @@ function getStableContourSeed(
   );
 }
 
-function drawVectorStrokeBrushPath(
+function drawVectorStrokeBrushDabsAlongPath(
   ctx: CanvasRenderingContext2D,
   points: Point[],
   closed: boolean,
-  renderStyle: VectorStrokeBrushRenderStyle,
+  renderStyle: Extract<VectorStrokeBrushRenderStyle, { kind: 'bitmap-dab' | 'texture-mask-dab' }>,
   options: {
     contourSeed?: number;
   } = {},
-) {
-  if (renderStyle.kind !== 'bitmap-dab' || renderStyle.dabs.length === 0 || points.length < 2) {
-    return;
+) : boolean {
+  if (renderStyle.dabs.length === 0 || points.length < 2) {
+    return false;
   }
 
   const pathPoints = buildClosedPolylinePoints(points, closed);
   if (pathPoints.length < 2) {
-    return;
+    return false;
   }
   const { cumulativeLengths, totalLength } = buildPolylineArcTable(pathPoints);
   if (totalLength <= 0) {
-    return;
+    return false;
   }
 
   const tangentWindow = Math.max(1, renderStyle.spacing * 0.85);
@@ -851,8 +858,6 @@ function drawVectorStrokeBrushPath(
     ctx.restore();
   };
 
-  ctx.save();
-  ctx.imageSmoothingEnabled = true;
   let dabIndex = 0;
   for (let distanceAlongPath = 0; distanceAlongPath < totalLength; distanceAlongPath += renderStyle.spacing) {
     renderDabAt(distanceAlongPath, dabIndex);
@@ -861,7 +866,103 @@ function drawVectorStrokeBrushPath(
   if (!closed) {
     renderDabAt(totalLength, dabIndex);
   }
+  return true;
+}
+
+function drawVectorStrokeBrushPath(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  closed: boolean,
+  renderStyle: VectorStrokeBrushRenderStyle,
+  options: {
+    contourSeed?: number;
+  } = {},
+) {
+  if (renderStyle.kind !== 'bitmap-dab') {
+    return false;
+  }
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  const rendered = drawVectorStrokeBrushDabsAlongPath(ctx, points, closed, renderStyle, options);
   ctx.restore();
+  return rendered;
+}
+
+function drawVectorStrokeBrushTextureMaskPath(
+  ctx: CanvasRenderingContext2D,
+  renderStyle: Extract<VectorStrokeBrushRenderStyle, { kind: 'texture-mask-dab' }>,
+  contours: Array<{ closed: boolean; points: Point[]; contourSeed: number }>,
+  options: {
+    canvasHeight: number;
+    canvasWidth: number;
+    contextTransform?: number[] | null;
+    objectTransform?: number[] | null;
+  },
+) {
+  if (contours.length === 0) {
+    return false;
+  }
+
+  const maskCanvas = createScratchCanvas(options.canvasWidth, options.canvasHeight);
+  const maskCtx = getCanvas2dContext(maskCanvas);
+  if (!maskCtx) {
+    return false;
+  }
+
+  maskCtx.save();
+  if (options.contextTransform) {
+    applyContextTransform(maskCtx, options.contextTransform);
+  }
+  if (options.objectTransform) {
+    maskCtx.transform(
+      options.objectTransform[0] ?? 1,
+      options.objectTransform[1] ?? 0,
+      options.objectTransform[2] ?? 0,
+      options.objectTransform[3] ?? 1,
+      options.objectTransform[4] ?? 0,
+      options.objectTransform[5] ?? 0,
+    );
+  }
+  maskCtx.imageSmoothingEnabled = true;
+
+  let rendered = false;
+  for (const contour of contours) {
+    rendered = drawVectorStrokeBrushDabsAlongPath(
+      maskCtx,
+      contour.points,
+      contour.closed,
+      renderStyle,
+      { contourSeed: contour.contourSeed },
+    ) || rendered;
+  }
+
+  if (rendered) {
+    const pattern = maskCtx.createPattern(renderStyle.textureTile, 'repeat');
+    if (!pattern) {
+      maskCtx.restore();
+      return false;
+    }
+    maskCtx.globalCompositeOperation = 'source-in';
+    maskCtx.fillStyle = pattern;
+    maskCtx.fillRect(
+      -options.canvasWidth,
+      -options.canvasHeight,
+      options.canvasWidth * 3,
+      options.canvasHeight * 3,
+    );
+  }
+  maskCtx.restore();
+
+  if (!rendered) {
+    return false;
+  }
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(maskCanvas, 0, 0);
+  ctx.restore();
+  return true;
 }
 
 export function renderVectorStrokeBrushPreview(
@@ -925,16 +1026,28 @@ export function renderVectorStrokeBrushPreview(
 
   ctx.save();
   ctx.globalAlpha = strokeOpacity;
-  drawVectorStrokeBrushPath(
-    ctx,
-    [
+  const previewContours = [{
+    closed: false,
+    contourSeed: hashNumberTriplet(startX, centerY, endX),
+    points: [
       new Point(startX, centerY),
       new Point(endX, centerY),
     ],
-    false,
-    renderStyle,
-    {},
-  );
+  }];
+  if (renderStyle.kind === 'texture-mask-dab') {
+    drawVectorStrokeBrushTextureMaskPath(ctx, renderStyle, previewContours, {
+      canvasWidth,
+      canvasHeight,
+    });
+  } else {
+    drawVectorStrokeBrushPath(
+      ctx,
+      previewContours[0].points,
+      false,
+      renderStyle,
+      { contourSeed: previewContours[0].contourSeed },
+    );
+  }
   ctx.restore();
 }
 
@@ -1196,7 +1309,7 @@ function renderVectorTextureDecorationsForObject(
         getVectorObjectStrokeWiggle(obj),
         options.onTextureSourceReady,
       );
-      if (renderStyle && renderStyle.kind === 'bitmap-dab') {
+      if (renderStyle && renderStyle.kind !== 'solid') {
         const objectOpacity = getVectorObjectStrokeOpacity(obj) ?? 1;
         const resolvedRenderStyle = objectOpacity === 1
           ? renderStyle
@@ -1209,15 +1322,35 @@ function renderVectorTextureDecorationsForObject(
             };
 
         const localContourPaths = getVectorObjectLocalContourPaths(obj);
-        const contourPaths = getVectorObjectContourPaths(obj);
-        if (contourPaths.length === localContourPaths.length) {
-          for (let contourIndex = 0; contourIndex < contourPaths.length; contourIndex += 1) {
-            const contour = contourPaths[contourIndex];
-            const localContour = localContourPaths[contourIndex];
-            drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, resolvedRenderStyle, {
-              contourSeed: getStableContourSeed(localContour.points, localContour.closed, contourIndex),
-            });
-            rendered = true;
+        const contourSeeds = localContourPaths.map((localContour, contourIndex) => ({
+          closed: localContour.closed,
+          contourSeed: getStableContourSeed(localContour.points, localContour.closed, contourIndex),
+          points: localContour.points,
+        }));
+        if (resolvedRenderStyle.kind === 'texture-mask-dab') {
+          if (typeof obj.calcTransformMatrix === 'function') {
+            rendered = drawVectorStrokeBrushTextureMaskPath(
+              ctx,
+              resolvedRenderStyle,
+              contourSeeds,
+              {
+                canvasWidth,
+                canvasHeight,
+                contextTransform: options.contextTransform,
+                objectTransform: obj.calcTransformMatrix(),
+              },
+            ) || rendered;
+          }
+        } else {
+          const contourPaths = getVectorObjectContourPaths(obj);
+          if (contourPaths.length === localContourPaths.length) {
+            for (let contourIndex = 0; contourIndex < contourPaths.length; contourIndex += 1) {
+              const contour = contourPaths[contourIndex];
+              const contourSeed = contourSeeds[contourIndex]?.contourSeed;
+              rendered = drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, resolvedRenderStyle, {
+                contourSeed,
+              }) || rendered;
+            }
           }
         }
       }
