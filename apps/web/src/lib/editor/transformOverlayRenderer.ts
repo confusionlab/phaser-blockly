@@ -31,6 +31,46 @@ export interface ScreenSpaceTransformOverlayOptions {
   strokeWidth?: number;
 }
 
+export interface SelectionMarqueeRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface SelectionMarqueeOverlayOptions {
+  dash?: [number, number];
+  fillColor?: string;
+  lineWidth?: number;
+  strokeColor?: string;
+}
+
+export function renderSelectionMarqueeOverlay(
+  ctx: CanvasRenderingContext2D,
+  rect: SelectionMarqueeRect,
+  options: SelectionMarqueeOverlayOptions = {},
+): void {
+  const selectionTokens = getResolvedEditorSelectionTokens();
+  const {
+    dash = [8, 6],
+    fillColor = selectionTokens.fill,
+    lineWidth = 1.5,
+    strokeColor = selectionTokens.accent,
+  } = options;
+
+  ctx.save();
+  try {
+    ctx.fillStyle = fillColor;
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = lineWidth;
+    ctx.setLineDash(dash);
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+    ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  } finally {
+    ctx.restore();
+  }
+}
+
 export function renderScreenSpaceTransformOverlay(
   ctx: CanvasRenderingContext2D,
   corners: TransformGizmoCorners,

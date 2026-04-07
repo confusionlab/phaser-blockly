@@ -1,5 +1,6 @@
-import Color from 'color';
 import { createVectorCrayonTile } from './vectorCrayonTextureCore';
+import { getVectorTextureMaterial } from './vectorTextureMaterialCore';
+import { createTintedTextureFromSource } from './vectorTextureImageCore';
 
 export type VectorFillTextureId = 'solid' | 'crayon';
 
@@ -20,6 +21,7 @@ export interface VectorFillTexturePreset {
 }
 
 const DEFAULT_TILE_SIZE = 160;
+const CRAYON_MATERIAL = getVectorTextureMaterial('crayon');
 
 export const DEFAULT_VECTOR_FILL_TEXTURE_ID: VectorFillTextureId = 'solid';
 
@@ -40,66 +42,11 @@ export const VECTOR_FILL_TEXTURE_PRESETS: Record<VectorFillTextureId, VectorFill
     id: 'crayon',
     label: 'Crayon',
     kind: 'textured',
-    tileSize: DEFAULT_TILE_SIZE,
-    opacity: 0.76,
+    texturePath: CRAYON_MATERIAL.texturePath,
+    tileSize: CRAYON_MATERIAL.fill.tileSize,
+    opacity: CRAYON_MATERIAL.fill.opacity,
   },
 };
-
-function resolveTextureSourceDimension(value: unknown, fallback: number) {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return value;
-  }
-  if (
-    value &&
-    typeof value === 'object' &&
-    'baseVal' in value &&
-    value.baseVal &&
-    typeof value.baseVal === 'object' &&
-    'value' in value.baseVal
-  ) {
-    const animatedValue = Number(value.baseVal.value);
-    if (Number.isFinite(animatedValue) && animatedValue > 0) {
-      return animatedValue;
-    }
-  }
-  return fallback;
-}
-
-function createTileCanvas(size: number) {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  return canvas;
-}
-
-function tintCanvasFromSource(
-  source: CanvasImageSource,
-  fillColor: string,
-  tileSize: number,
-  opacity: number,
-) {
-  const canvas = createTileCanvas(tileSize);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return canvas;
-  }
-
-  const sourceWidth = resolveTextureSourceDimension(
-    'videoWidth' in source ? source.videoWidth : 'naturalWidth' in source ? source.naturalWidth : 'width' in source ? source.width : tileSize,
-    tileSize,
-  );
-  const sourceHeight = resolveTextureSourceDimension(
-    'videoHeight' in source ? source.videoHeight : 'naturalHeight' in source ? source.naturalHeight : 'height' in source ? source.height : tileSize,
-    tileSize,
-  );
-
-  ctx.drawImage(source, 0, 0, sourceWidth, sourceHeight, 0, 0, tileSize, tileSize);
-  ctx.globalCompositeOperation = 'source-in';
-  ctx.fillStyle = Color(fillColor).alpha(opacity).rgb().string();
-  ctx.fillRect(0, 0, tileSize, tileSize);
-  ctx.globalCompositeOperation = 'source-over';
-  return canvas;
-}
 
 export function parseVectorFillTextureId(value: unknown): VectorFillTextureId {
   if (value === 'solid') {
@@ -135,7 +82,13 @@ export function createVectorFillTextureTile(
   }
 
   if (textureSource) {
-    return tintCanvasFromSource(textureSource, fillColor, preset.tileSize, preset.opacity);
+    return createTintedTextureFromSource({
+      color: fillColor,
+      textureSource,
+      width: preset.tileSize,
+      height: preset.tileSize,
+      opacity: preset.opacity,
+    });
   }
 
   return createVectorCrayonTile(fillColor, preset.tileSize, preset.opacity);

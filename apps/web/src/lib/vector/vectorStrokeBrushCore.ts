@@ -1,4 +1,9 @@
 import { createVectorCrayonDab } from './vectorCrayonTextureCore';
+import { getVectorTextureMaterial } from './vectorTextureMaterialCore';
+import {
+  canvasHasVisibleAlpha,
+  createTintedTextureFromSource,
+} from './vectorTextureImageCore';
 
 export type VectorStrokeBrushId = 'solid' | 'crayon';
 
@@ -13,6 +18,7 @@ export interface VectorStrokeBrushPreset {
   id: VectorStrokeBrushId;
   label: string;
   kind: 'solid' | 'bitmap-dab';
+  maskPath?: string;
   texturePath?: string;
   dabAspectRatio: number;
   spacingRatio: number;
@@ -43,11 +49,13 @@ export interface VectorStrokeBrushRenderStyle {
 }
 
 export interface CreateVectorStrokeBrushRenderStyleOptions {
+  maskSource?: CanvasImageSource | null;
   textureSource?: CanvasImageSource | null;
   wiggle?: number;
 }
 
 const MINIMUM_DAB_SIZE = 8;
+const CRAYON_MATERIAL = getVectorTextureMaterial('crayon');
 
 export const DEFAULT_VECTOR_STROKE_BRUSH_ID: VectorStrokeBrushId = 'solid';
 export const DEFAULT_VECTOR_STROKE_WIGGLE = 0;
@@ -75,14 +83,16 @@ export const VECTOR_STROKE_BRUSH_PRESETS: Record<VectorStrokeBrushId, VectorStro
     id: 'crayon',
     label: 'Crayon',
     kind: 'bitmap-dab',
-    dabAspectRatio: 1.08,
-    spacingRatio: 0.1,
-    opacity: 0.78,
-    opacityJitter: 0.14,
-    scaleJitter: 0.1,
-    rotationJitter: 0.12,
-    scatterRatio: 0.05,
-    variantCount: 4,
+    texturePath: CRAYON_MATERIAL.texturePath,
+    maskPath: CRAYON_MATERIAL.strokeMaskPath,
+    dabAspectRatio: CRAYON_MATERIAL.stroke.dabAspectRatio,
+    spacingRatio: CRAYON_MATERIAL.stroke.spacingRatio,
+    opacity: CRAYON_MATERIAL.stroke.opacity,
+    opacityJitter: CRAYON_MATERIAL.stroke.opacityJitter,
+    scaleJitter: CRAYON_MATERIAL.stroke.scaleJitter,
+    rotationJitter: CRAYON_MATERIAL.stroke.rotationJitter,
+    scatterRatio: CRAYON_MATERIAL.stroke.scatterRatio,
+    variantCount: CRAYON_MATERIAL.stroke.variantCount,
   },
 };
 
@@ -116,61 +126,6 @@ export function isLegacyVectorStrokeBrushId(value: unknown): value is LegacyVect
   return value === 'marker' || value === 'ink' || value === 'chalk';
 }
 
-function resolveTextureSourceDimension(value: unknown, fallback: number) {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return value;
-  }
-  if (
-    value &&
-    typeof value === 'object' &&
-    'baseVal' in value &&
-    value.baseVal &&
-    typeof value.baseVal === 'object' &&
-    'value' in value.baseVal
-  ) {
-    const animatedValue = Number(value.baseVal.value);
-    if (Number.isFinite(animatedValue) && animatedValue > 0) {
-      return animatedValue;
-    }
-  }
-  return fallback;
-}
-
-function createBrushCanvas(width: number, height: number) {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  return canvas;
-}
-
-function tintTextureSource(
-  source: CanvasImageSource,
-  color: string,
-  width: number,
-  height: number,
-) {
-  const canvas = createBrushCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return canvas;
-  }
-
-  const sourceWidth = resolveTextureSourceDimension(
-    'videoWidth' in source ? source.videoWidth : 'naturalWidth' in source ? source.naturalWidth : 'width' in source ? source.width : width,
-    width,
-  );
-  const sourceHeight = resolveTextureSourceDimension(
-    'videoHeight' in source ? source.videoHeight : 'naturalHeight' in source ? source.naturalHeight : 'height' in source ? source.height : height,
-    height,
-  );
-  ctx.drawImage(source, 0, 0, sourceWidth, sourceHeight, 0, 0, width, height);
-  ctx.globalCompositeOperation = 'source-in';
-  ctx.fillStyle = color;
-  ctx.fillRect(0, 0, width, height);
-  ctx.globalCompositeOperation = 'source-over';
-  return canvas;
-}
-
 export function getVectorStrokeBrushPreset(brushId: VectorStrokeBrushId | null | undefined): VectorStrokeBrushPreset {
   return VECTOR_STROKE_BRUSH_PRESETS[parseVectorStrokeBrushId(brushId)] ?? VECTOR_STROKE_BRUSH_PRESETS[DEFAULT_VECTOR_STROKE_BRUSH_ID];
 }
@@ -199,18 +154,30 @@ export function createVectorStrokeBrushRenderStyle(
   const dabHeight = Math.max(MINIMUM_DAB_SIZE, Math.round(strokeWidth));
   const dabWidth = Math.max(MINIMUM_DAB_SIZE, Math.round(dabHeight * preset.dabAspectRatio));
   const textureSource = options.textureSource;
+  const maskSource = options.maskSource;
   const dabCount = textureSource ? 1 : preset.variantCount;
   const dabs: VectorStrokeBrushBitmapDab[] = [];
 
   for (let index = 0; index < dabCount; index += 1) {
     const seed = index + 1;
     const image = textureSource
-      ? tintTextureSource(textureSource, strokeColor, dabWidth, dabHeight)
+      ? createTintedTextureFromSource({
+          color: strokeColor,
+          textureSource,
+          maskSource,
+          width: dabWidth,
+          height: dabHeight,
+          opacity: 1,
+          minSampleSize: 48,
+        })
+      : null;
+    const resolvedImage = image && canvasHasVisibleAlpha(image)
+      ? image
       : createVectorCrayonDab(strokeColor, dabWidth, dabHeight, seed);
     dabs.push({
-      image,
-      width: image.width,
-      height: image.height,
+      image: resolvedImage,
+      width: resolvedImage.width,
+      height: resolvedImage.height,
       opacity: preset.opacity,
     });
   }

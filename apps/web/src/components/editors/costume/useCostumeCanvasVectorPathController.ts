@@ -29,7 +29,10 @@ import {
   type SelectedPathAnchorTransformSnapshot,
 } from './costumeCanvasShared';
 import { applyCanvasCursor } from './costumeCanvasBitmapRuntime';
-import { getFabricObjectType } from './costumeCanvasVectorRuntime';
+import {
+  getFabricObjectType,
+  getVectorPathClosureIntent,
+} from './costumeCanvasVectorRuntime';
 import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   type TransformGizmoCorner,
@@ -124,15 +127,8 @@ export function useCostumeCanvasVectorPathController({
   }, [getCommandType, getPathCommands]);
 
   const isClosedPath = useCallback((pathObj: any): boolean => {
-    const commands = getPathCommands(pathObj);
-    if (commands.length === 0) return false;
-    if (commands.some((command) => getCommandType(command) === 'Z')) return true;
-    const start = getCommandEndpoint(commands[0]);
-    const lastIndex = getLastDrawableCommandIndex(pathObj);
-    const end = lastIndex >= 0 ? getCommandEndpoint(commands[lastIndex]) : null;
-    if (!start || !end) return false;
-    return isNearlyEqual(start.x, end.x) && isNearlyEqual(start.y, end.y);
-  }, [getCommandEndpoint, getCommandType, getLastDrawableCommandIndex, getPathCommands, isNearlyEqual]);
+    return getVectorPathClosureIntent(pathObj);
+  }, []);
 
   const normalizeAnchorIndex = useCallback((pathObj: any, anchorIndex: number): number => {
     if (anchorIndex <= 0) return 0;
@@ -141,14 +137,9 @@ export function useCostumeCanvasVectorPathController({
     if (!isClosedPath(pathObj)) return anchorIndex;
     const lastDrawable = getLastDrawableCommandIndex(pathObj);
     if (anchorIndex !== lastDrawable) return anchorIndex;
-    const start = getCommandEndpoint(commands[0]);
-    const end = getCommandEndpoint(commands[anchorIndex]);
-    if (!start || !end) return anchorIndex;
-    if (isNearlyEqual(start.x, end.x) && isNearlyEqual(start.y, end.y)) {
-      return 0;
-    }
-    return anchorIndex;
-  }, [getCommandEndpoint, getLastDrawableCommandIndex, getPathCommands, isClosedPath, isNearlyEqual]);
+    const hasExplicitCloseCommand = commands.some((command) => getCommandType(command) === 'Z');
+    return hasExplicitCloseCommand ? anchorIndex : 0;
+  }, [getCommandType, getLastDrawableCommandIndex, getPathCommands, isClosedPath]);
 
   const getPathNodeHandleTypes = useCallback((pathObj: any): Record<string, VectorPathNodeHandleType> => {
     const raw = pathObj?.nodeHandleTypes;
@@ -1077,6 +1068,55 @@ export function useCostumeCanvasVectorPathController({
     pathObj.setCoords();
   }, [toParentPlanePoint]);
 
+  const getNormalizedAnchorCommandIndices = useCallback((pathObj: any, anchorIndex: number): number[] => {
+    const normalizedAnchor = normalizeAnchorIndex(pathObj, anchorIndex);
+    const commands = getPathCommands(pathObj);
+    const matchingCommandIndices: number[] = [];
+
+    commands.forEach((command, commandIndex) => {
+      if (getCommandType(command) === 'Z') {
+        return;
+      }
+      if (!getCommandEndpoint(command)) {
+        return;
+      }
+      if (normalizeAnchorIndex(pathObj, commandIndex) !== normalizedAnchor) {
+        return;
+      }
+      matchingCommandIndices.push(commandIndex);
+    });
+
+    return matchingCommandIndices;
+  }, [
+    getCommandEndpoint,
+    getCommandType,
+    getPathCommands,
+    normalizeAnchorIndex,
+  ]);
+
+  const setPathAnchorPoint = useCallback((pathObj: any, anchorIndex: number, nextAnchor: Point): boolean => {
+    const commands = getPathCommands(pathObj);
+    const anchorCommandIndices = getNormalizedAnchorCommandIndices(pathObj, anchorIndex);
+    if (anchorCommandIndices.length === 0) {
+      return false;
+    }
+
+    let changed = false;
+    anchorCommandIndices.forEach((commandIndex) => {
+      const command = commands[commandIndex];
+      if (!Array.isArray(command) || command.length < 3) {
+        return;
+      }
+      command[command.length - 2] = nextAnchor.x;
+      command[command.length - 1] = nextAnchor.y;
+      changed = true;
+    });
+    return changed;
+  }, [
+    getNormalizedAnchorCommandIndices,
+    getPathCommands,
+  ]);
+
   const movePathAnchorByDelta = useCallback((pathObj: any, anchorIndex: number, deltaX: number, deltaY: number, dragState?: PathAnchorDragState) => {
     if (Math.abs(deltaX) <= 0.0001 && Math.abs(deltaY) <= 0.0001) return false;
 
@@ -1093,8 +1133,7 @@ export function useCostumeCanvasVectorPathController({
         : null;
     if (!nextAnchor) return false;
 
-    anchorCommand[anchorCommand.length - 2] = nextAnchor.x;
-    anchorCommand[anchorCommand.length - 1] = nextAnchor.y;
+    if (!setPathAnchorPoint(pathObj, normalizedAnchor, nextAnchor)) return false;
 
     const incomingCommandIndex = findIncomingCubicCommandIndex(pathObj, normalizedAnchor);
     const outgoingCommandIndex = findOutgoingCubicCommandIndex(pathObj, normalizedAnchor);
@@ -1122,6 +1161,7 @@ export function useCostumeCanvasVectorPathController({
     getCommandType,
     getPathCommands,
     normalizeAnchorIndex,
+    setPathAnchorPoint,
   ]);
 
   const enforcePathAnchorHandleType = useCallback((pathObj: any, anchorIndex: number, changed: 'anchor' | 'incoming' | 'outgoing' | null, dragState?: PathAnchorDragState) => {
@@ -1129,6 +1169,10 @@ export function useCostumeCanvasVectorPathController({
     const normalizedAnchor = normalizeAnchorIndex(pathObj, anchorIndex);
     const anchorPoint = getAnchorPointForIndex(pathObj, normalizedAnchor);
     if (!anchorPoint) return;
+
+    if (changed === 'anchor') {
+      setPathAnchorPoint(pathObj, normalizedAnchor, anchorPoint);
+    }
 
     const handleType = getPathNodeHandleType(pathObj, anchorIndex) ?? 'corner';
     const incomingCommandIndex = findIncomingCubicCommandIndex(pathObj, normalizedAnchor);
@@ -1285,6 +1329,7 @@ export function useCostumeCanvasVectorPathController({
     getPathCommands,
     getPathNodeHandleType,
     normalizeAnchorIndex,
+    setPathAnchorPoint,
     stabilizePathAfterAnchorMutation,
   ]);
 

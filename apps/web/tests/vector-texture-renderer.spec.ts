@@ -3,6 +3,29 @@ import { expect, test } from '@playwright/test';
 const APP_URL = process.env.POCHA_E2E_BASE_URL ?? '/';
 
 test.describe('vector texture renderer', () => {
+  test('shares the same canonical crayon texture source between fill and stroke', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { getVectorFillTexturePreset } = await import('/src/lib/vector/vectorFillTextureCore.ts');
+      const { getVectorStrokeBrushPreset } = await import('/src/lib/vector/vectorStrokeBrushCore.ts');
+
+      const fillPreset = getVectorFillTexturePreset('crayon');
+      const strokePreset = getVectorStrokeBrushPreset('crayon');
+
+      return {
+        fillTexturePath: fillPreset.texturePath ?? null,
+        strokeTexturePath: strokePreset.texturePath ?? null,
+        strokeMaskPath: strokePreset.maskPath ?? null,
+      };
+    });
+
+    expect(result.fillTexturePath).toBe('/vector-materials/crayon/texture.svg');
+    expect(result.strokeTexturePath).toBe(result.fillTexturePath);
+    expect(result.strokeMaskPath).toBe('/vector-materials/crayon/dab-mask.svg');
+  });
+
   test('keeps textured stroke dab placement stable when the object translates', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');

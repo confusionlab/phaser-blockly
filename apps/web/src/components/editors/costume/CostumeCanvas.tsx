@@ -52,6 +52,7 @@ import {
   type ShapeDraftSession,
 } from './costumeCanvasShared';
 import { clearCanvasInCssPixels, syncCanvasViewportSize } from '@/lib/editor/canvasOverlay';
+import { renderSelectionMarqueeOverlay } from '@/lib/editor/transformOverlayRenderer';
 import { useCostumeCanvasColliderController } from './useCostumeCanvasColliderController';
 import { useCostumeCanvasFabricHostController } from './useCostumeCanvasFabricHostController';
 import { useCostumeCanvasHistoryController } from './useCostumeCanvasHistoryController';
@@ -615,22 +616,27 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const editorSelectionTokens = useMemo(() => getResolvedEditorSelectionTokens(), []);
 
   const drawBitmapSelectionOverlay = useCallback(() => {
-    const overlayCtx = bitmapSelectionCtxRef.current;
+    const overlayCanvas = bitmapSelectionCanvasRef.current;
+    const overlayCtx = bitmapSelectionCtxRef.current
+      ?? overlayCanvas?.getContext('2d')
+      ?? null;
+    if (overlayCtx && bitmapSelectionCtxRef.current !== overlayCtx) {
+      bitmapSelectionCtxRef.current = overlayCtx;
+    }
     if (!overlayCtx) return;
 
     overlayCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
     const marquee = bitmapMarqueeRectRef.current;
     if (marquee && bitmapSelectionDragModeRef.current === 'marquee') {
-      overlayCtx.fillStyle = editorSelectionTokens.fill;
-      overlayCtx.fillRect(marquee.x, marquee.y, marquee.width, marquee.height);
-      overlayCtx.strokeStyle = editorSelectionTokens.accent;
-      overlayCtx.lineWidth = 2;
-      overlayCtx.setLineDash([6, 6]);
-      overlayCtx.strokeRect(marquee.x, marquee.y, marquee.width, marquee.height);
-      overlayCtx.setLineDash([]);
+      renderSelectionMarqueeOverlay(overlayCtx, marquee, {
+        dash: [6, 6],
+        fillColor: editorSelectionTokens.fill,
+        lineWidth: 2,
+        strokeColor: editorSelectionTokens.accent,
+      });
     }
-  }, [editorSelectionTokens]);
+  }, [bitmapSelectionCanvasRef, editorSelectionTokens]);
 
   const {
     commitBitmapSelection,

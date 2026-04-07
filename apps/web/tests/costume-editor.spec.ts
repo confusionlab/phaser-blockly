@@ -413,6 +413,120 @@ async function readCostumeSelectionGizmoBluePixelCount(page: Page): Promise<numb
   });
 }
 
+async function readCostumeOverlayBluePixelCountInCanvasRegion(
+  page: Page,
+  region: { xFactor: number; yFactor: number; widthFactor: number; heightFactor: number },
+): Promise<number> {
+  return await page.evaluate((targetRegion) => {
+    const overlayCanvas = document.querySelector('[data-testid="costume-vector-guide-overlay"]');
+    const costumeSurface = document.querySelector('[data-testid="costume-canvas-surface"]');
+    if (!(overlayCanvas instanceof HTMLCanvasElement) || !(costumeSurface instanceof HTMLElement)) {
+      return 0;
+    }
+
+    const overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+    if (!overlayCtx) {
+      return 0;
+    }
+
+    const overlayRect = overlayCanvas.getBoundingClientRect();
+    const surfaceRect = costumeSurface.getBoundingClientRect();
+    if (overlayRect.width <= 0 || overlayRect.height <= 0 || surfaceRect.width <= 0 || surfaceRect.height <= 0) {
+      return 0;
+    }
+
+    const leftCss = surfaceRect.left + surfaceRect.width * targetRegion.xFactor;
+    const topCss = surfaceRect.top + surfaceRect.height * targetRegion.yFactor;
+    const widthCss = surfaceRect.width * targetRegion.widthFactor;
+    const heightCss = surfaceRect.height * targetRegion.heightFactor;
+
+    const left = Math.max(0, Math.floor((leftCss - overlayRect.left) * (overlayCanvas.width / overlayRect.width)));
+    const top = Math.max(0, Math.floor((topCss - overlayRect.top) * (overlayCanvas.height / overlayRect.height)));
+    const width = Math.max(1, Math.ceil(widthCss * (overlayCanvas.width / overlayRect.width)));
+    const height = Math.max(1, Math.ceil(heightCss * (overlayCanvas.height / overlayRect.height)));
+    const clampedWidth = Math.min(width, overlayCanvas.width - left);
+    const clampedHeight = Math.min(height, overlayCanvas.height - top);
+    if (clampedWidth <= 0 || clampedHeight <= 0) {
+      return 0;
+    }
+
+    const { data } = overlayCtx.getImageData(left, top, clampedWidth, clampedHeight);
+    let bluePixelCount = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      const red = data[index] ?? 0;
+      const green = data[index + 1] ?? 0;
+      const blue = data[index + 2] ?? 0;
+      const alpha = data[index + 3] ?? 0;
+      if (alpha > 64 && red < 90 && green > 110 && blue > 170) {
+        bluePixelCount += 1;
+      }
+    }
+
+    return bluePixelCount;
+  }, region);
+}
+
+async function readCostumeOverlayTopEdgeThickness(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const overlayCanvas = document.querySelector('[data-testid="costume-vector-guide-overlay"]');
+    if (!(overlayCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+    if (!overlayCtx) {
+      return 0;
+    }
+
+    const imageData = overlayCtx.getImageData(0, 0, overlayCanvas.width, overlayCanvas.height);
+    const { data, width, height } = imageData;
+    const isBluePixel = (x: number, y: number) => {
+      const index = (y * width + x) * 4;
+      const red = data[index] ?? 0;
+      const green = data[index + 1] ?? 0;
+      const blue = data[index + 2] ?? 0;
+      const alpha = data[index + 3] ?? 0;
+      return alpha > 64 && red < 90 && green > 110 && blue > 170;
+    };
+
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        if (!isBluePixel(x, y)) {
+          continue;
+        }
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+
+    if (maxX < minX || maxY < minY) {
+      return 0;
+    }
+
+    const sampleX = Math.max(minX, Math.min(maxX, Math.round((minX + maxX) / 2)));
+    let thickness = 0;
+    let started = false;
+    for (let y = minY; y <= Math.min(maxY, minY + 24); y += 1) {
+      if (isBluePixel(sampleX, y)) {
+        thickness += 1;
+        started = true;
+        continue;
+      }
+      if (started) {
+        break;
+      }
+    }
+
+    return thickness;
+  });
+}
+
 async function readOverlayOpaqueSampleCount(page: Page, selector: string): Promise<number> {
   return await page.evaluate((targetSelector) => {
     const canvas = document.querySelector(targetSelector);
@@ -1199,19 +1313,42 @@ test.describe('Costume editor tools', () => {
 
     await roundTripThroughCodeTab(page);
 
-    const box = await getCostumeCanvasBox(page);
-    const overlapSample = {
-      x: Math.round(box.width * 0.50),
-      y: Math.round(box.height * 0.50),
-    };
-
-    await expect.poll(async () => {
-      const overlap = await readCostumeEditorCompositePixel(page, overlapSample);
-      if (!overlap) {
-        return false;
+    const overlap = await page.evaluate(async () => {
+      const [{ useProjectStore }, { renderCostumeLayerToCanvas }] = await Promise.all([
+        import('/src/store/projectStore.ts'),
+        import('/src/lib/costume/costumeDocumentRender.ts'),
+      ]);
+      const project = useProjectStore.getState().project;
+      const scene = project?.scenes?.[0];
+      const object = scene?.objects?.[0];
+      const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+      const layer = costume?.document?.layers?.find((candidate) => candidate.id === costume.document?.activeLayerId);
+      if (!layer) {
+        return null;
       }
-      return overlap.a > 0 && overlap.r > overlap.g * 1.4;
-    }, { timeout: 10000 }).toBe(true);
+
+      const canvas = await renderCostumeLayerToCanvas(layer);
+      if (!canvas) {
+        return null;
+      }
+
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        return null;
+      }
+
+      const data = ctx.getImageData(500, 500, 1, 1).data;
+      return {
+        r: data[0] ?? 0,
+        g: data[1] ?? 0,
+        b: data[2] ?? 0,
+        a: data[3] ?? 0,
+      };
+    });
+
+    expect(overlap).not.toBeNull();
+    expect(overlap?.a ?? 0).toBeGreaterThan(0);
+    expect((overlap?.r ?? 0)).toBeGreaterThan((overlap?.g ?? 0) * 1.4);
   });
 
   test('grouped costume vector selections stay visible after Cmd/Ctrl+G', async ({ page }) => {
@@ -2346,6 +2483,159 @@ test.describe('Costume editor tools', () => {
     await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.52, 0.52);
 
     await expect.poll(async () => readCostumeSelectionGizmoBluePixelCount(page), { timeout: 10000 }).toBeGreaterThan(120);
+  });
+
+  test('pixel marquee selection stays visible while dragging in the costume editor', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+
+    const box = await getCostumeCanvasBox(page);
+    const startX = box.x + box.width * 0.18;
+    const startY = box.y + box.height * 0.18;
+    const endX = box.x + box.width * 0.52;
+    const endY = box.y + box.height * 0.52;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 12 });
+
+    await expect.poll(
+      async () => readOverlayOpaqueSampleCount(page, '[data-testid="costume-bitmap-selection-overlay"]'),
+      { timeout: 10000 },
+    ).toBeGreaterThan(10);
+
+    await page.mouse.up();
+  });
+
+  test('costume vector marquee selection box stays visible while dragging', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    expect(await readCostumeSelectionGizmoBluePixelCount(page)).toBeLessThan(40);
+
+    const box = await getCostumeCanvasBox(page);
+    const startX = box.x + box.width * 0.18;
+    const startY = box.y + box.height * 0.18;
+    const endX = box.x + box.width * 0.52;
+    const endY = box.y + box.height * 0.52;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 12 });
+
+    await expect.poll(async () => {
+      return await readCostumeOverlayBluePixelCountInCanvasRegion(page, {
+        xFactor: 0.16,
+        yFactor: 0.16,
+        widthFactor: 0.38,
+        heightFactor: 0.38,
+      });
+    }, { timeout: 10000 }).toBeGreaterThan(120);
+    await expect.poll(async () => {
+      return await readCostumeOverlayBluePixelCountInCanvasRegion(page, {
+        xFactor: 0.68,
+        yFactor: 0.16,
+        widthFactor: 0.16,
+        heightFactor: 0.28,
+      });
+    }, { timeout: 10000 }).toBeLessThan(20);
+
+    await page.mouse.up();
+  });
+
+  test('costume vector marquee highlights included objects instead of relying on hover', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.28, 0.28, 0.44, 0.44);
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, 0.1, 0.1);
+
+    await expect.poll(async () => {
+      return await readCostumeOverlayBluePixelCountInCanvasRegion(page, {
+        xFactor: 0.26,
+        yFactor: 0.26,
+        widthFactor: 0.20,
+        heightFactor: 0.20,
+      });
+    }, { timeout: 10000 }).toBeLessThan(10);
+
+    const box = await getCostumeCanvasBox(page);
+    await page.mouse.move(box.x + box.width * 0.12, box.y + box.height * 0.12);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.72, { steps: 12 });
+
+    await expect.poll(async () => {
+      return await readCostumeOverlayBluePixelCountInCanvasRegion(page, {
+        xFactor: 0.26,
+        yFactor: 0.26,
+        widthFactor: 0.20,
+        heightFactor: 0.20,
+      });
+    }, { timeout: 10000 }).toBeGreaterThan(20);
+
+    await page.mouse.up();
+  });
+
+  test('costume vector hover outline keeps a constant screen width across zoom levels', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.4, 0.4, 0.6, 0.6);
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, 0.5, 0.5);
+
+    const zoomButton = page.getByRole('button', { name: 'Zoom options' }).last();
+    const zoomToSelectionLabel = /zoom to selection/i;
+    await zoomButton.click();
+    await page.getByRole('menuitem', { name: zoomToSelectionLabel }).click();
+
+    await clickCostumeCanvas(page, 0.1, 0.1);
+
+    const box = await getCostumeCanvasBox(page);
+    const centerX = box.x + box.width * 0.5;
+    const centerY = box.y + box.height * 0.5;
+    await page.mouse.move(centerX, centerY);
+
+    await expect.poll(
+      async () => readCostumeOverlayTopEdgeThickness(page),
+      { timeout: 10000 },
+    ).toBeGreaterThan(0);
+    const initialThickness = await readCostumeOverlayTopEdgeThickness(page);
+
+    const initialZoomText = (await zoomButton.textContent())?.trim() ?? '';
+    await zoomButton.click();
+    await page.getByRole('menuitem', { name: /zoom in/i }).click();
+    await expect(zoomButton).not.toContainText(initialZoomText);
+
+    await page.mouse.move(centerX, centerY);
+    await expect.poll(
+      async () => readCostumeOverlayTopEdgeThickness(page),
+      { timeout: 10000 },
+    ).toBeGreaterThan(0);
+    const zoomedThickness = await readCostumeOverlayTopEdgeThickness(page);
+
+    expect(Math.abs(zoomedThickness - initialThickness)).toBeLessThanOrEqual(1);
   });
 
   test('costume editor chrome stays above the canvas stack on deeper layer stacks', async ({ page }) => {

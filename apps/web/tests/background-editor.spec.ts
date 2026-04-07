@@ -90,6 +90,59 @@ async function readBackgroundSelectionGizmoBluePixelCount(page: Page): Promise<n
   });
 }
 
+async function readBackgroundOverlayBluePixelCountInCanvasRegion(
+  page: Page,
+  region: { xFactor: number; yFactor: number; widthFactor: number; heightFactor: number },
+): Promise<number> {
+  return await page.evaluate((targetRegion) => {
+    const overlayCanvas = document.querySelector('[data-testid="background-vector-guide-overlay"]');
+    const backgroundCanvas = document.querySelector('[data-testid="background-vector-layer-canvas"]');
+    if (!(overlayCanvas instanceof HTMLCanvasElement) || !(backgroundCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+    if (!overlayCtx) {
+      return 0;
+    }
+
+    const overlayRect = overlayCanvas.getBoundingClientRect();
+    const backgroundRect = backgroundCanvas.getBoundingClientRect();
+    if (overlayRect.width <= 0 || overlayRect.height <= 0 || backgroundRect.width <= 0 || backgroundRect.height <= 0) {
+      return 0;
+    }
+
+    const leftCss = backgroundRect.left + backgroundRect.width * targetRegion.xFactor;
+    const topCss = backgroundRect.top + backgroundRect.height * targetRegion.yFactor;
+    const widthCss = backgroundRect.width * targetRegion.widthFactor;
+    const heightCss = backgroundRect.height * targetRegion.heightFactor;
+
+    const left = Math.max(0, Math.floor((leftCss - overlayRect.left) * (overlayCanvas.width / overlayRect.width)));
+    const top = Math.max(0, Math.floor((topCss - overlayRect.top) * (overlayCanvas.height / overlayRect.height)));
+    const width = Math.max(1, Math.ceil(widthCss * (overlayCanvas.width / overlayRect.width)));
+    const height = Math.max(1, Math.ceil(heightCss * (overlayCanvas.height / overlayRect.height)));
+    const clampedWidth = Math.min(width, overlayCanvas.width - left);
+    const clampedHeight = Math.min(height, overlayCanvas.height - top);
+    if (clampedWidth <= 0 || clampedHeight <= 0) {
+      return 0;
+    }
+
+    const { data } = overlayCtx.getImageData(left, top, clampedWidth, clampedHeight);
+    let bluePixelCount = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      const red = data[index] ?? 0;
+      const green = data[index + 1] ?? 0;
+      const blue = data[index + 2] ?? 0;
+      const alpha = data[index + 3] ?? 0;
+      if (alpha > 64 && red < 90 && green > 110 && blue > 170) {
+        bluePixelCount += 1;
+      }
+    }
+
+    return bluePixelCount;
+  }, region);
+}
+
 async function readBackgroundBrushCursorOverlay(page: Page): Promise<{
   cursor: string;
   height: number;
@@ -706,7 +759,7 @@ test.describe('Background editor', () => {
 
   test('closing the editor keeps committed edits in history', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
-    const { root, box } = await openBackgroundEditor(page);
+    const { box } = await openBackgroundEditor(page);
 
     const chunkCountBefore = await readBackgroundChunkCount(page);
     const startX = box.x + box.width * 0.25;
@@ -1011,6 +1064,53 @@ test.describe('Background editor', () => {
       const secondVisible = secondPixel.a > 0 && JSON.stringify(secondPixel) !== JSON.stringify(outsidePixel);
       return firstVisible && secondVisible;
     }, { timeout: 10000 }).toBe(true);
+  });
+
+  test('background vector marquee highlights included objects instead of relying on hover', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+    await expect(vectorCanvas).toBeVisible();
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.28, editor.box.y + editor.box.height * 0.28);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.44, editor.box.y + editor.box.height * 0.44, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({
+      position: {
+        x: Math.round(editor.box.width * 0.10),
+        y: Math.round(editor.box.height * 0.10),
+      },
+    });
+
+    await expect.poll(async () => {
+      return await readBackgroundOverlayBluePixelCountInCanvasRegion(page, {
+        xFactor: 0.26,
+        yFactor: 0.26,
+        widthFactor: 0.20,
+        heightFactor: 0.20,
+      });
+    }, { timeout: 10000 }).toBeLessThan(10);
+
+    await page.mouse.move(editor.box.x + editor.box.width * 0.12, editor.box.y + editor.box.height * 0.12);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.72, editor.box.y + editor.box.height * 0.72, { steps: 12 });
+
+    await expect.poll(async () => {
+      return await readBackgroundOverlayBluePixelCountInCanvasRegion(page, {
+        xFactor: 0.26,
+        yFactor: 0.26,
+        widthFactor: 0.20,
+        heightFactor: 0.20,
+      });
+    }, { timeout: 10000 }).toBeGreaterThan(20);
+
+    await page.mouse.up();
   });
 
   test('double-clicking a grouped background object enters the group and selects the clicked child', async ({ page }) => {
@@ -1589,7 +1689,7 @@ test.describe('Background editor', () => {
     expect(strokeColors).toContain('#0000FF');
   });
 
-  test('explicitly choosing the first mixed texture and brush still applies across the selection', async ({ page }) => {
+  test('collapsing textured fills leaves only the stroke brush mixed across the selection', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 
     const editor = await openBackgroundEditor(page);
@@ -1608,7 +1708,7 @@ test.describe('Background editor', () => {
 
     await page.getByRole('button', { name: /^solid$/i }).first().click();
     await page.getByRole('menuitemradio', { name: /^crayon$/i }).click();
-    await page.getByRole('button', { name: /^crayon$/i }).click();
+    await page.getByRole('button', { name: /^crayon$/i }).last().click();
     await page.getByRole('menuitemradio', { name: /^crayon$/i }).click();
     await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.36);
     await page.mouse.down();
@@ -1625,12 +1725,7 @@ test.describe('Background editor', () => {
     });
     await page.keyboard.up('Shift');
 
-    await expect(propertyBar.getByText('Multiple')).toHaveCount(2);
-
-    await page.getByRole('button', { name: /^multiple$/i }).first().click();
-    await page.getByRole('menuitemradio', { name: /^solid$/i }).click();
-    await page.getByRole('button', { name: /^multiple$/i }).first().click();
-    await page.getByRole('menuitemradio', { name: /^crayon$/i }).click();
+    await expect(propertyBar.getByText('Multiple')).toHaveCount(1);
 
     await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
@@ -1638,7 +1733,7 @@ test.describe('Background editor', () => {
     await expect.poll(async () => readSavedBackgroundVectorObjectPaintStyles(page), { timeout: 10000 }).toHaveLength(2);
     const savedStyles = await readSavedBackgroundVectorObjectPaintStyles(page);
 
-    expect(savedStyles.map((style) => style.strokeBrushId)).toEqual(['solid', 'solid']);
+    expect(savedStyles.map((style) => style.strokeBrushId)).toEqual(['solid', 'crayon']);
     expect(savedStyles.map((style) => style.fillTextureId)).toEqual(['crayon', 'crayon']);
   });
 

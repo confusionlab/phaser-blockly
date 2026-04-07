@@ -116,13 +116,14 @@ function resolveVectorStrokeBrushRenderStyle(
 ): VectorStrokeBrushRenderStyle | null {
   const preset = getVectorStrokeBrushPreset(brushId);
   const texturePath = preset.texturePath?.trim();
+  const maskPath = preset.maskPath?.trim();
   const textureSource = texturePath
     ? resolveSharedTextureSource(texturePath, onTextureSourceReady)
     : null;
-
-  if (texturePath && !textureSource && !vectorTextureCache.has(texturePath)) {
-    return null;
-  }
+  const maskSource = maskPath
+    ? resolveSharedTextureSource(maskPath, onTextureSourceReady)
+    : null;
+  const useImageBackedBrush = Boolean(textureSource && (!maskPath || maskSource));
 
   const cacheKey = [
     brushId,
@@ -130,7 +131,8 @@ function resolveVectorStrokeBrushRenderStyle(
     strokeWidth.toFixed(3),
     strokeWiggle.toFixed(3),
     texturePath ?? 'builtin',
-    textureSource ? 'ready' : 'fallback',
+    maskPath ?? 'nomask',
+    useImageBackedBrush ? 'image' : 'procedural-fallback',
   ].join('|');
   const cached = vectorStrokeBrushRenderCache.get(cacheKey);
   if (cached) {
@@ -140,7 +142,8 @@ function resolveVectorStrokeBrushRenderStyle(
   return rememberVectorStrokeBrushRenderStyle(
     cacheKey,
     createVectorStrokeBrushRenderStyle(brushId, strokeColor, strokeWidth, {
-      textureSource,
+      textureSource: useImageBackedBrush ? textureSource : null,
+      maskSource: useImageBackedBrush ? maskSource : null,
       wiggle: strokeWiggle,
     }),
   );
@@ -1225,17 +1228,7 @@ function renderVectorTextureDecorationsForObject(
   return rendered;
 }
 
-function renderVectorTextureOverlayNode(
-  overlayCtx: CanvasRenderingContext2D,
-  obj: any,
-  options: {
-    canvasSize?: number;
-    canvasWidth?: number;
-    canvasHeight?: number;
-    contextTransform?: number[] | null;
-    onTextureSourceReady?: (() => void) | null;
-  } = {},
-) {
+function appendSceneObjectsInPaintOrder(target: any[], obj: any) {
   if (!obj || isActiveSelectionObject(obj)) {
     return;
   }
@@ -1243,16 +1236,38 @@ function renderVectorTextureOverlayNode(
   normalizeVectorObjectRendering(obj);
   if (isFabricGroupObject(obj)) {
     for (const child of getFabricChildObjects(obj)) {
-      renderVectorTextureOverlayNode(overlayCtx, child, options);
+      appendSceneObjectsInPaintOrder(target, child);
     }
     return;
   }
 
-  if (!objectHasVectorTextureDecorations(obj)) {
-    return;
+  target.push(obj);
+}
+
+function collectSceneObjectsInPaintOrder(objects: readonly any[]) {
+  const result: any[] = [];
+  for (const obj of objects) {
+    appendSceneObjectsInPaintOrder(result, obj);
+  }
+  return result;
+}
+
+function cutOutLaterObjectBaseFromOverlay(
+  ctx: CanvasRenderingContext2D,
+  obj: any,
+  options: {
+    contextTransform?: number[] | null;
+  } = {},
+) {
+  if (!obj || isActiveSelectionObject(obj) || isFabricGroupObject(obj) || typeof obj.render !== 'function') {
+    return false;
   }
 
-  renderVectorTextureDecorationsForObject(overlayCtx, obj, options);
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  const rendered = renderVectorObjectBaseToContext(ctx, obj, options);
+  ctx.restore();
+  return rendered;
 }
 
 function renderComposedVectorSceneNode(
@@ -1336,8 +1351,34 @@ export function renderVectorTextureOverlayForObjects(
     return;
   }
 
-  for (const obj of objects) {
-    renderVectorTextureOverlayNode(overlayCtx, obj, options);
+  const objectOverlayCanvas = document.createElement('canvas');
+  objectOverlayCanvas.width = overlayCanvas.width;
+  objectOverlayCanvas.height = overlayCanvas.height;
+  const objectOverlayCtx = getCanvas2dContext(objectOverlayCanvas, 'readback');
+  if (!objectOverlayCtx) {
+    return;
+  }
+
+  const sceneObjects = collectSceneObjectsInPaintOrder(objects);
+  for (let index = 0; index < sceneObjects.length; index += 1) {
+    const obj = sceneObjects[index];
+    if (!objectHasVectorTextureDecorations(obj)) {
+      continue;
+    }
+
+    objectOverlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+    const renderedDecorations = renderVectorTextureDecorationsForObject(objectOverlayCtx, obj, options);
+    if (!renderedDecorations) {
+      continue;
+    }
+
+    for (let laterIndex = index + 1; laterIndex < sceneObjects.length; laterIndex += 1) {
+      cutOutLaterObjectBaseFromOverlay(objectOverlayCtx, sceneObjects[laterIndex], {
+        contextTransform: options.contextTransform,
+      });
+    }
+
+    overlayCtx.drawImage(objectOverlayCanvas, 0, 0, canvasWidth, canvasHeight);
   }
 
   ctx.drawImage(overlayCanvas, 0, 0, canvasWidth, canvasHeight);

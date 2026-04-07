@@ -3,6 +3,9 @@ import { Path, Point, controlsUtils, type Canvas as FabricCanvas, type Control }
 import type { CostumeEditorMode } from '@/types';
 import {
   fabricCanvasContainsObject,
+  getVectorSelectionMarqueeBounds,
+  getVectorSelectionMarqueePreviewTargets,
+  isVectorSelectionMarqueeVisibleOnFabricTopLayer,
   replaceFabricObjectInParentContainer,
 } from '@/lib/editor/fabricVectorSelection';
 import {
@@ -12,7 +15,10 @@ import {
 } from '@/lib/editor/unifiedTransformGizmo';
 import type { DrawingTool, VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
 import { vectorHandleModeToPathNodeHandleType } from './CostumeToolbar';
-import { renderScreenSpaceTransformOverlay } from '@/lib/editor/transformOverlayRenderer';
+import {
+  renderScreenSpaceTransformOverlay,
+  renderSelectionMarqueeOverlay,
+} from '@/lib/editor/transformOverlayRenderer';
 import {
   HANDLE_SIZE,
   type MirroredPathAnchorDragSession,
@@ -47,7 +53,6 @@ import {
   normalizeVectorObjectRendering,
   VECTOR_POINT_CONTROL_STYLE,
 } from './costumeCanvasVectorRuntime';
-import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
 
 interface UseCostumeCanvasVectorObjectControllerOptions {
   activePathAnchorRef: MutableRefObject<{ path: any; anchorIndex: number } | null>;
@@ -235,6 +240,7 @@ export function useCostumeCanvasVectorObjectController({
   hoveredVectorTargetRef,
   vectorPointEditingTargetRef,
 }: UseCostumeCanvasVectorObjectControllerOptions) {
+  const objectPreviewOutlineStrokeWidth = 1.5;
   const isVectorHandleIndependenceModifierPressed = useCallback((eventData: any) => {
     const source = eventData?.e ?? eventData;
     return !!source?.altKey;
@@ -323,7 +329,12 @@ export function useCostumeCanvasVectorObjectController({
   const ensurePathLikeObjectForVectorTool = useCallback((obj: any): any | null => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas || !obj || !isVectorPointSelectableObject(obj)) return null;
-    if (isDirectlyEditablePathObject(obj)) return obj;
+    if (isDirectlyEditablePathObject(obj)) {
+      const pathObj = obj as any;
+      normalizeVectorObjectRendering(pathObj);
+      pathObj.setCoords?.();
+      return pathObj;
+    }
 
     const converted = convertObjectToVectorPath(obj);
     if (!converted) return null;
@@ -530,20 +541,15 @@ export function useCostumeCanvasVectorObjectController({
     if (!hasPointSelectionMarqueeExceededThreshold(session)) return;
 
     const marqueeBounds = getSceneRectFromPoints(session.startPointerScene, session.currentPointerScene);
-    const selectionTokens = getResolvedEditorSelectionTokens();
-
-    ctx.save();
-    try {
-      ctx.fillStyle = selectionTokens.fill;
-      ctx.strokeStyle = selectionTokens.accent;
-      ctx.lineWidth = getZoomInvariantMetric(2);
-      ctx.setLineDash([getZoomInvariantMetric(6), getZoomInvariantMetric(4)]);
-      ctx.fillRect(marqueeBounds.left, marqueeBounds.top, marqueeBounds.width, marqueeBounds.height);
-      ctx.strokeRect(marqueeBounds.left, marqueeBounds.top, marqueeBounds.width, marqueeBounds.height);
-      ctx.setLineDash([]);
-    } finally {
-      ctx.restore();
-    }
+    renderSelectionMarqueeOverlay(ctx, {
+      x: marqueeBounds.left,
+      y: marqueeBounds.top,
+      width: marqueeBounds.width,
+      height: marqueeBounds.height,
+    }, {
+      dash: [getZoomInvariantMetric(6), getZoomInvariantMetric(4)],
+      lineWidth: getZoomInvariantMetric(2),
+    });
   }, [
     getSceneRectFromPoints,
     getZoomInvariantMetric,
@@ -669,14 +675,94 @@ export function useCostumeCanvasVectorObjectController({
     renderScreenSpaceTransformOverlay(ctx, overlayCorners, {
       showFill: false,
       showHandles: false,
-      strokeWidth: getZoomInvariantMetric(1.5),
+      strokeWidth: objectPreviewOutlineStrokeWidth,
     });
   }, [
-    getZoomInvariantMetric,
+    objectPreviewOutlineStrokeWidth,
     hoveredVectorTargetRef,
     mapObjectToOverlayCorners,
     vectorPointEditingTargetRef,
   ]);
+
+  const renderObjectMarqueePreviewOutlines = useCallback((ctx: CanvasRenderingContext2D, fabricCanvas: FabricCanvas) => {
+    const previewTargets = getVectorSelectionMarqueePreviewTargets(fabricCanvas as Parameters<typeof getVectorSelectionMarqueePreviewTargets>[0]);
+    if (previewTargets.length === 0) {
+      return;
+    }
+
+    for (const previewTarget of previewTargets) {
+      if (
+        !previewTarget ||
+        previewTarget === vectorPointEditingTargetRef.current ||
+        !fabricCanvasContainsObject(fabricCanvas, previewTarget)
+      ) {
+        continue;
+      }
+
+      const overlayCorners = mapObjectToOverlayCorners(previewTarget);
+      if (!overlayCorners) {
+        continue;
+      }
+
+      renderScreenSpaceTransformOverlay(ctx, overlayCorners, {
+        showFill: false,
+        showHandles: false,
+        strokeWidth: objectPreviewOutlineStrokeWidth,
+      });
+    }
+  }, [
+    mapObjectToOverlayCorners,
+    objectPreviewOutlineStrokeWidth,
+    vectorPointEditingTargetRef,
+  ]);
+
+  const renderObjectSelectionMarquee = useCallback((ctx: CanvasRenderingContext2D, fabricCanvas: FabricCanvas) => {
+    if (isVectorSelectionMarqueeVisibleOnFabricTopLayer(
+      fabricCanvas as Parameters<typeof isVectorSelectionMarqueeVisibleOnFabricTopLayer>[0],
+    )) {
+      return;
+    }
+
+    const marqueeBounds = getVectorSelectionMarqueeBounds(
+      fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
+    );
+    if (!marqueeBounds) {
+      return;
+    }
+
+    const start = mapFabricOverlayPoint(new Point(marqueeBounds.left, marqueeBounds.top));
+    const end = mapFabricOverlayPoint(new Point(
+      marqueeBounds.left + marqueeBounds.width,
+      marqueeBounds.top + marqueeBounds.height,
+    ));
+    const marqueeRect = {
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y),
+    };
+    if (marqueeRect.width <= 0 || marqueeRect.height <= 0) {
+      return;
+    }
+
+    const selectionDashArray = Array.isArray((fabricCanvas as any).selectionDashArray)
+      ? ((fabricCanvas as any).selectionDashArray as number[])
+      : undefined;
+    renderSelectionMarqueeOverlay(ctx, marqueeRect, {
+      dash: selectionDashArray && selectionDashArray.length >= 2
+        ? [selectionDashArray[0] ?? 0, selectionDashArray[1] ?? 0]
+        : undefined,
+      fillColor: typeof (fabricCanvas as any).selectionColor === 'string'
+        ? (fabricCanvas as any).selectionColor
+        : undefined,
+      lineWidth: typeof (fabricCanvas as any).selectionLineWidth === 'number'
+        ? (fabricCanvas as any).selectionLineWidth
+        : undefined,
+      strokeColor: typeof (fabricCanvas as any).selectionBorderColor === 'string'
+        ? (fabricCanvas as any).selectionBorderColor
+        : undefined,
+    });
+  }, [mapFabricOverlayPoint]);
 
   const renderVectorPointEditingGuide = useCallback(() => {
     const ctx = vectorGuideCtxRef.current;
@@ -684,6 +770,9 @@ export function useCostumeCanvasVectorObjectController({
     const target = vectorPointEditingTargetRef.current as any;
     if (!fabricCanvas || !ctx) return;
     clearOverlayContext(ctx);
+    const hasObjectMarqueeSelection = !!getVectorSelectionMarqueeBounds(
+      fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
+    );
     if (editorModeRef.current === 'bitmap') {
       renderActiveObjectTransformOverlay(ctx, fabricCanvas);
       renderHoveredObjectOutline(ctx, fabricCanvas);
@@ -723,6 +812,12 @@ export function useCostumeCanvasVectorObjectController({
       }
     }
 
+    if (hasObjectMarqueeSelection) {
+      renderObjectSelectionMarquee(ctx, fabricCanvas);
+      renderObjectMarqueePreviewOutlines(ctx, fabricCanvas);
+      return;
+    }
+
     renderActiveObjectTransformOverlay(ctx, fabricCanvas);
     renderHoveredObjectOutline(ctx, fabricCanvas);
   }, [
@@ -734,6 +829,8 @@ export function useCostumeCanvasVectorObjectController({
     getZoomInvariantMetric,
     renderPenDraftGuide,
     renderActiveObjectTransformOverlay,
+    renderObjectSelectionMarquee,
+    renderObjectMarqueePreviewOutlines,
     renderHoveredObjectOutline,
     renderVectorPointControlOverlay,
     renderPointSelectionMarquee,

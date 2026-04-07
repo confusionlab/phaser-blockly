@@ -29,6 +29,7 @@ import { HANDLE_SIZE } from './costumeCanvasShared';
 
 export const VECTOR_JSON_EXTRA_PROPS = [
   'nodeHandleTypes',
+  'vectorPathClosed',
   'strokeUniform',
   'vectorFillTextureId',
   'vectorFillColor',
@@ -457,6 +458,7 @@ function inferPathNodeHandleTypesFromCommands(
 function normalizeEditableVectorPathGeometry(candidate: {
   path?: unknown;
   nodeHandleTypes?: unknown;
+  vectorPathClosed?: unknown;
   set?: (props: Record<string, unknown>) => void;
   setCoords?: () => void;
   setDimensions?: () => void;
@@ -472,17 +474,33 @@ function normalizeEditableVectorPathGeometry(candidate: {
     normalizedPath,
     candidate.nodeHandleTypes,
   );
+  const inferredClosed = pathCommandsDescribeClosedShape(normalizedPath);
+  const nextVectorPathClosed = typeof candidate.vectorPathClosed === 'boolean'
+    ? candidate.vectorPathClosed || inferredClosed
+    : inferredClosed;
 
   let changed = false;
   if (cubicPath || pathWithNormalizedClose) {
     candidate.path = normalizedPath;
     changed = true;
   }
+  const updates: Record<string, unknown> = {};
   if (nextNodeHandleTypes) {
+    updates.nodeHandleTypes = nextNodeHandleTypes;
+  }
+  if (candidate.vectorPathClosed !== nextVectorPathClosed) {
+    updates.vectorPathClosed = nextVectorPathClosed;
+  }
+  if (Object.keys(updates).length > 0) {
     if (typeof candidate.set === 'function') {
-      candidate.set({ nodeHandleTypes: nextNodeHandleTypes });
+      candidate.set(updates);
     } else {
-      candidate.nodeHandleTypes = nextNodeHandleTypes;
+      if ('nodeHandleTypes' in updates) {
+        candidate.nodeHandleTypes = updates.nodeHandleTypes;
+      }
+      if ('vectorPathClosed' in updates) {
+        candidate.vectorPathClosed = updates.vectorPathClosed;
+      }
     }
     changed = true;
   }
@@ -1027,6 +1045,7 @@ export function normalizeVectorObjectRendering(obj: unknown): boolean {
   const candidate = obj as {
     path?: unknown;
     nodeHandleTypes?: unknown;
+    vectorPathClosed?: unknown;
     strokeUniform?: boolean;
     noScaleCache?: boolean;
     set?: (props: Record<string, unknown>) => void;
@@ -1117,6 +1136,16 @@ export function pathCommandsDescribeClosedShape(path: unknown): boolean {
   }
 
   return false;
+}
+
+export function getVectorPathClosureIntent(candidate: {
+  path?: unknown;
+  vectorPathClosed?: unknown;
+} | null | undefined): boolean {
+  if (typeof candidate?.vectorPathClosed === 'boolean') {
+    return candidate.vectorPathClosed;
+  }
+  return pathCommandsDescribeClosedShape(candidate?.path);
 }
 
 export function vectorObjectSupportsFill(obj: unknown): boolean {

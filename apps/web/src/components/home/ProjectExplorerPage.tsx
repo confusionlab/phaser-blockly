@@ -865,9 +865,6 @@ export function ProjectExplorerPage({
     if (isInitialLoading) {
       return 'Loading projects...';
     }
-    if (visibleItems.length === 0) {
-      return 'Empty folder';
-    }
     return null;
   }, [isInitialLoading, visibleItems.length]);
 
@@ -1011,9 +1008,7 @@ export function ProjectExplorerPage({
                         <Button
                           className={cn(
                             'px-2 py-1 transition-colors',
-                            folder.id === currentFolderSafeId
-                              ? 'bg-foreground text-background shadow-sm'
-                              : 'text-muted-foreground hover:bg-surface-interactive hover:text-foreground',
+                            'text-muted-foreground hover:bg-surface-interactive hover:text-foreground',
                             dropFolderId === folder.id && 'bg-primary/15 text-primary',
                           )}
                           onClick={() => setCurrentFolderId(folder.id)}
@@ -1043,44 +1038,43 @@ export function ProjectExplorerPage({
 
                 <div className="mt-3 min-w-0">
                   {currentFolder && !isRootFolder ? (
-                    isEditingCurrentFolder ? (
-                      <InlineRenameField
-                        autoFocus
-                        className="max-w-3xl text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-3xl"
-                        inputClassName="text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-3xl"
-                        onBlur={() => void commitCurrentFolderRename()}
-                        onChange={(event) => setCurrentFolderNameDraft(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            event.preventDefault();
-                            void commitCurrentFolderRename();
-                          }
-                          if (event.key === 'Escape') {
-                            event.preventDefault();
-                            setIsEditingCurrentFolder(false);
-                            setCurrentFolderNameDraft('');
-                          }
-                        }}
-                        value={currentFolderNameDraft}
-                      />
-                    ) : (
-                      <Button
-                        className="truncate text-left text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-3xl"
-                        disabled={isExplorerReadOnly}
-                        onClick={() => {
+                    <InlineRenameField
+                      autoFocus={isEditingCurrentFolder}
+                      className="max-w-3xl"
+                      displayAs="div"
+                      displayProps={{
+                        className: cn(
+                          'truncate text-left text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-3xl',
+                          isExplorerReadOnly ? 'cursor-default' : 'cursor-text',
+                        ),
+                        onClick: () => {
                           if (isExplorerReadOnly) {
                             return;
                           }
                           setIsEditingCurrentFolder(true);
                           setCurrentFolderNameDraft(currentFolder.name);
-                        }}
-                        shape="none"
-                        size="xs"
-                        variant="link"
-                      >
-                        {currentFolder.name}
-                      </Button>
-                    )
+                        },
+                      }}
+                      editing={isEditingCurrentFolder}
+                      focusBehavior="caret-end"
+                      inputClassName="text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-3xl"
+                      onBlur={() => void commitCurrentFolderRename()}
+                      onChange={(event) => setCurrentFolderNameDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void commitCurrentFolderRename();
+                        }
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          setIsEditingCurrentFolder(false);
+                          setCurrentFolderNameDraft('');
+                        }
+                      }}
+                      outlineClassName="inset-x-[-8px] inset-y-[-6px] rounded-xl border-border/70 bg-transparent shadow-none"
+                      textClassName="text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-3xl"
+                      value={isEditingCurrentFolder ? currentFolderNameDraft : currentFolder.name}
+                    />
                   ) : (
                     <h1 className="text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-3xl">
                       Home
@@ -1147,6 +1141,24 @@ export function ProjectExplorerPage({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                 <div className="flex shrink-0 items-center gap-1.5">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center">
+                    {parentFolder ? (
+                      <IconButton
+                        className={cn(dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
+                        disabled={isExplorerInteractionBlocked}
+                        label="Back to parent folder"
+                        onClick={() => setCurrentFolderId(parentFolder.id)}
+                        shape="pill"
+                        size="sm"
+                        {...dropTargetProps(parentFolder.id)}
+                      >
+                        <ArrowLeft className="size-4" />
+                      </IconButton>
+                    ) : (
+                      <div aria-hidden="true" className="h-9 w-9 rounded-full opacity-0" />
+                    )}
+                  </div>
+
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <IconButton label="Create or import" disabled={isExplorerReadOnly} shape="pill" size="sm">
@@ -1169,20 +1181,6 @@ export function ProjectExplorerPage({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
-
-                  {parentFolder ? (
-                    <IconButton
-                      className={cn(dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
-                      disabled={isExplorerInteractionBlocked}
-                      label="Back to parent folder"
-                      onClick={() => setCurrentFolderId(parentFolder.id)}
-                      shape="pill"
-                      size="sm"
-                      {...dropTargetProps(parentFolder.id)}
-                    >
-                      <ArrowLeft className="size-4" />
-                    </IconButton>
-                  ) : null}
                 </div>
 
                 {explorerStatusLabel ? (

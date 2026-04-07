@@ -12,6 +12,7 @@ import type { BitmapFloatingSelectionBehavior } from '@/lib/editor/interactionSu
 import {
   fabricCanvasContainsObject,
   getVectorGroupEditingPathForTarget,
+  getVectorSelectionMarqueeBounds,
   isFabricGroupObject,
   resolveVectorGroupEntrySelectionTarget,
   resolveVectorGroupEditingRootTarget,
@@ -212,10 +213,30 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       return;
     }
 
+    const syncOverlayContexts = () => {
+      const vectorStrokeCanvas = vectorStrokeCanvasRef.current;
+      vectorStrokeCtxRef.current = vectorStrokeCanvas
+        ? vectorStrokeCanvas.getContext('2d')
+        : null;
+
+      const vectorGuideCanvas = vectorGuideCanvasRef.current;
+      vectorGuideCtxRef.current = vectorGuideCanvas
+        ? vectorGuideCanvas.getContext('2d')
+        : null;
+
+      const bitmapSelectionCanvas = bitmapSelectionCanvasRef.current;
+      bitmapSelectionCtxRef.current = bitmapSelectionCanvas
+        ? bitmapSelectionCanvas.getContext('2d')
+        : null;
+    };
+
     const existingFabricCanvas = fabricCanvasRef.current as FabricCanvasHostRuntime | null;
     if (existingFabricCanvas) {
       attachFabricCanvasToHost(fabricCanvasHost, existingFabricCanvas, fabricCanvasElementRef.current);
+      syncOverlayContexts();
       onFabricCanvasReady();
+      callbacksRef.current.drawBitmapSelectionOverlay();
+      callbacksRef.current.renderVectorPointEditingGuide();
       callbacksRef.current.syncActiveLayerCanvasVisibility();
       callbacksRef.current.configureCanvasForTool();
       return;
@@ -687,6 +708,18 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         }
       }
 
+      if (
+        mode === 'vector' &&
+        tool === 'select' &&
+        getVectorSelectionMarqueeBounds(
+          fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
+        )
+      ) {
+        setHoveredVectorTarget(null);
+        fabricCanvas.requestRenderAll();
+        return;
+      }
+
       if (tool === 'fill' && mode === 'bitmap') {
         void callbacks.applyFill(pointer.x, pointer.y);
         return;
@@ -997,6 +1030,13 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         !shapeDraftRef.current &&
         opt.e
       ) {
+        if (getVectorSelectionMarqueeBounds(
+          fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
+        )) {
+          setHoveredVectorTarget(null);
+          fabricCanvas.requestRenderAll();
+          return;
+        }
         setHoveredVectorTarget(resolveVectorHoverTarget(
           fabricCanvas as any,
           opt.e,
@@ -1226,19 +1266,9 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     document.addEventListener('keydown', handleShapeModifierKeyDown, true);
     document.addEventListener('keyup', handleShapeModifierKeyUp, true);
 
-    const vectorStrokeCanvas = vectorStrokeCanvasRef.current;
-    if (vectorStrokeCanvas) {
-      vectorStrokeCtxRef.current = vectorStrokeCanvas.getContext('2d');
-    }
-    const vectorGuideCanvas = vectorGuideCanvasRef.current;
-    if (vectorGuideCanvas) {
-      vectorGuideCtxRef.current = vectorGuideCanvas.getContext('2d');
-    }
-    const bitmapSelectionCanvas = bitmapSelectionCanvasRef.current;
-    if (bitmapSelectionCanvas) {
-      bitmapSelectionCtxRef.current = bitmapSelectionCanvas.getContext('2d');
-      callbacksRef.current.drawBitmapSelectionOverlay();
-    }
+    syncOverlayContexts();
+    callbacksRef.current.drawBitmapSelectionOverlay();
+    callbacksRef.current.renderVectorPointEditingGuide();
 
     callbacksRef.current.saveHistory();
     callbacksRef.current.syncActiveLayerCanvasVisibility();

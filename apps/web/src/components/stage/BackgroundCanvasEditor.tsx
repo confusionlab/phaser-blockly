@@ -151,8 +151,10 @@ import {
   isPointNearTransformEdge,
 } from '@/lib/editor/unifiedTransformGizmo';
 import type { TransformGizmoCorner, TransformGizmoCornerTarget, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
-import { renderScreenSpaceTransformOverlay } from '@/lib/editor/transformOverlayRenderer';
-import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
+import {
+  renderScreenSpaceTransformOverlay,
+  renderSelectionMarqueeOverlay,
+} from '@/lib/editor/transformOverlayRenderer';
 import {
   handleSelectionClipboardShortcuts,
   handleSelectionDeleteShortcut,
@@ -1926,15 +1928,12 @@ export function BackgroundCanvasEditor() {
     if (editorMode === 'bitmap' && tool === 'select' && marqueeSelection && !floatingSelectionRef.current) {
       const marqueeBounds = getWorldRectFromPoints(marqueeSelection.startWorld, marqueeSelection.currentWorld);
       const topLeft = worldToScreen(marqueeBounds.left, marqueeBounds.top);
-      const selectionTokens = getResolvedEditorSelectionTokens();
-      ctx.save();
-      ctx.setLineDash([8, 6]);
-      ctx.fillStyle = selectionTokens.fill;
-      ctx.strokeStyle = selectionTokens.accent;
-      ctx.lineWidth = 1.5;
-      ctx.fillRect(topLeft.x, topLeft.y, marqueeBounds.width * zoom, marqueeBounds.height * zoom);
-      ctx.strokeRect(topLeft.x, topLeft.y, marqueeBounds.width * zoom, marqueeBounds.height * zoom);
-      ctx.restore();
+      renderSelectionMarqueeOverlay(ctx, {
+        x: topLeft.x,
+        y: topLeft.y,
+        width: marqueeBounds.width * zoom,
+        height: marqueeBounds.height * zoom,
+      });
     }
 
     const floatingSelection = floatingSelectionRef.current;

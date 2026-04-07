@@ -20,6 +20,31 @@ type FabricObjectContainerLike = Pick<FabricCanvas, 'getObjects'> & {
   remove?: (...objects: FabricObjectLike[]) => unknown;
 };
 
+type FabricSelectionMarqueeBounds = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+type FabricSelectionMarqueeState = {
+  x: number;
+  y: number;
+  deltaX: number;
+  deltaY: number;
+};
+
+type FabricCanvasSelectionPreviewLike = Pick<FabricCanvas, 'getObjects'> & {
+  _groupSelector?: FabricSelectionMarqueeState | null;
+  collectObjects?: (
+    bounds: FabricSelectionMarqueeBounds,
+    options?: { includeIntersecting?: boolean },
+  ) => FabricObjectLike[];
+  selection?: boolean;
+  selectionFullyContained?: boolean;
+  upperCanvasEl?: HTMLCanvasElement | null;
+};
+
 export interface VectorGroupingAvailability {
   canGroup: boolean;
   canUngroup: boolean;
@@ -334,4 +359,65 @@ export function resolveVectorHoverTarget(
     return null;
   }
   return resolveVectorSelectionDirectTarget(target, editingPath);
+}
+
+export function getVectorSelectionMarqueeBounds(
+  fabricCanvas: FabricCanvasSelectionPreviewLike | null | undefined,
+): FabricSelectionMarqueeBounds | null {
+  if (!fabricCanvas?.selection || !fabricCanvas._groupSelector) {
+    return null;
+  }
+
+  const { x, y, deltaX, deltaY } = fabricCanvas._groupSelector;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+    return null;
+  }
+
+  const left = deltaX >= 0 ? x : x + deltaX;
+  const top = deltaY >= 0 ? y : y + deltaY;
+  const width = Math.abs(deltaX);
+  const height = Math.abs(deltaY);
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+
+  return {
+    left,
+    top,
+    width,
+    height,
+  };
+}
+
+export function isVectorSelectionMarqueeVisibleOnFabricTopLayer(
+  fabricCanvas: Pick<FabricCanvasSelectionPreviewLike, 'upperCanvasEl'> | null | undefined,
+): boolean {
+  const upperCanvas = fabricCanvas?.upperCanvasEl;
+  if (!(upperCanvas instanceof HTMLCanvasElement)) {
+    return false;
+  }
+
+  const computedStyle = typeof window !== 'undefined'
+    ? window.getComputedStyle(upperCanvas)
+    : null;
+  const opacityValue = Number.parseFloat(computedStyle?.opacity ?? upperCanvas.style.opacity ?? '1');
+  return (
+    (computedStyle?.display ?? upperCanvas.style.display ?? '') !== 'none' &&
+    (computedStyle?.visibility ?? upperCanvas.style.visibility ?? '') !== 'hidden' &&
+    Number.isFinite(opacityValue) &&
+    opacityValue > 0
+  );
+}
+
+export function getVectorSelectionMarqueePreviewTargets(
+  fabricCanvas: FabricCanvasSelectionPreviewLike | null | undefined,
+): FabricObjectLike[] {
+  const marqueeBounds = getVectorSelectionMarqueeBounds(fabricCanvas);
+  if (!fabricCanvas || !marqueeBounds || typeof fabricCanvas.collectObjects !== 'function') {
+    return [];
+  }
+
+  return fabricCanvas.collectObjects(marqueeBounds, {
+    includeIntersecting: !fabricCanvas.selectionFullyContained,
+  });
 }

@@ -104,6 +104,7 @@ import {
   fabricCanvasContainsObject,
   forEachFabricObjectDeep,
   getVectorGroupEditingPathForTarget,
+  getVectorSelectionMarqueeBounds,
   isFabricGroupObject,
   resolveVectorGroupEntrySelectionTarget,
   resolveVectorGroupEditingRootTarget,
@@ -1193,6 +1194,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     const vectorGuideCanvas = document.createElement('canvas');
     vectorGuideCanvas.className = 'pointer-events-none absolute inset-0 z-[3]';
     vectorGuideCanvas.setAttribute('aria-hidden', 'true');
+    vectorGuideCanvas.setAttribute('data-testid', 'background-vector-guide-overlay');
     hostElement.appendChild(vectorGuideCanvas);
     vectorGuideCanvasRef.current = vectorGuideCanvas;
     vectorGuideCtxRef.current = vectorGuideCanvas.getContext('2d');
@@ -1612,6 +1614,14 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
           });
           return;
         }
+
+        if (getVectorSelectionMarqueeBounds(
+          fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
+        )) {
+          setHoveredVectorTarget(null);
+          fabricCanvas.requestRenderAll();
+          return;
+        }
       }
 
       if (tool !== 'text') {
@@ -1748,6 +1758,13 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         activeToolRef.current === 'select' &&
         !vectorPointEditingTargetRef.current
       ) {
+        if (getVectorSelectionMarqueeBounds(
+          fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
+        )) {
+          setHoveredVectorTarget(null);
+          fabricCanvas.requestRenderAll();
+          return;
+        }
         setHoveredVectorTarget(resolveVectorHoverTarget(
           fabricCanvas as any,
           opt.e,
