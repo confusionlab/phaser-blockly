@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { DisclosureButton } from '@/components/ui/disclosure-button';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { AppIcon, ChevronDown, ChevronRight, Component as ComponentIcon, Earth, Trash2, type AppIconName } from '@/components/ui/icons';
+import { AppIcon, ChevronDown, ChevronRight, Component as ComponentIcon, Earth, Pencil, Plus, Trash2, type AppIconName } from '@/components/ui/icons';
 import { HoverHelp } from '@/components/ui/hover-help';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -22,7 +22,10 @@ import type { Costume, Variable, VariableCardinality, VariableType } from '@/typ
 import { useModal } from '@/components/ui/modal-provider';
 import { Modal } from '@/components/ui/modal';
 import {
+  ProjectPropertyManagerContextMenu,
+  type ProjectPropertyManagerContextMenuAction,
   ProjectPropertyManagerDialog,
+  useProjectPropertyManagerContextMenu,
 } from '@/components/dialogs/ProjectPropertyManagerDialog';
 import { ReferenceUsageDialog } from '@/components/dialogs/ReferenceUsageDialog';
 import type { ProjectReferenceImpact, ProjectReferenceOwnerTarget } from '@/lib/projectReferenceUsage';
@@ -49,7 +52,6 @@ type VariableEntry = {
   key: string;
   variable: Variable;
   target: VariableTarget;
-  note?: string;
 };
 
 type VariableDefaultDraft =
@@ -284,26 +286,6 @@ function VariableDefaultEditor({
   if (draft.type === 'boolean') {
     return (
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">
-            The game starts with these items in order.
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              const nextDraft = {
-                ...draft,
-                items: [...draft.items, false],
-              };
-              onChange(nextDraft);
-              onCommit?.(nextDraft);
-            }}
-          >
-            Add item
-          </Button>
-        </div>
-
         {draft.items.length > 0 ? (
           <div className="space-y-2">
             {draft.items.map((item, index) => {
@@ -332,7 +314,9 @@ function VariableDefaultEditor({
                     </div>
                   </div>
                   <Button
-                    size="sm"
+                    aria-label={`Remove item ${index + 1}`}
+                    className="shrink-0"
+                    size="icon-sm"
                     variant="ghost"
                     onClick={() => {
                       const nextDraft = {
@@ -343,7 +327,7 @@ function VariableDefaultEditor({
                       onCommit?.(nextDraft);
                     }}
                   >
-                    Remove
+                    <Trash2 className="size-4" />
                   </Button>
                 </div>
               );
@@ -354,32 +338,29 @@ function VariableDefaultEditor({
             No items yet.
           </div>
         )}
+
+        <Button
+          aria-label="Add item"
+          className="self-start"
+          size="icon-sm"
+          variant="outline"
+          onClick={() => {
+            const nextDraft = {
+              ...draft,
+              items: [...draft.items, false],
+            };
+            onChange(nextDraft);
+            onCommit?.(nextDraft);
+          }}
+        >
+          <Plus className="size-4" />
+        </Button>
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">
-          The game starts with these items in order.
-        </p>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            const nextDraft = {
-              ...draft,
-              items: [...draft.items, String(createArrayDraftItem(draft.type))],
-            };
-            onChange(nextDraft);
-            onCommit?.(nextDraft);
-          }}
-        >
-          Add item
-        </Button>
-      </div>
-
       {draft.items.length > 0 ? (
         <div className="space-y-2">
           {draft.items.map((item, index) => {
@@ -406,7 +387,9 @@ function VariableDefaultEditor({
                   />
                 </div>
                 <Button
-                  size="sm"
+                  aria-label={`Remove item ${index + 1}`}
+                  className="shrink-0"
+                  size="icon-sm"
                   variant="ghost"
                   onClick={() => {
                     const nextDraft = {
@@ -417,17 +400,34 @@ function VariableDefaultEditor({
                     onCommit?.(nextDraft);
                   }}
                 >
-                  Remove
+                  <Trash2 className="size-4" />
                 </Button>
               </div>
             );
           })}
         </div>
       ) : (
-        <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-          No items yet.
-        </div>
-      )}
+          <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
+            No items yet.
+          </div>
+        )}
+
+      <Button
+        aria-label="Add item"
+        className="self-start"
+        size="icon-sm"
+        variant="outline"
+        onClick={() => {
+          const nextDraft = {
+            ...draft,
+            items: [...draft.items, String(createArrayDraftItem(draft.type))],
+          };
+          onChange(nextDraft);
+          onCommit?.(nextDraft);
+        }}
+      >
+        <Plus className="size-4" />
+      </Button>
     </div>
   );
 }
@@ -469,11 +469,10 @@ function VariableDefaultField({
 
 function VariableGridHeader() {
   return (
-    <div className="grid grid-cols-[minmax(0,1.6fr)_180px_minmax(0,2.2fr)_auto] items-center gap-3 px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
+    <div className="grid grid-cols-[minmax(0,1.6fr)_180px_minmax(0,2.2fr)] items-center gap-3 px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
       <div>Name</div>
       <div>Type</div>
       <div>Default</div>
-      <div />
     </div>
   );
 }
@@ -965,6 +964,12 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
 
   const VariableRow = ({ entry }: { entry: VariableEntry }) => {
     const isEditing = editingKey === entry.key;
+    const {
+      contextMenuPosition,
+      contextMenuRef,
+      openContextMenuAt,
+      closeContextMenu,
+    } = useProjectPropertyManagerContextMenu();
     const [inlineDefaultDraft, setInlineDefaultDraft] = useState<VariableDefaultDraft>(() =>
       createVariableDefaultDraft(
         entry.variable.type,
@@ -987,107 +992,139 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       entry.variable.type,
       normalizeVariableCardinality(entry.variable.cardinality),
     );
+    const beginRename = () => {
+      closeContextMenu();
+      setEditingKey(entry.key);
+      setEditName(entry.variable.name);
+    };
+    const contextMenuActions: ProjectPropertyManagerContextMenuAction[] = [
+      {
+        key: 'rename',
+        label: 'Rename Variable',
+        icon: <Pencil className="size-4" />,
+        onSelect: beginRename,
+      },
+      {
+        key: 'delete',
+        label: 'Delete Variable',
+        icon: <Trash2 className="size-4" />,
+        intent: 'destructive',
+        onSelect: () => void handleDelete(entry),
+      },
+    ];
+    const handleContextMenu = (event: MouseEvent<HTMLDivElement>) => {
+      if (isEditing) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      openContextMenuAt({ left: event.clientX, top: event.clientY });
+    };
 
     return (
-      <div className="grid grid-cols-[minmax(0,1.6fr)_180px_minmax(0,2.2fr)_auto] items-start gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-3">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <AppIcon
-              className="size-4 flex-shrink-0 text-muted-foreground"
-              decorative={false}
-              name={getTypeIconName(entry.variable.type)}
-              title={getTypeLabel(entry.variable.type)}
-            />
-            {isEditing ? (
-              <Input
-                aria-label={`Rename ${entry.variable.name}`}
-                autoFocus
-                className="h-8"
-                value={editName}
-                onBlur={() => saveRename(entry)}
-                onChange={(event) => setEditName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    saveRename(entry);
-                  }
-                  if (event.key === 'Escape') {
-                    event.preventDefault();
-                    setEditingKey(null);
-                    setEditName('');
-                  }
-                }}
-              />
-            ) : (
-              <button
-                className="min-w-0 truncate text-left text-sm font-medium text-foreground outline-none transition-colors hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring/60 rounded-sm"
-                onDoubleClick={() => {
-                  setEditingKey(entry.key);
-                  setEditName(entry.variable.name);
-                }}
-                type="button"
-              >
-                {entry.variable.name}
-              </button>
-            )}
-          </div>
-          <div className="pt-1 pl-6 text-xs text-muted-foreground">
-            {entry.note ?? 'Double-click to rename'}
-          </div>
-        </div>
-
-        <Select
-          value={variableKindValue}
-          onValueChange={(value) => {
-            const nextKind = parseVariableKindValue(value);
-            if (!nextKind) return;
-            const nextDraft = createVariableDefaultDraft(
-              nextKind.type,
-              nextKind.cardinality,
-              materializeVariableDefaultDraft(inlineDefaultDraft),
-            );
-            setInlineDefaultDraft(nextDraft);
-            applyVariableUpdates(entry, {
-              type: nextKind.type,
-              cardinality: nextKind.cardinality,
-              defaultValue: materializeVariableDefaultDraft(nextDraft),
-            });
+      <>
+        <div
+          data-property-manager-row="true"
+          className="grid grid-cols-[minmax(0,1.6fr)_180px_minmax(0,2.2fr)] items-start gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-3 transition-colors hover:bg-accent/70"
+          onContextMenu={handleContextMenu}
+          onDoubleClick={(event) => {
+            if (isEditing) {
+              return;
+            }
+            const target = event.target as HTMLElement | null;
+            if (target?.closest('button, input, textarea, a')) {
+              return;
+            }
+            event.preventDefault();
+            beginRename();
           }}
         >
-          <SelectTrigger className="h-9 w-full bg-muted/40 shadow-none focus-visible:ring-2" size="sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {VARIABLE_KIND_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <AppIcon
+                className="size-4 flex-shrink-0 text-muted-foreground"
+                decorative={false}
+                name={getTypeIconName(entry.variable.type)}
+                title={getTypeLabel(entry.variable.type)}
+              />
+              {isEditing ? (
+                <Input
+                  aria-label={`Rename ${entry.variable.name}`}
+                  autoFocus
+                  className="h-8"
+                  value={editName}
+                  onBlur={() => saveRename(entry)}
+                  onChange={(event) => setEditName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      saveRename(entry);
+                    }
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      setEditingKey(null);
+                      setEditName('');
+                    }
+                  }}
+                />
+              ) : (
+                <div className="min-w-0 truncate text-sm font-medium text-foreground">
+                  {entry.variable.name}
+                </div>
+              )}
+            </div>
+          </div>
 
-        <div className="min-w-0 rounded-md bg-muted/30 px-2 py-2">
-          <VariableDefaultEditor
-            draft={inlineDefaultDraft}
-            inputIdPrefix={`variable-${entry.variable.id}`}
-            onChange={setInlineDefaultDraft}
-            onCommit={(nextDraft) => {
+          <Select
+            value={variableKindValue}
+            onValueChange={(value) => {
+              const nextKind = parseVariableKindValue(value);
+              if (!nextKind) return;
+              const nextDraft = createVariableDefaultDraft(
+                nextKind.type,
+                nextKind.cardinality,
+                materializeVariableDefaultDraft(inlineDefaultDraft),
+              );
               setInlineDefaultDraft(nextDraft);
-              applyVariableUpdates(entry, { defaultValue: materializeVariableDefaultDraft(nextDraft) });
+              applyVariableUpdates(entry, {
+                type: nextKind.type,
+                cardinality: nextKind.cardinality,
+                defaultValue: materializeVariableDefaultDraft(nextDraft),
+              });
             }}
-          />
-        </div>
+          >
+            <SelectTrigger className="h-9 w-full bg-muted/40 shadow-none focus-visible:ring-2" size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {VARIABLE_KIND_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-        <Button
-          aria-label={`Delete ${entry.variable.name}`}
-          className="mt-0.5"
-          onClick={() => void handleDelete(entry)}
-          size="icon-sm"
-          variant="ghost"
-        >
-          <Trash2 className="size-4" />
-        </Button>
-      </div>
+          <div className="min-w-0 rounded-md bg-muted/30 px-2 py-2">
+            <VariableDefaultEditor
+              draft={inlineDefaultDraft}
+              inputIdPrefix={`variable-${entry.variable.id}`}
+              onChange={setInlineDefaultDraft}
+              onCommit={(nextDraft) => {
+                setInlineDefaultDraft(nextDraft);
+                applyVariableUpdates(entry, { defaultValue: materializeVariableDefaultDraft(nextDraft) });
+              }}
+            />
+          </div>
+        </div>
+        <ProjectPropertyManagerContextMenu
+          actions={contextMenuActions}
+          contextMenuPosition={contextMenuPosition}
+          contextMenuRef={contextMenuRef}
+          onClose={closeContextMenu}
+        />
+      </>
     );
   };
 

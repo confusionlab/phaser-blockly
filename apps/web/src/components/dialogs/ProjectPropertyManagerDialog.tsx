@@ -8,6 +8,16 @@ import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
 import { Pencil, Plus, Trash2 } from '@/components/ui/icons';
 
+type ContextMenuPosition = { left: number; top: number };
+
+export interface ProjectPropertyManagerContextMenuAction {
+  key: string;
+  label: string;
+  icon?: ReactNode;
+  intent?: 'default' | 'destructive';
+  onSelect: () => void;
+}
+
 interface ProjectPropertyManagerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -39,78 +49,9 @@ interface ProjectPropertyManagerRowProps {
   onPrimaryAction?: () => void;
 }
 
-export function ProjectPropertyManagerDialog({
-  open,
-  onOpenChange,
-  title,
-  description,
-  addButtonLabel,
-  onAdd,
-  toolbar,
-  children,
-}: ProjectPropertyManagerDialogProps) {
-  return (
-    <WindowDialogChrome
-      open={open}
-      onOpenChange={onOpenChange}
-      title={title}
-      description={description}
-      contentClassName="left-1/2 right-auto w-[760px] max-w-[calc(100vw-4rem)] translate-x-[-50%]"
-      bodyClassName="flex min-h-0 flex-1 flex-col px-6 py-5"
-    >
-      <div className="flex min-h-0 flex-1 flex-col gap-4 select-none">
-        <div className="flex items-center justify-between gap-3">
-          <IconButton
-            className="shrink-0"
-            label={addButtonLabel}
-            onClick={onAdd}
-            shape="pill"
-            size="sm"
-          >
-            <Plus className="size-4" />
-          </IconButton>
-
-          {toolbar ? (
-            <div className="ml-auto flex min-w-0 items-center justify-end">
-              {toolbar}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          <div className="space-y-5">
-            {children}
-          </div>
-        </div>
-      </div>
-    </WindowDialogChrome>
-  );
-}
-
-export function ProjectPropertyManagerRow({
-  icon,
-  name,
-  subtitle,
-  nameMeta,
-  trailingMeta,
-  isEditing = false,
-  editValue = '',
-  onEditValueChange,
-  onEditSave,
-  onEditCancel,
-  onEdit,
-  onDelete,
-  renameLabel = 'Rename',
-  deleteLabel = 'Delete',
-  renameFieldLabel,
-  primaryActionLabel,
-  onPrimaryAction,
-}: ProjectPropertyManagerRowProps) {
-  const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
+export function useProjectPropertyManagerContextMenu() {
+  const [contextMenuPosition, setContextMenuPosition] = useState<ContextMenuPosition | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
-  const cancelRenameOnBlurRef = useRef(false);
-  const hasContextMenuActions = Boolean(onEdit || onDelete);
-  const rowNameClassName = 'truncate text-sm font-medium leading-5';
 
   useLayoutEffect(() => {
     if (!contextMenuPosition || !contextMenuRef.current) {
@@ -172,9 +113,135 @@ export function ProjectPropertyManagerRow({
     };
   }, [contextMenuPosition]);
 
-  const closeContextMenu = () => {
-    setContextMenuPosition(null);
+  return {
+    contextMenuPosition,
+    contextMenuRef,
+    openContextMenuAt: (position: ContextMenuPosition) => setContextMenuPosition(position),
+    closeContextMenu: () => setContextMenuPosition(null),
   };
+}
+
+export function ProjectPropertyManagerDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  addButtonLabel,
+  onAdd,
+  toolbar,
+  children,
+}: ProjectPropertyManagerDialogProps) {
+  return (
+    <WindowDialogChrome
+      open={open}
+      onOpenChange={onOpenChange}
+      title={title}
+      description={description}
+      contentClassName="left-1/2 right-auto w-[760px] max-w-[calc(100vw-4rem)] translate-x-[-50%]"
+      bodyClassName="flex min-h-0 flex-1 flex-col px-6 py-5"
+    >
+      <div className="flex min-h-0 flex-1 flex-col gap-4 select-none">
+        <div className="flex items-center justify-between gap-3">
+          <IconButton
+            className="shrink-0"
+            label={addButtonLabel}
+            onClick={onAdd}
+            shape="pill"
+            size="sm"
+          >
+            <Plus className="size-4" />
+          </IconButton>
+
+          {toolbar ? (
+            <div className="ml-auto flex min-w-0 items-center justify-end">
+              {toolbar}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="space-y-5">
+            {children}
+          </div>
+        </div>
+      </div>
+    </WindowDialogChrome>
+  );
+}
+
+export function ProjectPropertyManagerContextMenu({
+  actions,
+  contextMenuPosition,
+  contextMenuRef,
+  onClose,
+}: {
+  actions: ProjectPropertyManagerContextMenuAction[];
+  contextMenuPosition: ContextMenuPosition | null;
+  contextMenuRef: React.RefObject<HTMLDivElement | null>;
+  onClose: () => void;
+}) {
+  if (!contextMenuPosition || actions.length === 0 || typeof document === 'undefined') {
+    return null;
+  }
+
+  return createPortal(
+    <Card
+      ref={contextMenuRef}
+      className="fixed min-w-40 gap-0 overflow-hidden py-1"
+      style={{
+        left: contextMenuPosition.left,
+        top: contextMenuPosition.top,
+        zIndex: 'calc(var(--z-editor-popup) + 1)',
+      }}
+    >
+      {actions.map((action, index) => (
+        <div key={action.key}>
+          {index > 0 ? <MenuSeparator /> : null}
+          <MenuItemButton
+            icon={action.icon}
+            intent={action.intent}
+            onClick={() => {
+              onClose();
+              action.onSelect();
+            }}
+          >
+            {action.label}
+          </MenuItemButton>
+        </div>
+      ))}
+    </Card>,
+    document.body,
+  );
+}
+
+export function ProjectPropertyManagerRow({
+  icon,
+  name,
+  subtitle,
+  nameMeta,
+  trailingMeta,
+  isEditing = false,
+  editValue = '',
+  onEditValueChange,
+  onEditSave,
+  onEditCancel,
+  onEdit,
+  onDelete,
+  renameLabel = 'Rename',
+  deleteLabel = 'Delete',
+  renameFieldLabel,
+  primaryActionLabel,
+  onPrimaryAction,
+}: ProjectPropertyManagerRowProps) {
+  const {
+    contextMenuPosition,
+    contextMenuRef,
+    openContextMenuAt,
+    closeContextMenu,
+  } = useProjectPropertyManagerContextMenu();
+  const cancelRenameOnBlurRef = useRef(false);
+  const hasContextMenuActions = Boolean(onEdit || onDelete);
+  const rowNameClassName = 'truncate text-sm font-medium leading-5';
 
   const handleContextMenu = (event: MouseEvent<HTMLDivElement>) => {
     if (isEditing || !hasContextMenuActions) {
@@ -183,7 +250,7 @@ export function ProjectPropertyManagerRow({
 
     event.preventDefault();
     event.stopPropagation();
-    setContextMenuPosition({ left: event.clientX, top: event.clientY });
+    openContextMenuAt({ left: event.clientX, top: event.clientY });
   };
 
   const beginRename = () => {
@@ -203,6 +270,26 @@ export function ProjectPropertyManagerRow({
     }
     onEditSave?.();
   };
+
+  const contextMenuActions: ProjectPropertyManagerContextMenuAction[] = [
+    ...(onEdit
+      ? [{
+          key: 'rename',
+          label: renameLabel,
+          icon: <Pencil className="size-4" />,
+          onSelect: beginRename,
+        }]
+      : []),
+    ...(onDelete
+      ? [{
+          key: 'delete',
+          label: deleteLabel,
+          icon: <Trash2 className="size-4" />,
+          intent: 'destructive' as const,
+          onSelect: onDelete,
+        }]
+      : []),
+  ];
 
   return (
     <>
@@ -283,40 +370,12 @@ export function ProjectPropertyManagerRow({
         ) : null}
       </div>
 
-      {contextMenuPosition && hasContextMenuActions && typeof document !== 'undefined' ? createPortal(
-        <Card
-          ref={contextMenuRef}
-          className="fixed min-w-40 gap-0 overflow-hidden py-1"
-          style={{
-            left: contextMenuPosition.left,
-            top: contextMenuPosition.top,
-            zIndex: 'calc(var(--z-editor-popup) + 1)',
-          }}
-        >
-          {onEdit ? (
-            <MenuItemButton
-              icon={<Pencil className="size-4" />}
-              onClick={beginRename}
-            >
-              {renameLabel}
-            </MenuItemButton>
-          ) : null}
-          {onEdit && onDelete ? <MenuSeparator /> : null}
-          {onDelete ? (
-            <MenuItemButton
-              icon={<Trash2 className="size-4" />}
-              intent="destructive"
-              onClick={() => {
-                closeContextMenu();
-                onDelete();
-              }}
-            >
-              {deleteLabel}
-            </MenuItemButton>
-          ) : null}
-        </Card>,
-        document.body,
-      ) : null}
+      <ProjectPropertyManagerContextMenu
+        actions={contextMenuActions}
+        contextMenuPosition={contextMenuPosition}
+        contextMenuRef={contextMenuRef}
+        onClose={closeContextMenu}
+      />
     </>
   );
 }
