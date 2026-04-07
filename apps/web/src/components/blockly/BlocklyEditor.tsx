@@ -13,6 +13,8 @@ import { useEditorStore } from '@/store/editorStore';
 import {
   getToolboxConfig,
   registerTypedVariablesCategory,
+  setCreateMessagesToolbarCallback,
+  setCreateVariablesCallback,
   setEditMessagesToolbarCallback,
   setEditVariablesCallback,
   setTypedVariableLoading,
@@ -498,6 +500,8 @@ export function BlocklyEditor() {
   const [pinButtonPosition, setPinButtonPosition] = useState<{ top: number; left: number } | null>(null);
   const [showEditVariablesDialog, setShowEditVariablesDialog] = useState(false);
   const [showEditMessagesDialog, setShowEditMessagesDialog] = useState(false);
+  const [variableCreateRequestId, setVariableCreateRequestId] = useState(0);
+  const [messageCreateRequestId, setMessageCreateRequestId] = useState(0);
   const [showBlockSearch, setShowBlockSearch] = useState(false);
   const [dragSyncNonce, setDragSyncNonce] = useState(0);
 
@@ -762,11 +766,17 @@ export function BlocklyEditor() {
   }, []);
 
   useEffect(() => {
+    setCreateMessagesToolbarCallback(() => {
+      setMessageCreateRequestId((current) => current + 1);
+      setShowEditMessagesDialog(true);
+    });
+
     setEditMessagesToolbarCallback(() => {
       setShowEditMessagesDialog(true);
     });
 
     return () => {
+      setCreateMessagesToolbarCallback(null);
       setEditMessagesToolbarCallback(null);
     };
   }, []);
@@ -867,6 +877,12 @@ export function BlocklyEditor() {
 
     // Register typed variables category callback
     registerTypedVariablesCategory(workspaceRef.current);
+
+    // Set up callback for direct variable creation from the toolbox
+    setCreateVariablesCallback(() => {
+      setVariableCreateRequestId((current) => current + 1);
+      setShowEditVariablesDialog(true);
+    });
 
     // Set up callback for the variables editor button
     setEditVariablesCallback(() => setShowEditVariablesDialog(true));
@@ -1012,6 +1028,7 @@ export function BlocklyEditor() {
         workspaceRef.current = null;
       }
       setDebugBlocklyWorkspace(null);
+      setCreateVariablesCallback(null);
       setEditVariablesCallback(null);
     };
   }, [
@@ -1258,6 +1275,7 @@ export function BlocklyEditor() {
       <EditVariablesDialog
         open={showEditVariablesDialog}
         onOpenChange={setShowEditVariablesDialog}
+        createRequestId={variableCreateRequestId}
         onVariablesChanged={() => {
           if (workspaceRef.current) {
             workspaceRef.current.refreshToolboxSelection();
@@ -1273,6 +1291,7 @@ export function BlocklyEditor() {
           }
           setShowEditMessagesDialog(true);
         }}
+        createRequestId={messageCreateRequestId}
         onMessagesChanged={() => {
           if (workspaceRef.current) {
             workspaceRef.current.refreshToolboxSelection();

@@ -36,6 +36,7 @@ import { getVariableTypeChangeImpact } from '@/lib/variableTypeChangeImpact';
 interface EditVariablesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  createRequestId?: number;
   onVariablesChanged?: () => void;
 }
 
@@ -85,6 +86,8 @@ type LocalHierarchyComponentNode = {
   key: string;
   title: string;
   subtitle?: string | null;
+  costumes: Costume[];
+  currentCostumeIndex: number;
   entries: VariableEntry[];
   objects: LocalHierarchyObjectNode[];
 };
@@ -176,6 +179,14 @@ function materializeVariableDefaultDraft(draft: VariableDefaultDraft): Variable[
     return coerceDefaultValue(draft.type, draft.cardinality, draft.items);
   }
   return coerceDefaultValue(draft.type, draft.cardinality, draft.value);
+}
+
+function normalizeVariableDefaultDraft(draft: VariableDefaultDraft): VariableDefaultDraft {
+  return createVariableDefaultDraft(
+    draft.type,
+    draft.cardinality,
+    materializeVariableDefaultDraft(draft),
+  );
 }
 
 function createArrayDraftItem(type: VariableType): string | boolean {
@@ -365,7 +376,9 @@ function VariableDefaultEditor({
           onChange({ ...draft, value: event.target.value });
         }}
         onBlur={() => {
-          onCommit?.(draft);
+          const normalizedDraft = normalizeVariableDefaultDraft(draft);
+          onChange(normalizedDraft);
+          onCommit?.(normalizedDraft);
         }}
         placeholder={draft.type === 'number' ? '0' : 'Enter text'}
       />
@@ -379,14 +392,15 @@ function VariableDefaultEditor({
           <div className="space-y-2">
             {draft.items.map((item, index) => {
               const itemId = `${inputIdPrefix}-item-${index}`;
-              const showDropBefore = dropTarget?.index === index && dropTarget.position === 'before';
-              const showDropAfter = dropTarget?.index === index && dropTarget.position === 'after';
+              const dropInsertionIndex = dropTarget
+                ? (dropTarget.position === 'before' ? dropTarget.index : dropTarget.index + 1)
+                : null;
+              const showDropBefore = dropInsertionIndex === index;
+              const showDropAfter = dropInsertionIndex === draft.items.length && index === draft.items.length - 1;
               return (
                 <div
                   key={itemId}
-                  className={`relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-0 ${
-                    draggedIndex === index ? 'opacity-70' : ''
-                  }`}
+                  className="relative"
                   onDragOver={(event) => handleArrayDragOver(event, index)}
                   onDrop={(event) => {
                     event.preventDefault();
@@ -395,61 +409,65 @@ function VariableDefaultEditor({
                   }}
                 >
                   {showDropBefore ? (
-                    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0 border-t-2 border-primary" />
+                    <div className="pointer-events-none absolute inset-x-2 -top-1 z-10 h-0 border-t-2 border-primary" />
                   ) : null}
                   {showDropAfter ? (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-0 border-t-2 border-primary" />
+                    <div className="pointer-events-none absolute inset-x-2 -bottom-1 z-10 h-0 border-t-2 border-primary" />
                   ) : null}
-                  <button
-                    aria-label={`Reorder item ${index + 1}`}
-                    className="flex h-9 w-6 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
-                    draggable
-                    onDragEnd={handleArrayDragEnd}
-                    onDragStart={(event) => {
-                      handleArrayDragStart(index);
-                      event.dataTransfer.effectAllowed = 'move';
-                      event.dataTransfer.setData('text/plain', String(index));
-                      const dragImage = getTransparentShelfDragImage();
-                      if (dragImage) {
-                        event.dataTransfer.setDragImage(dragImage, 0, 0);
-                      }
-                    }}
-                    type="button"
-                  >
-                    <GripVertical className="size-4" />
-                  </button>
-                  <div className="flex min-w-0 items-center gap-3">
-                    <Checkbox
-                      checked={item}
-                      id={itemId}
-                      onCheckedChange={(checked) => {
-                        const nextItems = [...draft.items];
-                        nextItems[index] = checked === true;
-                        const nextDraft = { ...draft, items: nextItems };
+                  <div className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-0 ${
+                    draggedIndex === index ? 'opacity-70' : ''
+                  }`}>
+                    <button
+                      aria-label={`Reorder item ${index + 1}`}
+                      className="flex h-9 w-6 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                      draggable
+                      onDragEnd={handleArrayDragEnd}
+                      onDragStart={(event) => {
+                        handleArrayDragStart(index);
+                        event.dataTransfer.effectAllowed = 'move';
+                        event.dataTransfer.setData('text/plain', String(index));
+                        const dragImage = getTransparentShelfDragImage();
+                        if (dragImage) {
+                          event.dataTransfer.setDragImage(dragImage, 0, 0);
+                        }
+                      }}
+                      type="button"
+                    >
+                      <GripVertical className="size-4" />
+                    </button>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Checkbox
+                        checked={item}
+                        id={itemId}
+                        onCheckedChange={(checked) => {
+                          const nextItems = [...draft.items];
+                          nextItems[index] = checked === true;
+                          const nextDraft = { ...draft, items: nextItems };
+                          onChange(nextDraft);
+                          onCommit?.(nextDraft);
+                        }}
+                      />
+                      <Label className="cursor-pointer text-sm text-foreground" htmlFor={itemId}>
+                        Item {index + 1} is true
+                      </Label>
+                    </div>
+                    <Button
+                      aria-label={`Remove item ${index + 1}`}
+                      className="h-8 w-8 shrink-0 px-0"
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => {
+                        const nextDraft = {
+                          ...draft,
+                          items: draft.items.filter((_, itemIndex) => itemIndex !== index),
+                        };
                         onChange(nextDraft);
                         onCommit?.(nextDraft);
                       }}
-                    />
-                    <Label className="cursor-pointer text-sm text-foreground" htmlFor={itemId}>
-                      Item {index + 1} is true
-                    </Label>
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
                   </div>
-                  <Button
-                    aria-label={`Remove item ${index + 1}`}
-                    className="h-8 w-8 shrink-0 px-0"
-                    size="icon-sm"
-                    variant="ghost"
-                    onClick={() => {
-                      const nextDraft = {
-                        ...draft,
-                        items: draft.items.filter((_, itemIndex) => itemIndex !== index),
-                      };
-                      onChange(nextDraft);
-                      onCommit?.(nextDraft);
-                    }}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
                 </div>
               );
             })}
@@ -487,14 +505,15 @@ function VariableDefaultEditor({
         <div className="space-y-2">
           {draft.items.map((item, index) => {
             const itemId = `${inputIdPrefix}-item-${index}`;
-            const showDropBefore = dropTarget?.index === index && dropTarget.position === 'before';
-            const showDropAfter = dropTarget?.index === index && dropTarget.position === 'after';
+            const dropInsertionIndex = dropTarget
+              ? (dropTarget.position === 'before' ? dropTarget.index : dropTarget.index + 1)
+              : null;
+            const showDropBefore = dropInsertionIndex === index;
+            const showDropAfter = dropInsertionIndex === draft.items.length && index === draft.items.length - 1;
             return (
               <div
                 key={itemId}
-                className={`relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-0 ${
-                  draggedIndex === index ? 'opacity-70' : ''
-                }`}
+                className="relative"
                 onDragOver={(event) => handleArrayDragOver(event, index)}
                 onDrop={(event) => {
                   event.preventDefault();
@@ -503,59 +522,65 @@ function VariableDefaultEditor({
                 }}
               >
                 {showDropBefore ? (
-                  <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0 border-t-2 border-primary" />
+                  <div className="pointer-events-none absolute inset-x-2 -top-1 z-10 h-0 border-t-2 border-primary" />
                 ) : null}
                 {showDropAfter ? (
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-0 border-t-2 border-primary" />
+                  <div className="pointer-events-none absolute inset-x-2 -bottom-1 z-10 h-0 border-t-2 border-primary" />
                 ) : null}
-                <button
-                  aria-label={`Reorder item ${index + 1}`}
-                  className="flex h-9 w-6 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
-                  draggable
-                  onDragEnd={handleArrayDragEnd}
-                  onDragStart={(event) => {
-                    handleArrayDragStart(index);
-                    event.dataTransfer.effectAllowed = 'move';
-                    event.dataTransfer.setData('text/plain', String(index));
-                    const dragImage = getTransparentShelfDragImage();
-                    if (dragImage) {
-                      event.dataTransfer.setDragImage(dragImage, 0, 0);
-                    }
-                  }}
-                  type="button"
-                >
-                  <GripVertical className="size-4" />
-                </button>
-                <Input
-                  id={itemId}
-                  type={draft.type === 'number' ? 'number' : 'text'}
-                  value={item}
-                  onChange={(event) => {
-                    const nextItems = [...draft.items];
-                    nextItems[index] = event.target.value;
-                    onChange({ ...draft, items: nextItems });
-                  }}
-                  onBlur={() => {
-                    onCommit?.(draft);
-                  }}
-                  placeholder={draft.type === 'number' ? '0' : `Item ${index + 1}`}
-                />
-                <Button
-                  aria-label={`Remove item ${index + 1}`}
-                  className="h-8 w-8 shrink-0 px-0"
-                  size="icon-sm"
-                  variant="ghost"
-                  onClick={() => {
-                    const nextDraft = {
-                      ...draft,
-                      items: draft.items.filter((_, itemIndex) => itemIndex !== index),
-                    };
-                    onChange(nextDraft);
-                    onCommit?.(nextDraft);
-                  }}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
+                <div className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-0 ${
+                  draggedIndex === index ? 'opacity-70' : ''
+                }`}>
+                  <button
+                    aria-label={`Reorder item ${index + 1}`}
+                    className="flex h-9 w-6 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                    draggable
+                    onDragEnd={handleArrayDragEnd}
+                    onDragStart={(event) => {
+                      handleArrayDragStart(index);
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', String(index));
+                      const dragImage = getTransparentShelfDragImage();
+                      if (dragImage) {
+                        event.dataTransfer.setDragImage(dragImage, 0, 0);
+                      }
+                    }}
+                    type="button"
+                  >
+                    <GripVertical className="size-4" />
+                  </button>
+                  <Input
+                    id={itemId}
+                    type={draft.type === 'number' ? 'number' : 'text'}
+                    value={item}
+                    onChange={(event) => {
+                      const nextItems = [...draft.items];
+                      nextItems[index] = event.target.value;
+                      onChange({ ...draft, items: nextItems });
+                    }}
+                    onBlur={() => {
+                      const normalizedDraft = normalizeVariableDefaultDraft(draft);
+                      onChange(normalizedDraft);
+                      onCommit?.(normalizedDraft);
+                    }}
+                    placeholder={draft.type === 'number' ? '0' : `Item ${index + 1}`}
+                  />
+                  <Button
+                    aria-label={`Remove item ${index + 1}`}
+                    className="h-8 w-8 shrink-0 px-0"
+                    size="icon-sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const nextDraft = {
+                        ...draft,
+                        items: draft.items.filter((_, itemIndex) => itemIndex !== index),
+                      };
+                      onChange(nextDraft);
+                      onCommit?.(nextDraft);
+                    }}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
               </div>
             );
           })}
@@ -619,7 +644,7 @@ function VariableDefaultField({
 
 function VariableGridHeader() {
   return (
-    <div className="grid grid-cols-[minmax(0,1.35fr)_132px_118px_minmax(0,2fr)] items-center gap-3 px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
+    <div className="grid grid-cols-[minmax(0,1.35fr)_132px_118px_minmax(0,2fr)] items-center gap-3 px-3 pt-2 text-xs font-medium text-muted-foreground">
       <div>Name</div>
       <div>Type</div>
       <div>Structure</div>
@@ -695,7 +720,12 @@ function LocalHierarchyBranch({
   );
 }
 
-export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: EditVariablesDialogProps) {
+export function EditVariablesDialog({
+  open,
+  onOpenChange,
+  createRequestId = 0,
+  onVariablesChanged,
+}: EditVariablesDialogProps) {
   const {
     project,
     addGlobalVariable,
@@ -724,6 +754,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const [expandedLocalKeys, setExpandedLocalKeys] = useState<Set<string>>(new Set());
   const [blockedDelete, setBlockedDelete] = useState<{ entityLabel: string; impact: ProjectReferenceImpact } | null>(null);
   const [pendingKindChange, setPendingKindChange] = useState<PendingVariableKindChange | null>(null);
+  const lastHandledCreateRequestRef = useRef(0);
 
   const components = useMemo(() => project?.components || [], [project?.components]);
   const scenes = useMemo(() => project?.scenes || [], [project?.scenes]);
@@ -759,25 +790,41 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     return null;
   }, [componentById, scenes, selectedComponentId, selectedObjectId, selectedSceneId]);
 
-  const preferredScope = localSelectionTarget ? 'local' : 'global';
+  const preferredTab: VariableListTab = localSelectionTarget ? 'local' : 'global';
 
   const resetAddDialog = (nextScope: AddVariableScope) => {
     setName('');
     setType('number');
     setCardinality('single');
+    setScope(nextScope);
     setDefaultDraft(createVariableDefaultDraft('number', 'single'));
     setError(null);
-    setScope(nextScope);
   };
 
   useEffect(() => {
     if (!open) return;
     setIsAdding(false);
-    setActiveTab(preferredScope);
+    setActiveTab(preferredTab);
     setBlockedDelete(null);
     setPendingKindChange(null);
-    resetAddDialog(preferredScope);
-  }, [open, preferredScope]);
+    resetAddDialog(preferredTab);
+  }, [open, preferredTab]);
+
+  useEffect(() => {
+    if (!open || createRequestId === 0) {
+      return;
+    }
+    if (createRequestId === lastHandledCreateRequestRef.current) {
+      return;
+    }
+
+    lastHandledCreateRequestRef.current = createRequestId;
+    setActiveTab(preferredTab);
+    setBlockedDelete(null);
+    setPendingKindChange(null);
+    resetAddDialog(preferredTab);
+    setIsAdding(true);
+  }, [createRequestId, open, preferredTab]);
 
   useEffect(() => {
     if (scope === 'local' && !localSelectionTarget) {
@@ -812,6 +859,25 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     const object = scene?.objects.find((objectItem) => objectItem.id === target.objectId);
     return object?.localVariables || [];
   };
+
+  const createVariableTitle = useMemo(() => {
+    if (scope === 'global') {
+      return 'Create Global Variable';
+    }
+
+    if (!localSelectionTarget) {
+      return 'Create Local Variable';
+    }
+
+    if (localSelectionTarget.kind === 'component') {
+      const componentName = componentById.get(localSelectionTarget.componentId)?.name || 'Component';
+      return `Create Local Variable for ${componentName}`;
+    }
+
+    const scene = scenes.find((sceneItem) => sceneItem.id === localSelectionTarget.sceneId);
+    const objectName = scene?.objects.find((objectItem) => objectItem.id === localSelectionTarget.objectId)?.name || 'Object';
+    return `Create Local Variable for ${objectName}`;
+  }, [componentById, localSelectionTarget, scenes, scope]);
 
   const emitVariablesChanged = () => {
     onVariablesChanged?.();
@@ -853,9 +919,8 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       groups.push({
         key: `component:${component.id}`,
         title: component.name,
-        subtitle: instanceObjects.length > 0
-          ? `${instanceObjects.length} linked ${instanceObjects.length === 1 ? 'object' : 'objects'}`
-          : 'Reusable component',
+        costumes: component.costumes || [],
+        currentCostumeIndex: component.currentCostumeIndex ?? 0,
         entries: instanceObjects.length === 0
           ? componentVariables.map((variable) => ({
               key: `component:${component.id}:variable:${variable.id}`,
@@ -915,6 +980,9 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
 
   const defaultExpandedLocalKeys = useMemo(() => {
     const keys = new Set<string>();
+    if (componentHierarchy.length > 0) {
+      keys.add('components-root');
+    }
     for (const component of componentHierarchy) {
       keys.add(component.key);
       for (const object of component.objects) {
@@ -1123,7 +1191,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     }
 
     setIsAdding(false);
-    resetAddDialog(activeTab === 'local' && localSelectionTarget ? 'local' : 'global');
+    resetAddDialog(activeTab);
     emitVariablesChanged();
   };
 
@@ -1176,7 +1244,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       <>
         <div
           data-property-manager-row="true"
-          className="grid grid-cols-[minmax(0,1.35fr)_132px_118px_minmax(0,2fr)] items-start gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-3 transition-colors hover:bg-accent/70"
+          className="grid grid-cols-[minmax(0,1.35fr)_132px_118px_minmax(0,2fr)] items-start gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-3"
           onContextMenu={handleContextMenu}
         >
           <div className="min-w-0">
@@ -1357,8 +1425,9 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         layout="workspace"
         title="Variables"
         addButtonLabel="Add variable"
+        addButtonText="New variable"
         onAdd={() => {
-          resetAddDialog(activeTab === 'local' && localSelectionTarget ? 'local' : 'global');
+          resetAddDialog(activeTab);
           setIsAdding(true);
         }}
         toolbar={(
@@ -1391,51 +1460,69 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
           <section className="space-y-3">
             {componentHierarchy.length > 0 || sceneHierarchy.length > 0 ? (
               <div className="space-y-2">
-                {componentHierarchy.map((component) => (
+                {componentHierarchy.length > 0 ? (
                   <LocalHierarchyBranch
-                    key={component.key}
+                    key="components-root"
                     icon={<ComponentIcon className="size-3.5" />}
-                    isExpanded={expandedLocalKeys.has(component.key)}
-                    onToggle={() => toggleExpandedLocalKey(component.key)}
-                    subtitle={component.subtitle}
-                    title={component.title}
+                    isExpanded={expandedLocalKeys.has('components-root')}
+                    onToggle={() => toggleExpandedLocalKey('components-root')}
+                    title="Components"
                   >
                     <div className="space-y-1">
-                      {component.objects.map((object) => (
+                      {componentHierarchy.map((component) => (
                         <LocalHierarchyBranch
-                          key={object.key}
+                          key={component.key}
                           icon={(
                             <ShelfObjectThumbnail
-                              currentCostumeIndex={object.currentCostumeIndex}
-                              costumes={object.costumes}
-                              name={object.title}
+                              currentCostumeIndex={component.currentCostumeIndex}
+                              costumes={component.costumes}
+                              name={component.title}
                             />
                           )}
-                          isExpanded={expandedLocalKeys.has(object.key)}
+                          isExpanded={expandedLocalKeys.has(component.key)}
                           level={1}
-                          onToggle={() => toggleExpandedLocalKey(object.key)}
-                          subtitle={object.subtitle}
-                          title={object.title}
+                          onToggle={() => toggleExpandedLocalKey(component.key)}
+                          title={component.title}
                         >
-                          <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
-                            <VariableGridHeader />
-                            {object.entries.map((entry) => (
-                              <VariableRow key={entry.key} entry={entry} />
+                          <div className="space-y-1">
+                            {component.objects.map((object) => (
+                              <LocalHierarchyBranch
+                                key={object.key}
+                                icon={(
+                                  <ShelfObjectThumbnail
+                                    currentCostumeIndex={object.currentCostumeIndex}
+                                    costumes={object.costumes}
+                                    name={object.title}
+                                  />
+                                )}
+                                isExpanded={expandedLocalKeys.has(object.key)}
+                                level={2}
+                                onToggle={() => toggleExpandedLocalKey(object.key)}
+                                subtitle={object.subtitle}
+                                title={object.title}
+                              >
+                                <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
+                                  <VariableGridHeader />
+                                  {object.entries.map((entry) => (
+                                    <VariableRow key={entry.key} entry={entry} />
+                                  ))}
+                                </div>
+                              </LocalHierarchyBranch>
                             ))}
+                            {component.entries.length > 0 ? (
+                              <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
+                                <VariableGridHeader />
+                                {component.entries.map((entry) => (
+                                  <VariableRow key={entry.key} entry={entry} />
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         </LocalHierarchyBranch>
                       ))}
-                      {component.entries.length > 0 ? (
-                        <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
-                          <VariableGridHeader />
-                          {component.entries.map((entry) => (
-                            <VariableRow key={entry.key} entry={entry} />
-                          ))}
-                        </div>
-                      ) : null}
                     </div>
                   </LocalHierarchyBranch>
-                ))}
+                ) : null}
 
                 {sceneHierarchy.map((scene) => (
                   <LocalHierarchyBranch
@@ -1491,7 +1578,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
             setError(null);
           }
         }}
-        title="Create Variable"
+        title={createVariableTitle}
         contentClassName="sm:max-w-lg"
         footer={(
           <Button disabled={!canCreateVariable} onClick={handleAdd}>Create</Button>
@@ -1535,6 +1622,26 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
             </VariableOptionRow>
 
             <VariableOptionRow
+              label="Structure"
+              helpText={VARIABLE_FIELD_HELP.values}
+              className="border-t border-border/70"
+            >
+              <SegmentedControl
+                ariaLabel="Variable values"
+                className="min-w-0 flex-1"
+                layout="fill"
+                options={VARIABLE_CARDINALITIES}
+                value={cardinality}
+                onValueChange={(nextValue) => {
+                  const nextCardinality = nextValue as VariableCardinality;
+                  setCardinality(nextCardinality);
+                  setDefaultDraft(createVariableDefaultDraft(type, nextCardinality));
+                  setError(null);
+                }}
+              />
+            </VariableOptionRow>
+
+            <VariableOptionRow
               label="Scope"
               helpText={VARIABLE_FIELD_HELP.scope}
               className="border-t border-border/70"
@@ -1550,26 +1657,6 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                 value={scope}
                 onValueChange={(nextValue) => {
                   setScope(nextValue as AddVariableScope);
-                  setError(null);
-                }}
-              />
-            </VariableOptionRow>
-
-            <VariableOptionRow
-              label="Structure"
-              helpText={VARIABLE_FIELD_HELP.values}
-              className="border-t border-border/70"
-            >
-              <SegmentedControl
-                ariaLabel="Variable values"
-                className="min-w-0 flex-1"
-                layout="fill"
-                options={VARIABLE_CARDINALITIES}
-                value={cardinality}
-                onValueChange={(nextValue) => {
-                  const nextCardinality = nextValue as VariableCardinality;
-                  setCardinality(nextCardinality);
-                  setDefaultDraft(createVariableDefaultDraft(type, nextCardinality));
                   setError(null);
                 }}
               />

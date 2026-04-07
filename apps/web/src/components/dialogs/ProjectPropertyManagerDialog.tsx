@@ -1,9 +1,8 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { WindowDialogChrome } from '@/components/shared/WindowDialogChrome';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { IconButton } from '@/components/ui/icon-button';
+import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
 import { Pencil, Plus, Trash2 } from '@/components/ui/icons';
@@ -24,6 +23,7 @@ interface ProjectPropertyManagerDialogProps {
   title: string;
   description?: string;
   addButtonLabel: string;
+  addButtonText?: string;
   onAdd: () => void;
   toolbar?: ReactNode;
   layout?: 'compact' | 'workspace';
@@ -128,6 +128,7 @@ export function ProjectPropertyManagerDialog({
   title,
   description,
   addButtonLabel,
+  addButtonText,
   onAdd,
   toolbar,
   layout = 'compact',
@@ -146,15 +147,18 @@ export function ProjectPropertyManagerDialog({
     >
       <div className="flex min-h-0 flex-1 flex-col gap-4 select-none">
         <div className="flex items-center justify-between gap-3">
-          <IconButton
+          <Button
             className="shrink-0"
-            label={addButtonLabel}
+            aria-label={addButtonLabel}
             onClick={onAdd}
             shape="pill"
             size="sm"
+            title={addButtonLabel}
+            variant="outline"
           >
             <Plus className="size-4" />
-          </IconButton>
+            {addButtonText ? <span>{addButtonText}</span> : null}
+          </Button>
 
           {toolbar ? (
             <div className="ml-auto flex min-w-0 items-center justify-end">

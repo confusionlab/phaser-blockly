@@ -76,6 +76,7 @@ const FLYOUT_SUBSECTION_HEADING_GAP = '20';
 const FLYOUT_SUBSECTION_HEADING_BOTTOM_GAP = '12';
 const FLYOUT_GROUP_BREAK_GAP = '56';
 
+let createMessagesToolbarCallback: (() => void) | null = null;
 let editMessagesToolbarCallback: (() => void) | null = null;
 
 export type ToolboxShadowConfig = {
@@ -893,6 +894,13 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
           { kind: 'label', text: 'Messages' },
           {
             kind: 'button',
+            text: 'Create New Message',
+            callbackKey: 'CREATE_MESSAGE',
+            'web-class': 'pochaBlocklyRoomyEditButton',
+          },
+          { kind: 'sep', gap: '8' },
+          {
+            kind: 'button',
             text: 'Edit Messages',
             callbackKey: 'EDIT_MESSAGES',
             'web-class': 'pochaBlocklyRoomyEditButton',
@@ -1464,6 +1472,13 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         name: 'Variables',
         colour: BLOCK_COLOURS.variables,
         contents: withFlyoutHeadingBottomGap([
+          {
+            kind: 'button',
+            text: 'Create New Variable',
+            callbackKey: 'CREATE_VARIABLE',
+            'web-class': 'pochaBlocklyRoomyEditButton',
+          },
+          { kind: 'sep', gap: '8' },
           {
             kind: 'button',
             text: 'Edit Variables',
@@ -4286,9 +4301,17 @@ function validateNumericInput(block: Blockly.Block) {
 }
 
 // Callbacks for variable category actions - set externally by BlocklyEditor
+let createVariablesCallback: (() => void) | null = null;
 let editVariablesCallback: (() => void) | null = null;
+export function setCreateVariablesCallback(callback: (() => void) | null) {
+  createVariablesCallback = callback;
+}
 export function setEditVariablesCallback(callback: (() => void) | null) {
   editVariablesCallback = callback;
+}
+
+export function setCreateMessagesToolbarCallback(callback: (() => void) | null) {
+  createMessagesToolbarCallback = callback;
 }
 
 export function setEditMessagesToolbarCallback(callback: (() => void) | null) {
@@ -4297,9 +4320,21 @@ export function setEditMessagesToolbarCallback(callback: (() => void) | null) {
 
 // Register button callbacks for the Variables category
 export function registerTypedVariablesCategory(workspace: Blockly.WorkspaceSvg) {
+  workspace.registerButtonCallback('CREATE_MESSAGE', () => {
+    if (createMessagesToolbarCallback) {
+      createMessagesToolbarCallback();
+    }
+  });
+
   workspace.registerButtonCallback('EDIT_MESSAGES', () => {
     if (editMessagesToolbarCallback) {
       editMessagesToolbarCallback();
+    }
+  });
+
+  workspace.registerButtonCallback('CREATE_VARIABLE', () => {
+    if (createVariablesCallback) {
+      createVariablesCallback();
     }
   });
 

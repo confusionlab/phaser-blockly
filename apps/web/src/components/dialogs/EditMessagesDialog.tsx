@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,12 +17,14 @@ import type { ProjectReferenceImpact, ProjectReferenceOwnerTarget } from '@/lib/
 interface EditMessagesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  createRequestId?: number;
   onMessagesChanged?: () => void;
 }
 
 export function EditMessagesDialog({
   open,
   onOpenChange,
+  createRequestId = 0,
   onMessagesChanged,
 }: EditMessagesDialogProps) {
   const { project, addMessage, getMessageDeletionImpact, removeMessage, updateMessage } = useProjectStore();
@@ -34,6 +36,7 @@ export function EditMessagesDialog({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [blockedDelete, setBlockedDelete] = useState<{ entityLabel: string; impact: ProjectReferenceImpact } | null>(null);
+  const lastHandledCreateRequestRef = useRef(0);
 
   const messages = useMemo(() => project?.messages || [], [project?.messages]);
 
@@ -50,6 +53,22 @@ export function EditMessagesDialog({
     setEditName('');
     setBlockedDelete(null);
   }, [open]);
+
+  useEffect(() => {
+    if (!open || createRequestId === 0) {
+      return;
+    }
+    if (createRequestId === lastHandledCreateRequestRef.current) {
+      return;
+    }
+
+    lastHandledCreateRequestRef.current = createRequestId;
+    resetAddDialog();
+    setEditingId(null);
+    setEditName('');
+    setBlockedDelete(null);
+    setIsAdding(true);
+  }, [createRequestId, open]);
 
   const emitMessagesChanged = () => {
     onMessagesChanged?.();
@@ -133,7 +152,7 @@ export function EditMessagesDialog({
         open={open}
         onOpenChange={onOpenChange}
         title="Messages"
-        addButtonLabel="Create"
+        addButtonLabel="New message"
         onAdd={() => {
           resetAddDialog();
           setIsAdding(true);
