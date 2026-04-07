@@ -240,6 +240,7 @@ export function useCostumeCanvasPenController({
       strokeColor: vectorStyleRef.current.strokeColor,
       strokeLineCap: 'round',
       strokeLineJoin: 'round',
+      strokeWiggle: vectorStyleRef.current.strokeWiggle,
       strokeOpacity: vectorStyleRef.current.strokeOpacity,
       strokeWidth,
     });
@@ -295,6 +296,7 @@ export function useCostumeCanvasPenController({
       vectorStrokeBrushId: vectorStyleRef.current.strokeBrushId,
       vectorStrokeColor: vectorStyleRef.current.strokeColor,
       vectorStrokeOpacity: vectorStyleRef.current.strokeOpacity,
+      vectorStrokeWiggle: vectorStyleRef.current.strokeWiggle,
     } as any);
 
     path.setCoords?.();

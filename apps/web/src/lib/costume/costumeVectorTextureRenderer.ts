@@ -10,6 +10,7 @@ import {
   createVectorStrokeBrushRenderStyle,
   getVectorStrokeBrushPreset,
   DEFAULT_VECTOR_STROKE_BRUSH_ID,
+  normalizeVectorStrokeWiggle,
   type VectorStrokeBrushId,
   type VectorStrokeBrushRenderStyle,
 } from '@/lib/vector/vectorStrokeBrushCore';
@@ -22,6 +23,7 @@ import { getCanvas2dContext } from '@/utils/canvas2d';
 import { COSTUME_CANVAS_SIZE } from './costumeDocument';
 
 const MAX_VECTOR_STROKE_BRUSH_RENDER_CACHE_ENTRIES = 256;
+const MAX_VECTOR_STROKE_WIGGLE_SPACING_MULTIPLIER = 6;
 
 const vectorStrokeBrushRenderCache = new Map<string, VectorStrokeBrushRenderStyle>();
 const vectorTextureCache = new Map<string, HTMLImageElement | null>();
@@ -107,6 +109,7 @@ function resolveVectorStrokeBrushRenderStyle(
   brushId: VectorStrokeBrushId,
   strokeColor: string,
   strokeWidth: number,
+  strokeWiggle: number,
   onTextureSourceReady?: (() => void) | null,
 ): VectorStrokeBrushRenderStyle | null {
   const preset = getVectorStrokeBrushPreset(brushId);
@@ -123,6 +126,7 @@ function resolveVectorStrokeBrushRenderStyle(
     brushId,
     strokeColor,
     strokeWidth.toFixed(3),
+    strokeWiggle.toFixed(3),
     texturePath ?? 'builtin',
     textureSource ? 'ready' : 'fallback',
   ].join('|');
@@ -133,7 +137,10 @@ function resolveVectorStrokeBrushRenderStyle(
 
   return rememberVectorStrokeBrushRenderStyle(
     cacheKey,
-    createVectorStrokeBrushRenderStyle(brushId, strokeColor, strokeWidth, textureSource),
+    createVectorStrokeBrushRenderStyle(brushId, strokeColor, strokeWidth, {
+      textureSource,
+      wiggle: strokeWiggle,
+    }),
   );
 }
 
@@ -322,6 +329,15 @@ function getVectorObjectStrokeOpacity(obj: unknown): number | undefined {
     : undefined;
 }
 
+function getVectorObjectStrokeWiggle(obj: unknown): number {
+  const explicitWiggle = (obj as { vectorStrokeWiggle?: unknown } | null | undefined)?.vectorStrokeWiggle;
+  return normalizeVectorStrokeWiggle(
+    typeof explicitWiggle === 'number' && Number.isFinite(explicitWiggle)
+      ? explicitWiggle
+      : undefined,
+  );
+}
+
 function getFabricStrokeValueForVectorBrush(
   brushId: VectorStrokeBrushId,
   strokeColor: string,
@@ -391,9 +407,13 @@ export function normalizeVectorObjectRendering(obj: unknown): boolean {
   const fillColor = getVectorObjectFillColor(candidate);
   const fillTextureId = getVectorObjectFillTextureId(candidate);
   const strokeOpacity = getVectorObjectStrokeOpacity(candidate) ?? 1;
+  const strokeWiggle = getVectorObjectStrokeWiggle(candidate);
   const fillOpacity = getVectorObjectFillOpacity(candidate) ?? 1;
   if ((candidate as { vectorStrokeOpacity?: unknown }).vectorStrokeOpacity !== strokeOpacity) {
     updates.vectorStrokeOpacity = strokeOpacity;
+  }
+  if ((candidate as { vectorStrokeWiggle?: unknown }).vectorStrokeWiggle !== strokeWiggle) {
+    updates.vectorStrokeWiggle = strokeWiggle;
   }
   if (vectorObjectSupportsFill(candidate) && (candidate as { vectorFillOpacity?: unknown }).vectorFillOpacity !== fillOpacity) {
     updates.vectorFillOpacity = fillOpacity;
@@ -764,23 +784,33 @@ function drawVectorStrokeBrushPath(
     : hashNumberTriplet(pathPoints[0]?.x ?? 0, pathPoints[0]?.y ?? 0, closed ? 1 : 0);
 
   const renderDabAt = (distanceAlongPath: number, dabIndex: number) => {
+    const dabPositionSeed = dabIndex + 1;
+    const wiggleRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.61);
+    const wiggleDistance = renderStyle.wiggle > 0
+      ? (
+          ((wiggleRandom * 2) - 1)
+          * renderStyle.spacing
+          * renderStyle.wiggle
+          * MAX_VECTOR_STROKE_WIGGLE_SPACING_MULTIPLIER
+        )
+      : 0;
+    const sampleDistance = distanceAlongPath + wiggleDistance;
     const point = samplePointAlongPolyline(
       pathPoints,
       cumulativeLengths,
       totalLength,
-      distanceAlongPath,
+      sampleDistance,
       closed,
     );
     const angle = sampleAngleAlongPolyline(
       pathPoints,
       cumulativeLengths,
       totalLength,
-      distanceAlongPath,
+      sampleDistance,
       closed,
       tangentWindow,
     );
     const dab = renderStyle.dabs[dabIndex % renderStyle.dabs.length];
-    const dabPositionSeed = dabIndex + 1;
     const scaleRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.17);
     const opacityRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.23);
     const rotationRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.41);
@@ -832,6 +862,7 @@ export function renderVectorStrokeBrushPreview(
     clear?: boolean;
     onTextureSourceReady?: (() => void) | null;
     strokeColor: string;
+    strokeWiggle?: number;
     strokeOpacity?: number;
     strokeWidth: number;
   },
@@ -874,6 +905,7 @@ export function renderVectorStrokeBrushPreview(
     options.brushId,
     options.strokeColor,
     strokeWidth,
+    normalizeVectorStrokeWiggle(options.strokeWiggle),
     options.onTextureSourceReady,
   );
   if (!renderStyle) {
@@ -1150,6 +1182,7 @@ function renderVectorTextureDecorationsForObject(
         brushId,
         strokeColor,
         strokeWidth,
+        getVectorObjectStrokeWiggle(obj),
         options.onTextureSourceReady,
       );
       if (renderStyle && renderStyle.kind === 'bitmap-dab') {

@@ -38,6 +38,7 @@ import {
   getVectorObjectStrokeBrushId,
   getVectorObjectStrokeColor,
   getVectorObjectStrokeOpacity,
+  getVectorObjectStrokeWiggle,
   isActiveSelectionObject,
   isDirectlyEditablePathObject,
   isImageObject,
@@ -284,6 +285,7 @@ export function useCostumeCanvasVectorObjectController({
     const strokeColor = getVectorObjectStrokeColor(obj) ?? fillColor;
     const strokeOpacity = getVectorObjectStrokeOpacity(obj) ?? 1;
     const strokeBrushId = getVectorObjectStrokeBrushId(obj);
+    const strokeWiggle = getVectorObjectStrokeWiggle(obj);
     const path = new Path(pathData, {
       fill: shouldFill ? getFabricFillValueForVectorTexture(fillTextureId, fillColor, fillOpacity) : null,
       stroke: getFabricStrokeValueForVectorBrush(strokeBrushId, strokeColor, strokeOpacity),
@@ -306,6 +308,7 @@ export function useCostumeCanvasVectorObjectController({
       vectorStrokeBrushId: strokeBrushId,
       vectorStrokeColor: strokeColor,
       vectorStrokeOpacity: strokeOpacity,
+      vectorStrokeWiggle: strokeWiggle,
       selectable: true,
       evented: true,
       hasControls: true,

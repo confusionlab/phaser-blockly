@@ -6,6 +6,7 @@ import {
 } from '@/lib/vector/vectorFillTextureCore';
 import {
   DEFAULT_VECTOR_STROKE_BRUSH_ID,
+  normalizeVectorStrokeWiggle,
   type VectorStrokeBrushId,
 } from '@/lib/vector/vectorStrokeBrushCore';
 import {
@@ -33,6 +34,7 @@ export const VECTOR_JSON_EXTRA_PROPS = [
   'vectorStrokeBrushId',
   'vectorStrokeColor',
   'vectorStrokeOpacity',
+  'vectorStrokeWiggle',
 ];
 
 export async function cloneFabricObjectWithVectorStyle<T extends { clone?: (...args: any[]) => any }>(
@@ -64,6 +66,7 @@ export function createVectorTexturePreviewPathObject(options: {
   strokeLineCap?: CanvasLineCap;
   strokeLineJoin?: CanvasLineJoin;
   strokeMiterLimit?: number;
+  strokeWiggle?: number;
   strokeOpacity: number;
   strokeWidth: number;
 }): VectorTexturePreviewPathObject {
@@ -97,6 +100,7 @@ export function createVectorTexturePreviewPathObject(options: {
     vectorStrokeBrushId: options.strokeBrushId,
     vectorStrokeColor: options.strokeColor,
     vectorStrokeOpacity: options.strokeOpacity,
+    vectorStrokeWiggle: normalizeVectorStrokeWiggle(options.strokeWiggle),
   };
 }
 
@@ -127,6 +131,7 @@ export interface VectorTexturePreviewPathObject {
   vectorStrokeBrushId: VectorStrokeBrushId;
   vectorStrokeColor: string;
   vectorStrokeOpacity: number;
+  vectorStrokeWiggle: number;
 }
 
 const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
@@ -498,10 +503,11 @@ export interface VectorBrushStylableObject {
   vectorStrokeBrushId?: VectorStrokeBrushId;
   vectorStrokeColor?: string;
   vectorStrokeOpacity?: number;
+  vectorStrokeWiggle?: number;
 }
 
 type VectorFillStyleUpdates = Partial<Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>>;
-type VectorStrokeStyleUpdates = Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>>;
+type VectorStrokeStyleUpdates = Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth' | 'strokeWiggle'>>;
 
 type CenterPreservingVectorObject = VectorBrushStylableObject & {
   getCenterPoint?: () => unknown;
@@ -611,6 +617,14 @@ export function getVectorObjectStrokeOpacity(obj: unknown): number | undefined {
   return getVectorObjectLegacyOpacity(obj);
 }
 
+export function getVectorObjectStrokeWiggle(obj: unknown): number {
+  return normalizeVectorStrokeWiggle(
+    typeof (obj as VectorBrushStylableObject | null | undefined)?.vectorStrokeWiggle === 'number'
+      ? (obj as VectorBrushStylableObject).vectorStrokeWiggle
+      : undefined,
+  );
+}
+
 function normalizeVectorPartOpacity(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? clampUnit(value) : 1;
 }
@@ -702,7 +716,7 @@ export function applyVectorFillStyleToObject(
 
 export function applyVectorStrokeStyleToObject(
   obj: VectorBrushStylableObject | null | undefined,
-  style: Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>>,
+  style: Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth' | 'strokeWiggle'>>,
 ): boolean {
   if (!obj || typeof obj.set !== 'function') {
     return false;
@@ -711,7 +725,8 @@ export function applyVectorStrokeStyleToObject(
   const hasStrokeColorUpdate = hasOwnVectorStyleUpdate(style, 'strokeColor');
   const hasStrokeOpacityUpdate = hasOwnVectorStyleUpdate(style, 'strokeOpacity');
   const hasStrokeWidthUpdate = hasOwnVectorStyleUpdate(style, 'strokeWidth');
-  if (!hasStrokeBrushUpdate && !hasStrokeColorUpdate && !hasStrokeOpacityUpdate && !hasStrokeWidthUpdate) {
+  const hasStrokeWiggleUpdate = hasOwnVectorStyleUpdate(style, 'strokeWiggle');
+  if (!hasStrokeBrushUpdate && !hasStrokeColorUpdate && !hasStrokeOpacityUpdate && !hasStrokeWidthUpdate && !hasStrokeWiggleUpdate) {
     return false;
   }
 
@@ -738,6 +753,12 @@ export function applyVectorStrokeStyleToObject(
   const normalizedStrokeOpacity = normalizeVectorPartOpacity(nextStrokeOpacity);
   if (obj.vectorStrokeOpacity !== normalizedStrokeOpacity) {
     updates.vectorStrokeOpacity = normalizedStrokeOpacity;
+  }
+  const nextStrokeWiggle = hasStrokeWiggleUpdate
+    ? normalizeVectorStrokeWiggle(style.strokeWiggle)
+    : getVectorObjectStrokeWiggle(obj);
+  if (obj.vectorStrokeWiggle !== nextStrokeWiggle) {
+    updates.vectorStrokeWiggle = nextStrokeWiggle;
   }
   const renderStroke = getFabricStrokeValueForVectorBrush(
     nextStrokeBrushId,
@@ -941,9 +962,13 @@ export function normalizeVectorObjectRendering(obj: unknown): boolean {
   const fillColor = getVectorObjectFillColor(candidate);
   const fillTextureId = getVectorObjectFillTextureId(candidate);
   const strokeOpacity = normalizeVectorPartOpacity(getVectorObjectStrokeOpacity(candidate));
+  const strokeWiggle = getVectorObjectStrokeWiggle(candidate);
   const fillOpacity = normalizeVectorPartOpacity(getVectorObjectFillOpacity(candidate));
   if ((candidate as VectorBrushStylableObject).vectorStrokeOpacity !== strokeOpacity) {
     updates.vectorStrokeOpacity = strokeOpacity;
+  }
+  if ((candidate as VectorBrushStylableObject).vectorStrokeWiggle !== strokeWiggle) {
+    updates.vectorStrokeWiggle = strokeWiggle;
   }
   if (vectorObjectSupportsFill(candidate) && (candidate as VectorBrushStylableObject).vectorFillOpacity !== fillOpacity) {
     updates.vectorFillOpacity = fillOpacity;
@@ -1059,6 +1084,7 @@ export function getVectorStyleSelectionSnapshot(obj: unknown): VectorToolStyleSe
     strokeOpacity: getVectorObjectStrokeOpacity(firstTarget),
     strokeWidth: typeof firstTarget.strokeWidth === 'number' ? firstTarget.strokeWidth : undefined,
     strokeBrushId: getVectorObjectStrokeBrushId(firstTarget),
+    strokeWiggle: getVectorObjectStrokeWiggle(firstTarget),
   };
   const mixed: VectorToolStyleMixedState = {};
 
@@ -1079,6 +1105,7 @@ export function getVectorStyleSelectionSnapshot(obj: unknown): VectorToolStyleSe
   markMixedIfNeeded('strokeOpacity', getVectorObjectStrokeOpacity);
   markMixedIfNeeded('strokeWidth', (target) => (typeof target.strokeWidth === 'number' ? target.strokeWidth : undefined));
   markMixedIfNeeded('strokeBrushId', getVectorObjectStrokeBrushId);
+  markMixedIfNeeded('strokeWiggle', getVectorObjectStrokeWiggle);
 
   return {
     style,
@@ -1096,6 +1123,7 @@ interface VectorPencilBrushOptions {
   onPreviewUpdated?: () => void;
   strokeBrushId: VectorStrokeBrushId;
   strokeColor: string;
+  strokeWiggle: number;
   strokeOpacity: number;
   strokeWidth: number;
 }
@@ -1105,6 +1133,7 @@ export class VectorPencilBrush extends PencilBrush {
   private readonly strokeBrushId: VectorStrokeBrushId;
   private readonly strokeColor: string;
   private readonly strokeDashOffset = 0;
+  private readonly strokeWiggle: number;
   private readonly strokeOpacityValue: number;
   private readonly strokeWidthValue: number;
   private previewActive = false;
@@ -1114,6 +1143,7 @@ export class VectorPencilBrush extends PencilBrush {
     this.onPreviewUpdated = options.onPreviewUpdated;
     this.strokeBrushId = options.strokeBrushId;
     this.strokeColor = options.strokeColor;
+    this.strokeWiggle = normalizeVectorStrokeWiggle(options.strokeWiggle);
     this.strokeOpacityValue = clampUnit(options.strokeOpacity);
     this.strokeWidthValue = Math.max(1, options.strokeWidth);
     this.width = this.strokeWidthValue;
@@ -1170,6 +1200,7 @@ export class VectorPencilBrush extends PencilBrush {
       vectorStrokeBrushId: this.strokeBrushId,
       vectorStrokeColor: this.strokeColor,
       vectorStrokeOpacity: this.strokeOpacityValue,
+      vectorStrokeWiggle: this.strokeWiggle,
     } as any);
     return path;
   }
@@ -1200,6 +1231,7 @@ export class VectorPencilBrush extends PencilBrush {
       strokeLineCap: this.strokeLineCap,
       strokeLineJoin: this.strokeLineJoin,
       strokeMiterLimit: this.strokeMiterLimit,
+      strokeWiggle: this.strokeWiggle,
       strokeOpacity: this.strokeOpacityValue,
       strokeWidth: this.strokeWidthValue,
     });

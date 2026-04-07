@@ -663,4 +663,86 @@ test.describe('vector texture renderer', () => {
     expect(result.centerStrokePixels).toBeGreaterThan(500);
     expect(result.topLeftPixels).toBe(0);
   });
+
+  test('wiggle shifts textured dabs along the stroke tangent', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 320;
+      const height = 220;
+      const createOverlayContext = () => {
+        const overlayCanvas = document.createElement('canvas');
+        overlayCanvas.width = width;
+        overlayCanvas.height = height;
+        return overlayCanvas.getContext('2d', { willReadFrequently: true });
+      };
+      const stableCtx = createOverlayContext();
+      const wigglyCtx = createOverlayContext();
+      if (!stableCtx || !wigglyCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      const createPathObject = (vectorStrokeWiggle: number) => ({
+        type: 'path',
+        path: [
+          ['M', 46, 128],
+          ['C', 102, 56, 158, 62, 214, 116],
+          ['L', 270, 148],
+        ],
+        pathOffset: { x: 0, y: 0 },
+        fill: null,
+        opacity: 1,
+        stroke: 'rgba(37, 99, 235, 0)',
+        strokeWidth: 20,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+        vectorStrokeBrushId: 'marker',
+        vectorStrokeColor: '#2563eb',
+        vectorStrokeOpacity: 1,
+        vectorStrokeWiggle,
+        calcTransformMatrix: () => [1, 0, 0, 1, 0, 0],
+      });
+
+      renderVectorTextureOverlayForObjects(stableCtx, [createPathObject(0)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+      renderVectorTextureOverlayForObjects(wigglyCtx, [createPathObject(1)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const stablePixels = stableCtx.getImageData(0, 0, width, height).data;
+      const wigglyPixels = wigglyCtx.getImageData(0, 0, width, height).data;
+
+      let opaqueUnion = 0;
+      let opaqueIntersection = 0;
+      let alphaDifference = 0;
+      for (let index = 3; index < stablePixels.length; index += 4) {
+        const stableAlpha = stablePixels[index] ?? 0;
+        const wigglyAlpha = wigglyPixels[index] ?? 0;
+        const stableOpaque = stableAlpha > 16;
+        const wigglyOpaque = wigglyAlpha > 16;
+        if (stableOpaque || wigglyOpaque) {
+          opaqueUnion += 1;
+        }
+        if (stableOpaque && wigglyOpaque) {
+          opaqueIntersection += 1;
+        }
+        alphaDifference += Math.abs(stableAlpha - wigglyAlpha);
+      }
+
+      return {
+        opaqueUnion,
+        overlapRatio: opaqueUnion > 0 ? opaqueIntersection / opaqueUnion : 1,
+        averageAlphaDifference: alphaDifference / (width * height),
+      };
+    });
+
+    expect(result.opaqueUnion).toBeGreaterThan(1800);
+    expect(result.overlapRatio).toBeLessThan(0.98);
+    expect(result.averageAlphaDifference).toBeGreaterThan(0.3);
+  });
 });

@@ -898,7 +898,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
             callbackKey: 'CREATE_MESSAGE',
             'web-class': 'pochaBlocklyRoomyEditButton',
           },
-          { kind: 'sep', gap: '8' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           {
             kind: 'button',
             text: 'Edit Messages',
@@ -1478,7 +1478,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
             callbackKey: 'CREATE_VARIABLE',
             'web-class': 'pochaBlocklyRoomyEditButton',
           },
-          { kind: 'sep', gap: '8' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           {
             kind: 'button',
             text: 'Edit Variables',

@@ -37,11 +37,18 @@ export interface VectorStrokeBrushRenderStyle {
   scaleJitter: number;
   scatter: number;
   spacing: number;
+  wiggle: number;
+}
+
+export interface CreateVectorStrokeBrushRenderStyleOptions {
+  textureSource?: CanvasImageSource | null;
+  wiggle?: number;
 }
 
 const MINIMUM_DAB_SIZE = 8;
 
 export const DEFAULT_VECTOR_STROKE_BRUSH_ID: VectorStrokeBrushId = 'solid';
+export const DEFAULT_VECTOR_STROKE_WIGGLE = 0;
 
 export const VECTOR_STROKE_BRUSH_OPTIONS: VectorStrokeBrushOption[] = [
   { value: 'solid', label: 'Solid' },
@@ -107,6 +114,13 @@ export const VECTOR_STROKE_BRUSH_PRESETS: Record<VectorStrokeBrushId, VectorStro
 
 function clampUnit(value: number) {
   return Math.max(0, Math.min(1, value));
+}
+
+export function normalizeVectorStrokeWiggle(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_VECTOR_STROKE_WIGGLE;
+  }
+  return clampUnit(value);
 }
 
 function hash2d(x: number, y: number) {
@@ -292,9 +306,10 @@ export function createVectorStrokeBrushRenderStyle(
   brushId: VectorStrokeBrushId | null | undefined,
   strokeColor: string,
   strokeWidth: number,
-  textureSource?: CanvasImageSource | null,
+  options: CreateVectorStrokeBrushRenderStyleOptions = {},
 ): VectorStrokeBrushRenderStyle {
   const preset = getVectorStrokeBrushPreset(brushId);
+  const wiggle = normalizeVectorStrokeWiggle(options.wiggle);
   if (preset.kind === 'solid') {
     return {
       kind: 'solid',
@@ -304,11 +319,13 @@ export function createVectorStrokeBrushRenderStyle(
       rotationJitter: 0,
       scaleJitter: 0,
       scatter: 0,
+      wiggle,
     };
   }
 
   const dabHeight = Math.max(MINIMUM_DAB_SIZE, Math.round(strokeWidth));
   const dabWidth = Math.max(MINIMUM_DAB_SIZE, Math.round(dabHeight * preset.dabAspectRatio));
+  const textureSource = options.textureSource;
   const dabCount = textureSource ? 1 : preset.variantCount;
   const dabs: VectorStrokeBrushBitmapDab[] = [];
 
@@ -337,5 +354,6 @@ export function createVectorStrokeBrushRenderStyle(
     rotationJitter: preset.rotationJitter,
     scaleJitter: preset.scaleJitter,
     scatter: strokeWidth * preset.scatterRatio,
+    wiggle,
   };
 }

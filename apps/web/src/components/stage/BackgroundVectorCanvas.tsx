@@ -247,6 +247,7 @@ function buildVectorStyleProps(vectorStyle: VectorToolStyle, supportsFill: boole
     vectorStrokeBrushId: vectorStyle.strokeBrushId,
     vectorStrokeColor: vectorStyle.strokeColor,
     vectorStrokeOpacity: vectorStyle.strokeOpacity,
+    vectorStrokeWiggle: vectorStyle.strokeWiggle,
   } as const;
 }
 
@@ -276,6 +277,9 @@ function getChangedVectorStyleUpdates(
   }
   if (previous.strokeBrushId !== next.strokeBrushId) {
     updates.strokeBrushId = next.strokeBrushId;
+  }
+  if (previous.strokeWiggle !== next.strokeWiggle) {
+    updates.strokeWiggle = next.strokeWiggle;
   }
 
   return updates;
@@ -2590,7 +2594,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
             : vectorStyle;
       if (Object.keys(vectorStyleUpdates).length > 0) {
         const fillStyleUpdates: Partial<Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>> = {};
-        const strokeStyleUpdates: Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>> = {};
+        const strokeStyleUpdates: Partial<Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth' | 'strokeWiggle'>> = {};
 
         if ('fillColor' in vectorStyleUpdates) {
           fillStyleUpdates.fillColor = vectorStyleUpdates.fillColor;
@@ -2612,6 +2616,9 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         }
         if ('strokeBrushId' in vectorStyleUpdates) {
           strokeStyleUpdates.strokeBrushId = vectorStyleUpdates.strokeBrushId;
+        }
+        if ('strokeWiggle' in vectorStyleUpdates) {
+          strokeStyleUpdates.strokeWiggle = vectorStyleUpdates.strokeWiggle;
         }
 
         didChange = applyVectorStyleUpdatesToSelection(activeObject, {

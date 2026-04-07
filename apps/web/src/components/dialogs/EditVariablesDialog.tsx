@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type RefObject } from 'react';
 import { DisclosureButton } from '@/components/ui/disclosure-button';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -143,6 +143,10 @@ function getTypeLabel(type: VariableType): string {
     case 'number': return 'Number';
     case 'boolean': return 'Boolean';
   }
+}
+
+function withMyselfSuffix(label: string, isCurrent: boolean): string {
+  return isCurrent ? `${label} (Myself)` : label;
 }
 
 function createVariableDefaultDraft(
@@ -665,6 +669,7 @@ function LocalHierarchyBranch({
   isExpanded,
   level = 0,
   onToggle,
+  containerRef,
   children,
 }: {
   title: string;
@@ -673,12 +678,13 @@ function LocalHierarchyBranch({
   isExpanded: boolean;
   level?: number;
   onToggle: () => void;
+  containerRef?: RefObject<HTMLDivElement | null>;
   children: React.ReactNode;
 }) {
   const toggleLabel = `Toggle ${title}`;
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1" ref={containerRef}>
       <div
         aria-expanded={isExpanded}
         aria-label={toggleLabel}
@@ -754,7 +760,9 @@ export function EditVariablesDialog({
   const [expandedLocalKeys, setExpandedLocalKeys] = useState<Set<string>>(new Set());
   const [blockedDelete, setBlockedDelete] = useState<{ entityLabel: string; impact: ProjectReferenceImpact } | null>(null);
   const [pendingKindChange, setPendingKindChange] = useState<PendingVariableKindChange | null>(null);
+  const [directCreateMode, setDirectCreateMode] = useState(false);
   const lastHandledCreateRequestRef = useRef(0);
+  const focusedBranchRef = useRef<HTMLDivElement | null>(null);
 
   const components = useMemo(() => project?.components || [], [project?.components]);
   const scenes = useMemo(() => project?.scenes || [], [project?.scenes]);
@@ -803,6 +811,7 @@ export function EditVariablesDialog({
 
   useEffect(() => {
     if (!open) return;
+    setDirectCreateMode(false);
     setIsAdding(false);
     setActiveTab(preferredTab);
     setBlockedDelete(null);
@@ -819,6 +828,7 @@ export function EditVariablesDialog({
     }
 
     lastHandledCreateRequestRef.current = createRequestId;
+    setDirectCreateMode(true);
     setActiveTab(preferredTab);
     setBlockedDelete(null);
     setPendingKindChange(null);
@@ -978,25 +988,46 @@ export function EditVariablesDialog({
     return groups;
   }, [scenes]);
 
+  const focusedLocalBranchKey = useMemo(() => {
+    if (!localSelectionTarget) {
+      return null;
+    }
+
+    if (localSelectionTarget.kind === 'component') {
+      return `component:${localSelectionTarget.componentId}`;
+    }
+
+    if (localSelectionTarget.backingComponentId) {
+      return `component:${localSelectionTarget.backingComponentId}:object:${localSelectionTarget.sceneId}:${localSelectionTarget.objectId}`;
+    }
+
+    return `scene:${localSelectionTarget.sceneId}:object:${localSelectionTarget.objectId}`;
+  }, [localSelectionTarget]);
+
   const defaultExpandedLocalKeys = useMemo(() => {
     const keys = new Set<string>();
-    if (componentHierarchy.length > 0) {
+
+    if (!localSelectionTarget) {
+      return keys;
+    }
+
+    if (localSelectionTarget.kind === 'component') {
       keys.add('components-root');
+      keys.add(`component:${localSelectionTarget.componentId}`);
+      return keys;
     }
-    for (const component of componentHierarchy) {
-      keys.add(component.key);
-      for (const object of component.objects) {
-        keys.add(object.key);
-      }
+
+    if (localSelectionTarget.backingComponentId) {
+      keys.add('components-root');
+      keys.add(`component:${localSelectionTarget.backingComponentId}`);
+      keys.add(`component:${localSelectionTarget.backingComponentId}:object:${localSelectionTarget.sceneId}:${localSelectionTarget.objectId}`);
+      return keys;
     }
-    for (const scene of sceneHierarchy) {
-      keys.add(scene.key);
-      for (const object of scene.objects) {
-        keys.add(object.key);
-      }
-    }
+
+    keys.add(`scene:${localSelectionTarget.sceneId}`);
+    keys.add(`scene:${localSelectionTarget.sceneId}:object:${localSelectionTarget.objectId}`);
     return keys;
-  }, [componentHierarchy, sceneHierarchy]);
+  }, [localSelectionTarget]);
 
   useEffect(() => {
     if (!open) {
@@ -1004,6 +1035,21 @@ export function EditVariablesDialog({
     }
     setExpandedLocalKeys(new Set(defaultExpandedLocalKeys));
   }, [defaultExpandedLocalKeys, open]);
+
+  useEffect(() => {
+    if (!open || activeTab !== 'local' || !focusedLocalBranchKey || typeof window === 'undefined') {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      focusedBranchRef.current?.scrollIntoView({
+        block: 'nearest',
+        inline: 'nearest',
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeTab, focusedLocalBranchKey, open, expandedLocalKeys]);
 
   const globalEntries = useMemo<VariableEntry[]>(
     () => (project?.globalVariables || []).map((variable) => ({
@@ -1190,8 +1236,12 @@ export function EditVariablesDialog({
         break;
     }
 
-    setIsAdding(false);
     resetAddDialog(activeTab);
+    setIsAdding(false);
+    if (directCreateMode) {
+      setDirectCreateMode(false);
+      onOpenChange(false);
+    }
     emitVariablesChanged();
   };
 
@@ -1419,160 +1469,175 @@ export function EditVariablesDialog({
 
   return (
     <>
-      <ProjectPropertyManagerDialog
-        open={open}
-        onOpenChange={onOpenChange}
-        layout="workspace"
-        title="Variables"
-        addButtonLabel="Add variable"
-        addButtonText="New variable"
-        onAdd={() => {
-          resetAddDialog(activeTab);
-          setIsAdding(true);
-        }}
-        toolbar={(
-          <SegmentedControl
-            ariaLabel="Variable manager tabs"
-            className="max-w-full"
-            layout="content"
-            options={VARIABLE_LIST_TABS}
-            value={activeTab}
-            onValueChange={setActiveTab}
-          />
-        )}
-      >
-        {activeTab === 'global' ? (
-          <section className="space-y-2">
-            {globalEntries.length > 0 ? (
-              <div className="space-y-1">
-                <VariableGridHeader />
-                {globalEntries.map((entry) => (
-                  <VariableRow key={entry.key} entry={entry} />
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                No global variables yet.
-              </div>
-            )}
-          </section>
-        ) : (
-          <section className="space-y-3">
-            {componentHierarchy.length > 0 || sceneHierarchy.length > 0 ? (
-              <div className="space-y-2">
-                {componentHierarchy.length > 0 ? (
-                  <LocalHierarchyBranch
-                    key="components-root"
-                    icon={<ComponentIcon className="size-3.5" />}
-                    isExpanded={expandedLocalKeys.has('components-root')}
-                    onToggle={() => toggleExpandedLocalKey('components-root')}
-                    title="Components"
-                  >
-                    <div className="space-y-1">
-                      {componentHierarchy.map((component) => (
-                        <LocalHierarchyBranch
-                          key={component.key}
-                          icon={(
-                            <ShelfObjectThumbnail
-                              currentCostumeIndex={component.currentCostumeIndex}
-                              costumes={component.costumes}
-                              name={component.title}
-                            />
-                          )}
-                          isExpanded={expandedLocalKeys.has(component.key)}
-                          level={1}
-                          onToggle={() => toggleExpandedLocalKey(component.key)}
-                          title={component.title}
-                        >
-                          <div className="space-y-1">
-                            {component.objects.map((object) => (
-                              <LocalHierarchyBranch
-                                key={object.key}
-                                icon={(
-                                  <ShelfObjectThumbnail
-                                    currentCostumeIndex={object.currentCostumeIndex}
-                                    costumes={object.costumes}
-                                    name={object.title}
-                                  />
-                                )}
-                                isExpanded={expandedLocalKeys.has(object.key)}
-                                level={2}
-                                onToggle={() => toggleExpandedLocalKey(object.key)}
-                                subtitle={object.subtitle}
-                                title={object.title}
-                              >
+      {!directCreateMode ? (
+        <ProjectPropertyManagerDialog
+          open={open}
+          onOpenChange={onOpenChange}
+          layout="workspace"
+          title="Variables"
+          addButtonLabel="Add variable"
+          addButtonText="New variable"
+          onAdd={() => {
+            resetAddDialog(activeTab);
+            setIsAdding(true);
+          }}
+          toolbar={(
+            <SegmentedControl
+              ariaLabel="Variable manager tabs"
+              className="max-w-full"
+              layout="content"
+              options={VARIABLE_LIST_TABS}
+              value={activeTab}
+              onValueChange={setActiveTab}
+            />
+          )}
+        >
+          {activeTab === 'global' ? (
+            <section className="space-y-2">
+              {globalEntries.length > 0 ? (
+                <div className="space-y-1">
+                  <VariableGridHeader />
+                  {globalEntries.map((entry) => (
+                    <VariableRow key={entry.key} entry={entry} />
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
+                  No global variables yet.
+                </div>
+              )}
+            </section>
+          ) : (
+            <section className="space-y-3">
+              {componentHierarchy.length > 0 || sceneHierarchy.length > 0 ? (
+                <div className="space-y-2">
+                  {componentHierarchy.length > 0 ? (
+                    <LocalHierarchyBranch
+                      key="components-root"
+                      icon={<ComponentIcon className="size-3.5" />}
+                      isExpanded={expandedLocalKeys.has('components-root')}
+                      onToggle={() => toggleExpandedLocalKey('components-root')}
+                      title="Components"
+                    >
+                      <div className="space-y-1">
+                        {componentHierarchy.map((component) => (
+                          <LocalHierarchyBranch
+                            key={component.key}
+                            containerRef={component.key === focusedLocalBranchKey ? focusedBranchRef : undefined}
+                            icon={(
+                              <ShelfObjectThumbnail
+                                currentCostumeIndex={component.currentCostumeIndex}
+                                costumes={component.costumes}
+                                name={component.title}
+                              />
+                            )}
+                            isExpanded={expandedLocalKeys.has(component.key)}
+                            level={1}
+                            onToggle={() => toggleExpandedLocalKey(component.key)}
+                            title={withMyselfSuffix(component.title, component.key === focusedLocalBranchKey)}
+                          >
+                            <div className="space-y-1">
+                              {component.objects.map((object) => (
+                                <LocalHierarchyBranch
+                                  key={object.key}
+                                  containerRef={object.key === focusedLocalBranchKey ? focusedBranchRef : undefined}
+                                  icon={(
+                                    <ShelfObjectThumbnail
+                                      currentCostumeIndex={object.currentCostumeIndex}
+                                      costumes={object.costumes}
+                                      name={object.title}
+                                    />
+                                  )}
+                                  isExpanded={expandedLocalKeys.has(object.key)}
+                                  level={2}
+                                  onToggle={() => toggleExpandedLocalKey(object.key)}
+                                  subtitle={object.subtitle}
+                                  title={withMyselfSuffix(object.title, object.key === focusedLocalBranchKey)}
+                                >
+                                  <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
+                                    <VariableGridHeader />
+                                    {object.entries.map((entry) => (
+                                      <VariableRow key={entry.key} entry={entry} />
+                                    ))}
+                                  </div>
+                                </LocalHierarchyBranch>
+                              ))}
+                              {component.entries.length > 0 ? (
                                 <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
                                   <VariableGridHeader />
-                                  {object.entries.map((entry) => (
+                                  {component.entries.map((entry) => (
                                     <VariableRow key={entry.key} entry={entry} />
                                   ))}
                                 </div>
-                              </LocalHierarchyBranch>
-                            ))}
-                            {component.entries.length > 0 ? (
-                              <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
-                                <VariableGridHeader />
-                                {component.entries.map((entry) => (
-                                  <VariableRow key={entry.key} entry={entry} />
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        </LocalHierarchyBranch>
-                      ))}
-                    </div>
-                  </LocalHierarchyBranch>
-                ) : null}
+                              ) : null}
+                            </div>
+                          </LocalHierarchyBranch>
+                        ))}
+                      </div>
+                    </LocalHierarchyBranch>
+                  ) : null}
 
-                {sceneHierarchy.map((scene) => (
-                  <LocalHierarchyBranch
-                    key={scene.key}
-                    icon={<Earth className="size-3.5" />}
-                    isExpanded={expandedLocalKeys.has(scene.key)}
-                    onToggle={() => toggleExpandedLocalKey(scene.key)}
-                    subtitle={scene.subtitle}
-                    title={scene.title}
-                  >
-                    <div className="space-y-1">
-                      {scene.objects.map((object) => (
-                        <LocalHierarchyBranch
-                          key={object.key}
-                          icon={(
-                            <ShelfObjectThumbnail
-                              currentCostumeIndex={object.currentCostumeIndex}
-                              costumes={object.costumes}
-                              name={object.title}
-                            />
-                          )}
-                          isExpanded={expandedLocalKeys.has(object.key)}
-                          level={1}
-                          onToggle={() => toggleExpandedLocalKey(object.key)}
-                          subtitle={object.subtitle}
-                          title={object.title}
-                        >
-                          <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
-                            <VariableGridHeader />
-                            {object.entries.map((entry) => (
-                              <VariableRow key={entry.key} entry={entry} />
-                            ))}
-                          </div>
-                        </LocalHierarchyBranch>
-                      ))}
-                    </div>
-                  </LocalHierarchyBranch>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                No local variables yet.
-              </div>
-            )}
-          </section>
-        )}
-      </ProjectPropertyManagerDialog>
+                  {sceneHierarchy.map((scene) => (
+                    <LocalHierarchyBranch
+                      key={scene.key}
+                      icon={<Earth className="size-3.5" />}
+                      isExpanded={expandedLocalKeys.has(scene.key)}
+                      onToggle={() => toggleExpandedLocalKey(scene.key)}
+                      subtitle={scene.subtitle}
+                      title={scene.title}
+                    >
+                      <div className="space-y-1">
+                        {scene.objects.map((object) => (
+                          <LocalHierarchyBranch
+                            key={object.key}
+                            containerRef={object.key === focusedLocalBranchKey ? focusedBranchRef : undefined}
+                            icon={(
+                              <ShelfObjectThumbnail
+                                currentCostumeIndex={object.currentCostumeIndex}
+                                costumes={object.costumes}
+                                name={object.title}
+                              />
+                            )}
+                            isExpanded={expandedLocalKeys.has(object.key)}
+                            level={1}
+                            onToggle={() => toggleExpandedLocalKey(object.key)}
+                            subtitle={object.subtitle}
+                            title={withMyselfSuffix(object.title, object.key === focusedLocalBranchKey)}
+                          >
+                            <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
+                              <VariableGridHeader />
+                              {object.entries.map((entry) => (
+                                <VariableRow key={entry.key} entry={entry} />
+                              ))}
+                            </div>
+                          </LocalHierarchyBranch>
+                        ))}
+                      </div>
+                    </LocalHierarchyBranch>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
+                  No local variables yet.
+                </div>
+              )}
+            </section>
+          )}
+        </ProjectPropertyManagerDialog>
+      ) : null}
       <Modal
-        open={isAdding}
+        open={directCreateMode ? open : isAdding}
         onOpenChange={(nextOpen) => {
+          if (directCreateMode) {
+            setIsAdding(nextOpen);
+            if (!nextOpen) {
+              setDirectCreateMode(false);
+              setError(null);
+              onOpenChange(false);
+            }
+            return;
+          }
+
           setIsAdding(nextOpen);
           if (!nextOpen) {
             setError(null);

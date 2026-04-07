@@ -118,7 +118,7 @@ import {
   updateBackgroundLayer,
   updateBackgroundVectorLayerDocument,
 } from '@/lib/background/backgroundDocument';
-import { DEFAULT_VECTOR_STROKE_BRUSH_ID } from '@/lib/vector/vectorStrokeBrushCore';
+import { DEFAULT_VECTOR_STROKE_BRUSH_ID, DEFAULT_VECTOR_STROKE_WIGGLE } from '@/lib/vector/vectorStrokeBrushCore';
 import { DEFAULT_VECTOR_FILL_TEXTURE_ID } from '@/lib/vector/vectorFillTextureCore';
 import {
   clampViewportZoom,
@@ -319,6 +319,7 @@ const BACKGROUND_TOOLBAR_VECTOR_STYLE: VectorToolStyle = {
   strokeOpacity: 1,
   strokeWidth: 1,
   strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
+  strokeWiggle: DEFAULT_VECTOR_STROKE_WIGGLE,
 };
 
 const BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE: VectorHandleMode = 'linear';

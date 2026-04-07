@@ -56,6 +56,7 @@ import {
   type BitmapFillTextureId,
 } from '@/lib/background/bitmapFillCore';
 import {
+  DEFAULT_VECTOR_STROKE_BRUSH_ID,
   VECTOR_STROKE_BRUSH_OPTIONS,
   type VectorStrokeBrushId,
 } from '@/lib/vector/vectorStrokeBrushCore';
@@ -98,6 +99,7 @@ export interface VectorToolStyle {
   strokeOpacity: number;
   strokeWidth: number;
   strokeBrushId: VectorStrokeBrushId;
+  strokeWiggle: number;
 }
 
 export type VectorToolStyleMixedState = Partial<Record<keyof VectorToolStyle, boolean>>;
@@ -410,6 +412,7 @@ interface StrokeWidthPreviewProps {
   color: string;
   opacity?: number;
   previewScale: number;
+  wiggle?: number;
 }
 
 const StrokeWidthPreview = memo(({
@@ -418,6 +421,7 @@ const StrokeWidthPreview = memo(({
   color,
   opacity = 1,
   previewScale,
+  wiggle = 0,
 }: StrokeWidthPreviewProps) => {
   const displayThickness = Math.max(0, thickness * previewScale);
   const previewHeight = Math.max(72, displayThickness + 28);
@@ -460,6 +464,7 @@ const StrokeWidthPreview = memo(({
         canvasWidth: previewWidth,
         canvasHeight: previewHeight,
         strokeColor: color,
+        strokeWiggle: wiggle,
         strokeOpacity: opacity,
         strokeWidth: displayThickness,
         onTextureSourceReady: () => {
@@ -475,7 +480,7 @@ const StrokeWidthPreview = memo(({
     return () => {
       disposed = true;
     };
-  }, [brushId, color, displayThickness, opacity, previewHeight]);
+  }, [brushId, color, displayThickness, opacity, previewHeight, wiggle]);
 
   return (
     <div
@@ -792,6 +797,9 @@ export const CostumeToolbar = memo(({
   const hasMixedVectorFillColor = vectorStyleMixedState.fillColor === true;
   const hasMixedVectorStrokeBrush = vectorStyleMixedState.strokeBrushId === true;
   const hasMixedVectorFillTexture = vectorStyleMixedState.fillTextureId === true;
+  const showVectorStrokeWiggleControl =
+    showVectorStyleControls &&
+    (hasMixedVectorStrokeBrush || vectorStyle.strokeBrushId !== DEFAULT_VECTOR_STROKE_BRUSH_ID);
   const showTextToolbarControls = editorMode === 'vector' && showTextControls;
   const showVectorTopRowControls = showSelectionActions || showVectorHandleControl;
   const useVectorSelectionTwoRowLayout =
@@ -1174,9 +1182,33 @@ export const CostumeToolbar = memo(({
                               color={vectorStyle.strokeColor}
                               opacity={vectorStyle.strokeOpacity}
                               previewScale={previewScale}
+                              wiggle={vectorStyle.strokeWiggle}
                             />
                           )}
                         />
+                        {showVectorStrokeWiggleControl ? (
+                          <ToolbarPreviewSlider
+                            label="Wiggle"
+                            value={Math.round(vectorStyle.strokeWiggle * 100)}
+                            onValueChange={(wigglePercent, meta) => onVectorStyleChange({ strokeWiggle: wigglePercent / 100 }, meta)}
+                            min={0}
+                            max={100}
+                            previewEnabled={sliderPreviewEnabled}
+                            className="min-w-[148px] border-r-0 pr-0"
+                            sliderClassName="w-16"
+                            valueClassName="w-10"
+                            preview={(
+                              <StrokeWidthPreview
+                                brushId={vectorStyle.strokeBrushId}
+                                thickness={vectorStyle.strokeWidth}
+                                color={vectorStyle.strokeColor}
+                                opacity={vectorStyle.strokeOpacity}
+                                previewScale={previewScale}
+                                wiggle={vectorStyle.strokeWiggle}
+                              />
+                            )}
+                          />
+                        ) : null}
                       </div>
 
                       {showVectorFillControl && (
@@ -1430,9 +1462,33 @@ export const CostumeToolbar = memo(({
                               color={vectorStyle.strokeColor}
                               opacity={vectorStyle.strokeOpacity}
                               previewScale={previewScale}
+                              wiggle={vectorStyle.strokeWiggle}
                             />
                           )}
                         />
+                        {showVectorStrokeWiggleControl ? (
+                          <ToolbarPreviewSlider
+                            label="Wiggle"
+                            value={Math.round(vectorStyle.strokeWiggle * 100)}
+                            onValueChange={(wigglePercent, meta) => onVectorStyleChange({ strokeWiggle: wigglePercent / 100 }, meta)}
+                            min={0}
+                            max={100}
+                            previewEnabled={sliderPreviewEnabled}
+                            className="min-w-[148px] border-r-0 pr-0"
+                            sliderClassName="w-16"
+                            valueClassName="w-10"
+                            preview={(
+                              <StrokeWidthPreview
+                                brushId={vectorStyle.strokeBrushId}
+                                thickness={vectorStyle.strokeWidth}
+                                color={vectorStyle.strokeColor}
+                                opacity={vectorStyle.strokeOpacity}
+                                previewScale={previewScale}
+                                wiggle={vectorStyle.strokeWiggle}
+                              />
+                            )}
+                          />
+                        ) : null}
                       </div>
 
                       {showVectorFillControl && (

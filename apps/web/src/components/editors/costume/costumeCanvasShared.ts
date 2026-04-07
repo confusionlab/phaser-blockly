@@ -56,6 +56,7 @@ export const VECTOR_TOOL_STYLE_KEYS: Array<keyof VectorToolStyle> = [
   'strokeOpacity',
   'strokeWidth',
   'strokeBrushId',
+  'strokeWiggle',
 ];
 
 export const COSTUME_WORLD_RECT = {

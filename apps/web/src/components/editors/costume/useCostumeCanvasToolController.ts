@@ -188,6 +188,7 @@ export function useCostumeCanvasToolController({
         onPreviewUpdated: onVectorTexturePreviewChange,
         strokeBrushId: vectorStyleRef.current.strokeBrushId,
         strokeColor: vectorStyleRef.current.strokeColor,
+        strokeWiggle: vectorStyleRef.current.strokeWiggle,
         strokeOpacity: vectorStyleRef.current.strokeOpacity,
         strokeWidth: vectorStyleRef.current.strokeWidth,
       });

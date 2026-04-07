@@ -28,6 +28,7 @@ test.describe('costume vector style clone', () => {
         vectorStrokeBrushId?: string;
         vectorStrokeColor?: string;
         vectorStrokeOpacity?: number;
+        vectorStrokeWiggle?: number;
         set: (updates: Record<string, unknown>) => void;
         clone: (propertiesToInclude?: string[]) => Promise<CloneableVectorObject>;
       };
@@ -49,6 +50,7 @@ test.describe('costume vector style clone', () => {
           vectorStrokeBrushId: state.vectorStrokeBrushId,
           vectorStrokeColor: state.vectorStrokeColor,
           vectorStrokeOpacity: state.vectorStrokeOpacity,
+          vectorStrokeWiggle: state.vectorStrokeWiggle,
           set(updates: Record<string, unknown>) {
             Object.assign(target, updates);
           },
@@ -98,6 +100,7 @@ test.describe('costume vector style clone', () => {
         vectorStrokeBrushId: 'chalk',
         vectorStrokeColor: '#2563eb',
         vectorStrokeOpacity: 1,
+        vectorStrokeWiggle: 0.4,
       });
       const texturedStrokeClone = await cloneFabricObjectWithVectorStyle(texturedStrokeSource);
       applyVectorStrokeStyleToObject(texturedStrokeClone, {
@@ -113,6 +116,7 @@ test.describe('costume vector style clone', () => {
         strokeClone: {
           vectorStrokeBrushId: texturedStrokeClone.vectorStrokeBrushId ?? null,
           vectorStrokeOpacity: texturedStrokeClone.vectorStrokeOpacity ?? null,
+          vectorStrokeWiggle: texturedStrokeClone.vectorStrokeWiggle ?? null,
           stroke: texturedStrokeClone.stroke,
         },
       };
@@ -124,6 +128,7 @@ test.describe('costume vector style clone', () => {
 
     expect(result.strokeClone.vectorStrokeBrushId).toBe('solid');
     expect(result.strokeClone.vectorStrokeOpacity).toBe(1);
+    expect(result.strokeClone.vectorStrokeWiggle).toBe(0.4);
     expect(result.strokeClone.stroke).not.toBe('rgba(37, 99, 235, 0)');
   });
 });

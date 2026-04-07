@@ -23,6 +23,7 @@ type FakeVectorObject = {
   vectorStrokeBrushId: 'solid';
   vectorStrokeColor: string;
   vectorStrokeOpacity: number;
+  vectorStrokeWiggle: number;
   getCenterPoint: () => FakeCenterPoint;
   setPositionByOrigin: (point: FakeCenterPoint) => void;
   setXY?: (point: FakeCenterPoint) => void;
@@ -93,6 +94,7 @@ function createFakeVectorObject(): FakeVectorObject {
     vectorStrokeBrushId: 'solid',
     vectorStrokeColor: '#000000',
     vectorStrokeOpacity: 1,
+    vectorStrokeWiggle: 0,
     getCenterPoint() {
       return { ...this.center };
     },
@@ -191,5 +193,17 @@ test.describe('vector style selection runtime', () => {
     expect(target.setCoordsCalls).toBe(1);
     expect(parentGroup.setCoordsCalls).toBe(1);
     expect(parentGroup.triggerLayoutCalls).toBe(1);
+  });
+
+  test('applies textured stroke wiggle metadata to selections', () => {
+    const target = createFakeVectorObject();
+
+    const didChange = applyVectorStyleUpdatesToSelection(target, {
+      strokeStyle: { strokeWiggle: 0.42 },
+    });
+
+    expect(didChange).toBe(true);
+    expect(target.vectorStrokeWiggle).toBeCloseTo(0.42, 5);
+    expect(target.setCoordsCalls).toBe(1);
   });
 });

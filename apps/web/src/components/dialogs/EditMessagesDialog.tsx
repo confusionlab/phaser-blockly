@@ -36,6 +36,7 @@ export function EditMessagesDialog({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [blockedDelete, setBlockedDelete] = useState<{ entityLabel: string; impact: ProjectReferenceImpact } | null>(null);
+  const [directCreateMode, setDirectCreateMode] = useState(false);
   const lastHandledCreateRequestRef = useRef(0);
 
   const messages = useMemo(() => project?.messages || [], [project?.messages]);
@@ -47,6 +48,7 @@ export function EditMessagesDialog({
 
   useEffect(() => {
     if (!open) return;
+    setDirectCreateMode(false);
     setIsAdding(false);
     resetAddDialog();
     setEditingId(null);
@@ -63,6 +65,7 @@ export function EditMessagesDialog({
     }
 
     lastHandledCreateRequestRef.current = createRequestId;
+    setDirectCreateMode(true);
     resetAddDialog();
     setEditingId(null);
     setEditName('');
@@ -88,8 +91,12 @@ export function EditMessagesDialog({
       return;
     }
 
-    setIsAdding(false);
     resetAddDialog();
+    setIsAdding(false);
+    if (directCreateMode) {
+      setDirectCreateMode(false);
+      onOpenChange(false);
+    }
     emitMessagesChanged();
   };
 
@@ -148,56 +155,68 @@ export function EditMessagesDialog({
 
   return (
     <>
-      <ProjectPropertyManagerDialog
-        open={open}
-        onOpenChange={onOpenChange}
-        title="Messages"
-        addButtonLabel="New message"
-        onAdd={() => {
-          resetAddDialog();
-          setIsAdding(true);
-        }}
-      >
-        <section className="space-y-2">
-          {messages.length > 0 ? (
-            <div className="space-y-1">
-              {messages.map((message) => {
-                const isEditing = editingId === message.id;
-                return (
-                  <ProjectPropertyManagerRow
-                    key={message.id}
-                    icon={<Type className="size-4 flex-shrink-0 text-muted-foreground" />}
-                    name={message.name}
-                    isEditing={isEditing}
-                    editValue={editName}
-                    renameLabel="Rename Message"
-                    deleteLabel="Delete Message"
-                    renameFieldLabel={`Rename ${message.name}`}
-                    onEditValueChange={setEditName}
-                    onEditSave={() => saveRename(message.id)}
-                    onEditCancel={() => {
-                      setEditingId(null);
-                      setEditName('');
-                    }}
-                    onEdit={() => {
-                      setEditingId(message.id);
-                      setEditName(message.name);
-                    }}
-                    onDelete={() => void handleDelete(message.id)}
-                  />
-                );
-              })}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-              No broadcast messages yet.
-            </div>
-          )}
-        </section>
-      </ProjectPropertyManagerDialog>
+      {!directCreateMode ? (
+        <ProjectPropertyManagerDialog
+          open={open}
+          onOpenChange={onOpenChange}
+          title="Messages"
+          addButtonLabel="New message"
+          onAdd={() => {
+            resetAddDialog();
+            setIsAdding(true);
+          }}
+        >
+          <section className="space-y-2">
+            {messages.length > 0 ? (
+              <div className="space-y-1">
+                {messages.map((message) => {
+                  const isEditing = editingId === message.id;
+                  return (
+                    <ProjectPropertyManagerRow
+                      key={message.id}
+                      icon={<Type className="size-4 flex-shrink-0 text-muted-foreground" />}
+                      name={message.name}
+                      isEditing={isEditing}
+                      editValue={editName}
+                      renameLabel="Rename Message"
+                      deleteLabel="Delete Message"
+                      renameFieldLabel={`Rename ${message.name}`}
+                      onEditValueChange={setEditName}
+                      onEditSave={() => saveRename(message.id)}
+                      onEditCancel={() => {
+                        setEditingId(null);
+                        setEditName('');
+                      }}
+                      onEdit={() => {
+                        setEditingId(message.id);
+                        setEditName(message.name);
+                      }}
+                      onDelete={() => void handleDelete(message.id)}
+                    />
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
+                No broadcast messages yet.
+              </div>
+            )}
+          </section>
+        </ProjectPropertyManagerDialog>
+      ) : null}
       <Modal
-        open={isAdding}
+        open={directCreateMode ? open : isAdding}
         onOpenChange={(nextOpen) => {
+          if (directCreateMode) {
+            setIsAdding(nextOpen);
+            if (!nextOpen) {
+              setDirectCreateMode(false);
+              setError(null);
+              onOpenChange(false);
+            }
+            return;
+          }
+
           setIsAdding(nextOpen);
           if (!nextOpen) {
             setError(null);

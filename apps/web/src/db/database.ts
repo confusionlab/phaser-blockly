@@ -2357,10 +2357,46 @@ export async function moveProjectFolder(
   return changed;
 }
 
-export async function trashProjectFromExplorer(projectId: string): Promise<boolean> {
+export async function trashProjectFromExplorer(
+  projectId: string,
+  options: {
+    folderId?: string;
+  } = {},
+): Promise<boolean> {
+  const existingProject = await db.projects.get(projectId);
+  if (!existingProject) {
+    return false;
+  }
+
   let changed = false;
   await updateProjectExplorerState((state) => {
     const now = Date.now();
+    const folderIdHint = options.folderId;
+    const targetFolderId =
+      typeof folderIdHint === 'string' && state.folders.some((folder) => folder.id === folderIdHint && !folder.trashedAt)
+        ? folderIdHint
+      : PROJECT_EXPLORER_ROOT_FOLDER_ID;
+    const existingMeta = state.projects.find((projectMeta) => projectMeta.projectId === projectId) ?? null;
+
+    if (!existingMeta) {
+      changed = true;
+      return {
+        ...state,
+        updatedAt: now,
+        projects: [
+          ...state.projects,
+          {
+            ...createProjectExplorerProjectMeta(projectId, {
+              createdAt: existingProject.createdAt.getTime(),
+              folderId: targetFolderId,
+              updatedAt: now,
+            }),
+            trashedAt: now,
+          },
+        ],
+      };
+    }
+
     const projects = state.projects.map((projectMeta) => {
       if (projectMeta.projectId !== projectId || projectMeta.trashedAt) {
         return projectMeta;

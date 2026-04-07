@@ -59,7 +59,7 @@ import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import type { BitmapBrushKind } from '@/lib/background/brushCore';
 import { DEFAULT_BITMAP_FILL_TEXTURE_ID } from '@/lib/background/bitmapFillCore';
-import { DEFAULT_VECTOR_STROKE_BRUSH_ID } from '@/lib/vector/vectorStrokeBrushCore';
+import { DEFAULT_VECTOR_STROKE_BRUSH_ID, DEFAULT_VECTOR_STROKE_WIGGLE } from '@/lib/vector/vectorStrokeBrushCore';
 import { DEFAULT_VECTOR_FILL_TEXTURE_ID } from '@/lib/vector/vectorFillTextureCore';
 import {
   cloneCostumeDocument,
@@ -369,6 +369,7 @@ export function CostumeEditor() {
     strokeOpacity: 1,
     strokeWidth: 1,
     strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
+    strokeWiggle: DEFAULT_VECTOR_STROKE_WIGGLE,
   });
   const [vectorStyleCapabilities, setVectorStyleCapabilities] = useState<VectorStyleCapabilities>({
     supportsFill: true,

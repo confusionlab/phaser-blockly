@@ -787,6 +787,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
             vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
+            vectorStrokeWiggle: isVectorMode ? vectorStyleRef.current.strokeWiggle : undefined,
           } as any);
         } else if (tool === 'circle') {
           const bounds = getStrokedShapeBoundsFromPathBounds(
@@ -817,6 +818,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
             vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
+            vectorStrokeWiggle: isVectorMode ? vectorStyleRef.current.strokeWiggle : undefined,
           } as any);
         } else if (tool === 'triangle' || tool === 'star') {
           const polygonDraft = buildPolygonShapeDraft(tool, pointer, pointer);
@@ -840,6 +842,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
             vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
+            vectorStrokeWiggle: isVectorMode ? vectorStyleRef.current.strokeWiggle : undefined,
           } as any);
         } else {
           object = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
@@ -853,6 +856,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
             vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
+            vectorStrokeWiggle: isVectorMode ? vectorStyleRef.current.strokeWiggle : undefined,
           } as any);
         }
         shapeDraftRef.current = {
