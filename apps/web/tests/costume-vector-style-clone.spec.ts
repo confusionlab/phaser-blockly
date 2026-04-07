@@ -79,7 +79,7 @@ test.describe('costume vector style clone', () => {
       const texturedFillSource = createCloneableVectorObject({
         fill: 'rgba(239, 68, 68, 0)',
         stroke: '#2563eb',
-        vectorFillTextureId: 'grain',
+        vectorFillTextureId: 'crayon',
         vectorFillColor: '#ef4444',
         vectorFillOpacity: 1,
         vectorStrokeBrushId: 'solid',
@@ -97,7 +97,7 @@ test.describe('costume vector style clone', () => {
         vectorFillTextureId: 'solid',
         vectorFillColor: '#22c55e',
         vectorFillOpacity: 1,
-        vectorStrokeBrushId: 'chalk',
+        vectorStrokeBrushId: 'crayon',
         vectorStrokeColor: '#2563eb',
         vectorStrokeOpacity: 1,
         vectorStrokeWiggle: 0.4,

@@ -2,11 +2,13 @@ import { ActiveSelection, Canvas as FabricCanvas, PencilBrush, Point } from 'fab
 import Color from 'color';
 import {
   DEFAULT_VECTOR_FILL_TEXTURE_ID,
+  parseVectorFillTextureId,
   type VectorFillTextureId,
 } from '@/lib/vector/vectorFillTextureCore';
 import {
   DEFAULT_VECTOR_STROKE_BRUSH_ID,
   normalizeVectorStrokeWiggle,
+  parseVectorStrokeBrushId,
   type VectorStrokeBrushId,
 } from '@/lib/vector/vectorStrokeBrushCore';
 import {
@@ -324,6 +326,91 @@ function findPreviousDrawablePathCommandIndex(path: any[], commandIndex: number)
   return -1;
 }
 
+function findLastDrawablePathCommandIndex(path: any[]): number {
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    if (getPathCommandType(path[index]) !== 'Z') {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function getSubpathStartCommandIndex(path: any[], commandIndex: number): number {
+  let subpathStartIndex = -1;
+  for (let index = 0; index <= commandIndex && index < path.length; index += 1) {
+    if (getPathCommandType(path[index]) !== 'M') {
+      continue;
+    }
+    if (!getPathCommandEndpoint(path[index])) {
+      continue;
+    }
+    subpathStartIndex = index;
+  }
+  return subpathStartIndex;
+}
+
+function arePathEndpointsNearlyEqual(
+  start: { x: number; y: number } | null,
+  end: { x: number; y: number } | null,
+): boolean {
+  if (!start || !end) {
+    return false;
+  }
+  return Math.abs(start.x - end.x) <= 0.0001 && Math.abs(start.y - end.y) <= 0.0001;
+}
+
+function normalizeClosedPathCommandIndex(path: any[], commandIndex: number): number {
+  if (commandIndex <= 0) {
+    return commandIndex;
+  }
+
+  const lastDrawableIndex = findLastDrawablePathCommandIndex(path);
+  if (commandIndex !== lastDrawableIndex) {
+    return commandIndex;
+  }
+
+  const subpathStartIndex = getSubpathStartCommandIndex(path, commandIndex);
+  if (subpathStartIndex < 0 || subpathStartIndex === commandIndex) {
+    return commandIndex;
+  }
+
+  const subpathStart = getPathCommandEndpoint(path[subpathStartIndex]);
+  const endpoint = getPathCommandEndpoint(path[commandIndex]);
+  return arePathEndpointsNearlyEqual(subpathStart, endpoint)
+    ? subpathStartIndex
+    : commandIndex;
+}
+
+export function stripRedundantTerminalCloseCommand(path: unknown): any[] | null {
+  if (!Array.isArray(path) || path.length < 2) {
+    return null;
+  }
+
+  if (getPathCommandType(path[path.length - 1]) !== 'Z') {
+    return null;
+  }
+
+  const lastDrawableIndex = findLastDrawablePathCommandIndex(path);
+  if (lastDrawableIndex < 0) {
+    return null;
+  }
+
+  const subpathStartIndex = getSubpathStartCommandIndex(path, lastDrawableIndex);
+  if (subpathStartIndex < 0) {
+    return null;
+  }
+
+  const subpathStart = getPathCommandEndpoint(path[subpathStartIndex]);
+  const endpoint = getPathCommandEndpoint(path[lastDrawableIndex]);
+  if (!arePathEndpointsNearlyEqual(subpathStart, endpoint)) {
+    return null;
+  }
+
+  return path
+    .slice(0, -1)
+    .map((command) => (Array.isArray(command) ? [...command] : command));
+}
+
 function inferPathNodeHandleTypesFromCommands(
   path: unknown,
   rawNodeHandleTypes: unknown,
@@ -341,10 +428,10 @@ function inferPathNodeHandleTypesFromCommands(
     if (getPathCommandType(command) !== 'C') {
       return;
     }
-    incomingAnchors.add(commandIndex);
+    incomingAnchors.add(normalizeClosedPathCommandIndex(path, commandIndex));
     const previousIndex = findPreviousDrawablePathCommandIndex(path, commandIndex);
     if (previousIndex >= 0) {
-      outgoingAnchors.add(previousIndex);
+      outgoingAnchors.add(normalizeClosedPathCommandIndex(path, previousIndex));
     }
   });
 
@@ -378,16 +465,17 @@ function normalizeEditableVectorPathGeometry(candidate: {
     return false;
   }
 
-  const nextPath = convertQuadraticPathToCubic(candidate.path);
-  const normalizedPath = nextPath ?? candidate.path;
+  const cubicPath = convertQuadraticPathToCubic(candidate.path);
+  const pathWithNormalizedClose = stripRedundantTerminalCloseCommand(cubicPath ?? candidate.path);
+  const normalizedPath = pathWithNormalizedClose ?? cubicPath ?? candidate.path;
   const nextNodeHandleTypes = inferPathNodeHandleTypesFromCommands(
     normalizedPath,
     candidate.nodeHandleTypes,
   );
 
   let changed = false;
-  if (nextPath) {
-    candidate.path = nextPath;
+  if (cubicPath || pathWithNormalizedClose) {
+    candidate.path = normalizedPath;
     changed = true;
   }
   if (nextNodeHandleTypes) {
@@ -540,7 +628,7 @@ function hasOwnVectorStyleUpdate<Key extends PropertyKey>(
 
 export function getVectorObjectFillTextureId(obj: unknown): VectorFillTextureId {
   const textureId = (obj as VectorBrushStylableObject | null | undefined)?.vectorFillTextureId;
-  return typeof textureId === 'string' ? (textureId as VectorFillTextureId) : DEFAULT_VECTOR_FILL_TEXTURE_ID;
+  return parseVectorFillTextureId(textureId);
 }
 
 export function getVectorObjectFillColor(obj: unknown): string | undefined {
@@ -557,7 +645,7 @@ export function getVectorObjectFillColor(obj: unknown): string | undefined {
 
 export function getVectorObjectStrokeBrushId(obj: unknown): VectorStrokeBrushId {
   const brushId = (obj as VectorBrushStylableObject | null | undefined)?.vectorStrokeBrushId;
-  return typeof brushId === 'string' ? (brushId as VectorStrokeBrushId) : DEFAULT_VECTOR_STROKE_BRUSH_ID;
+  return parseVectorStrokeBrushId(brushId);
 }
 
 export function getVectorObjectStrokeColor(obj: unknown): string | undefined {
@@ -684,7 +772,7 @@ export function applyVectorFillStyleToObject(
   const updates: Record<string, unknown> = {};
   migrateLegacySharedOpacity(obj, updates);
   const nextFillTextureId = hasFillTextureUpdate && typeof style.fillTextureId === 'string'
-    ? style.fillTextureId
+    ? parseVectorFillTextureId(style.fillTextureId)
     : getVectorObjectFillTextureId(obj);
   if (obj.vectorFillTextureId !== nextFillTextureId) {
     updates.vectorFillTextureId = nextFillTextureId;
@@ -736,7 +824,7 @@ export function applyVectorStrokeStyleToObject(
   const updates: Record<string, unknown> = {};
   migrateLegacySharedOpacity(obj, updates);
   const nextStrokeBrushId = hasStrokeBrushUpdate && typeof style.strokeBrushId === 'string'
-    ? style.strokeBrushId
+    ? parseVectorStrokeBrushId(style.strokeBrushId)
     : getVectorObjectStrokeBrushId(obj);
   if (obj.vectorStrokeBrushId !== nextStrokeBrushId) {
     updates.vectorStrokeBrushId = nextStrokeBrushId;

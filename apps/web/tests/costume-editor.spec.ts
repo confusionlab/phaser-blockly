@@ -537,7 +537,7 @@ async function readSavedCostumeGroupedChildTypes(page: Page): Promise<{
   });
 }
 
-async function setVectorStrokeBrush(page: Page, label: 'Marker' | 'Ink' | 'Chalk') {
+async function setVectorStrokeBrush(page: Page, label: 'Crayon') {
   const properties = page.getByTestId('costume-toolbar-properties');
   await properties.getByRole('button', { name: /^solid$/i }).first().click();
   await page.getByRole('menuitemradio', { name: new RegExp(`^${label}$`, 'i') }).click();
@@ -1020,7 +1020,7 @@ test.describe('Costume editor tools', () => {
     await addVectorLayer(page);
 
     await page.getByRole('button', { name: /^pencil$/i }).click();
-    await setVectorStrokeBrush(page, 'Chalk');
+    await setVectorStrokeBrush(page, 'Crayon');
 
     const box = await getCostumeCanvasBox(page);
     const startX = box.x + box.width * 0.26;
@@ -1047,7 +1047,7 @@ test.describe('Costume editor tools', () => {
     await addVectorLayer(page);
 
     await page.getByRole('button', { name: /^pen$/i }).click();
-    await setVectorStrokeBrush(page, 'Marker');
+    await setVectorStrokeBrush(page, 'Crayon');
 
     const box = await getCostumeCanvasBox(page);
     const anchorX = box.x + box.width * 0.34;
@@ -1132,7 +1132,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(34, 197, 94, 0)',
             stroke: 'rgba(34, 197, 94, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#22C55E',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1245,7 +1245,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(34, 197, 94, 0)',
             stroke: 'rgba(34, 197, 94, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#22C55E',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1264,7 +1264,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(37, 99, 235, 0)',
             stroke: 'rgba(37, 99, 235, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#2563EB',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1399,7 +1399,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(34, 197, 94, 0)',
             stroke: 'rgba(34, 197, 94, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#22C55E',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1418,7 +1418,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(37, 99, 235, 0)',
             stroke: 'rgba(37, 99, 235, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#2563EB',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1543,7 +1543,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(34, 197, 94, 0)',
             stroke: 'rgba(34, 197, 94, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#22C55E',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1562,7 +1562,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(37, 99, 235, 0)',
             stroke: 'rgba(37, 99, 235, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#2563EB',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1705,7 +1705,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(34, 197, 94, 0)',
             stroke: 'rgba(34, 197, 94, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#22C55E',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1724,7 +1724,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(37, 99, 235, 0)',
             stroke: 'rgba(37, 99, 235, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#2563EB',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1867,7 +1867,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(34, 197, 94, 0)',
             stroke: 'rgba(34, 197, 94, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#22C55E',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',
@@ -1886,7 +1886,7 @@ test.describe('Costume editor tools', () => {
             fill: 'rgba(37, 99, 235, 0)',
             stroke: 'rgba(37, 99, 235, 0)',
             strokeWidth: 0,
-            vectorFillTextureId: 'grain',
+            vectorFillTextureId: 'crayon',
             vectorFillColor: '#2563EB',
             vectorFillOpacity: 1,
             vectorStrokeBrushId: 'solid',

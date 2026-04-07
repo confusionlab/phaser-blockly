@@ -4,6 +4,7 @@ import {
   createVectorFillTextureTile,
   getVectorFillTexturePreset,
   DEFAULT_VECTOR_FILL_TEXTURE_ID,
+  parseVectorFillTextureId,
   type VectorFillTextureId,
 } from '@/lib/vector/vectorFillTextureCore';
 import {
@@ -11,6 +12,7 @@ import {
   getVectorStrokeBrushPreset,
   DEFAULT_VECTOR_STROKE_BRUSH_ID,
   normalizeVectorStrokeWiggle,
+  parseVectorStrokeBrushId,
   type VectorStrokeBrushId,
   type VectorStrokeBrushRenderStyle,
 } from '@/lib/vector/vectorStrokeBrushCore';
@@ -233,7 +235,7 @@ function vectorObjectSupportsFill(obj: unknown): boolean {
 
 function getVectorObjectFillTextureId(obj: unknown): VectorFillTextureId {
   const textureId = (obj as { vectorFillTextureId?: unknown } | null | undefined)?.vectorFillTextureId;
-  return typeof textureId === 'string' ? (textureId as VectorFillTextureId) : DEFAULT_VECTOR_FILL_TEXTURE_ID;
+  return parseVectorFillTextureId(textureId);
 }
 
 function getVectorObjectFillColor(obj: unknown): string | undefined {
@@ -258,7 +260,7 @@ function getVectorObjectFillColor(obj: unknown): string | undefined {
 
 function getVectorObjectStrokeBrushId(obj: unknown): VectorStrokeBrushId {
   const brushId = (obj as { vectorStrokeBrushId?: unknown } | null | undefined)?.vectorStrokeBrushId;
-  return typeof brushId === 'string' ? (brushId as VectorStrokeBrushId) : DEFAULT_VECTOR_STROKE_BRUSH_ID;
+  return parseVectorStrokeBrushId(brushId);
 }
 
 function getVectorObjectStrokeColor(obj: unknown): string | undefined {

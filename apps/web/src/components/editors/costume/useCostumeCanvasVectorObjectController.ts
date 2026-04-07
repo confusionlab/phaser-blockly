@@ -44,6 +44,7 @@ import {
   isImageObject,
   isTextObject,
   isVectorPointSelectableObject,
+  normalizeVectorObjectRendering,
   VECTOR_POINT_CONTROL_STYLE,
 } from './costumeCanvasVectorRuntime';
 import { getResolvedEditorSelectionTokens } from '@/lib/ui/editorSelectionTokens';
@@ -314,6 +315,7 @@ export function useCostumeCanvasVectorObjectController({
       hasControls: true,
       hasBorders: true,
     } as any);
+    normalizeVectorObjectRendering(path);
     path.setCoords();
     return path;
   }, [buildPathDataFromPoints, createFourPointEllipsePathData, sampleObjectOutlinePoints]);

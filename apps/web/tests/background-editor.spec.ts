@@ -946,7 +946,7 @@ test.describe('Background editor', () => {
     await fillColorButton.click();
 
     await page.getByRole('button', { name: /^solid$/i }).last().click();
-    await page.getByRole('menuitemradio', { name: /^grain$/i }).click();
+    await page.getByRole('menuitemradio', { name: /^crayon$/i }).click();
 
     await expect.poll(async () => {
       const inside = await readBackgroundEditorCompositePixel(page, centerSample);
@@ -1203,7 +1203,7 @@ test.describe('Background editor', () => {
     await setToolbarColorOpacity(page, 'Fill', 100);
     await setToolbarHexColor(page, 'Fill', '#22C55E');
     await page.getByRole('button', { name: /^solid$/i }).last().click();
-    await page.getByRole('menuitemradio', { name: /^linen$/i }).click();
+    await page.getByRole('menuitemradio', { name: /^crayon$/i }).click();
 
     await expect.poll(async () => {
       const inside = await readBackgroundEditorCompositePixel(page, insideSample);
@@ -1600,16 +1600,16 @@ test.describe('Background editor', () => {
     await page.getByRole('button', { name: /^rectangle$/i }).click();
 
     await page.getByRole('button', { name: /^solid$/i }).nth(1).click();
-    await page.getByRole('menuitemradio', { name: /^paper$/i }).click();
+    await page.getByRole('menuitemradio', { name: /^crayon$/i }).click();
     await page.mouse.move(editor.box.x + editor.box.width * 0.34, editor.box.y + editor.box.height * 0.34);
     await page.mouse.down();
     await page.mouse.move(editor.box.x + editor.box.width * 0.48, editor.box.y + editor.box.height * 0.5, { steps: 8 });
     await page.mouse.up();
 
     await page.getByRole('button', { name: /^solid$/i }).first().click();
-    await page.getByRole('menuitemradio', { name: /^marker$/i }).click();
-    await page.getByRole('button', { name: /^paper$/i }).click();
-    await page.getByRole('menuitemradio', { name: /^grain$/i }).click();
+    await page.getByRole('menuitemradio', { name: /^crayon$/i }).click();
+    await page.getByRole('button', { name: /^crayon$/i }).click();
+    await page.getByRole('menuitemradio', { name: /^crayon$/i }).click();
     await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.36);
     await page.mouse.down();
     await page.mouse.move(editor.box.x + editor.box.width * 0.72, editor.box.y + editor.box.height * 0.54, { steps: 8 });
@@ -1630,7 +1630,7 @@ test.describe('Background editor', () => {
     await page.getByRole('button', { name: /^multiple$/i }).first().click();
     await page.getByRole('menuitemradio', { name: /^solid$/i }).click();
     await page.getByRole('button', { name: /^multiple$/i }).first().click();
-    await page.getByRole('menuitemradio', { name: /^paper$/i }).click();
+    await page.getByRole('menuitemradio', { name: /^crayon$/i }).click();
 
     await closeBackgroundEditor(page);
     await expect(editor.root).toBeHidden();
@@ -1639,7 +1639,7 @@ test.describe('Background editor', () => {
     const savedStyles = await readSavedBackgroundVectorObjectPaintStyles(page);
 
     expect(savedStyles.map((style) => style.strokeBrushId)).toEqual(['solid', 'solid']);
-    expect(savedStyles.map((style) => style.fillTextureId)).toEqual(['paper', 'paper']);
+    expect(savedStyles.map((style) => style.fillTextureId)).toEqual(['crayon', 'crayon']);
   });
 
   test('editing multi-selection fill preserves each object stroke style', async ({ page }) => {

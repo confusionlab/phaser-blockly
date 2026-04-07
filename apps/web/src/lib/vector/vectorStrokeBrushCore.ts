@@ -1,6 +1,8 @@
-import Color from 'color';
+import { createVectorCrayonDab } from './vectorCrayonTextureCore';
 
-export type VectorStrokeBrushId = 'solid' | 'marker' | 'ink' | 'chalk';
+export type VectorStrokeBrushId = 'solid' | 'crayon';
+
+type LegacyVectorStrokeBrushId = 'marker' | 'ink' | 'chalk';
 
 export interface VectorStrokeBrushOption {
   value: VectorStrokeBrushId;
@@ -52,9 +54,7 @@ export const DEFAULT_VECTOR_STROKE_WIGGLE = 0;
 
 export const VECTOR_STROKE_BRUSH_OPTIONS: VectorStrokeBrushOption[] = [
   { value: 'solid', label: 'Solid' },
-  { value: 'marker', label: 'Marker' },
-  { value: 'ink', label: 'Ink' },
-  { value: 'chalk', label: 'Chalk' },
+  { value: 'crayon', label: 'Crayon' },
 ];
 
 export const VECTOR_STROKE_BRUSH_PRESETS: Record<VectorStrokeBrushId, VectorStrokeBrushPreset> = {
@@ -71,35 +71,9 @@ export const VECTOR_STROKE_BRUSH_PRESETS: Record<VectorStrokeBrushId, VectorStro
     scatterRatio: 0,
     variantCount: 1,
   },
-  marker: {
-    id: 'marker',
-    label: 'Marker',
-    kind: 'bitmap-dab',
-    dabAspectRatio: 1.35,
-    spacingRatio: 0.15,
-    opacity: 0.92,
-    opacityJitter: 0.08,
-    scaleJitter: 0.06,
-    rotationJitter: 0.06,
-    scatterRatio: 0.028,
-    variantCount: 3,
-  },
-  ink: {
-    id: 'ink',
-    label: 'Ink',
-    kind: 'bitmap-dab',
-    dabAspectRatio: 1.12,
-    spacingRatio: 0.13,
-    opacity: 0.96,
-    opacityJitter: 0.04,
-    scaleJitter: 0.04,
-    rotationJitter: 0.04,
-    scatterRatio: 0.016,
-    variantCount: 2,
-  },
-  chalk: {
-    id: 'chalk',
-    label: 'Chalk',
+  crayon: {
+    id: 'crayon',
+    label: 'Crayon',
     kind: 'bitmap-dab',
     dabAspectRatio: 1.08,
     spacingRatio: 0.1,
@@ -123,21 +97,23 @@ export function normalizeVectorStrokeWiggle(value: number | null | undefined) {
   return clampUnit(value);
 }
 
-function hash2d(x: number, y: number) {
-  const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
-  return value - Math.floor(value);
-}
-
-function clampByte(value: number) {
-  return Math.max(0, Math.min(255, Math.round(value)));
-}
-
-function smoothstep(edge0: number, edge1: number, value: number) {
-  if (edge0 === edge1) {
-    return value < edge0 ? 0 : 1;
+export function parseVectorStrokeBrushId(value: unknown): VectorStrokeBrushId {
+  if (value === 'solid') {
+    return 'solid';
   }
-  const t = clampUnit((value - edge0) / (edge1 - edge0));
-  return t * t * (3 - 2 * t);
+  if (
+    value === 'crayon'
+    || value === 'marker'
+    || value === 'ink'
+    || value === 'chalk'
+  ) {
+    return 'crayon';
+  }
+  return DEFAULT_VECTOR_STROKE_BRUSH_ID;
+}
+
+export function isLegacyVectorStrokeBrushId(value: unknown): value is LegacyVectorStrokeBrushId {
+  return value === 'marker' || value === 'ink' || value === 'chalk';
 }
 
 function resolveTextureSourceDimension(value: unknown, fallback: number) {
@@ -165,109 +141,6 @@ function createBrushCanvas(width: number, height: number) {
   canvas.width = width;
   canvas.height = height;
   return canvas;
-}
-
-function buildDabFromPixelMap(
-  width: number,
-  height: number,
-  fillPixel: (
-    x: number,
-    y: number,
-    rgba: Uint8ClampedArray,
-    pixelIndex: number,
-  ) => void,
-) {
-  const canvas = createBrushCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return canvas;
-  }
-
-  const imageData = ctx.createImageData(width, height);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      fillPixel(x, y, imageData.data, (y * width + x) * 4);
-    }
-  }
-  ctx.putImageData(imageData, 0, 0);
-  return canvas;
-}
-
-function buildMarkerDab(color: string, width: number, height: number, seed: number) {
-  const [baseRed, baseGreen, baseBlue] = Color(color).rgb().array();
-  const radiusX = Math.max(1, width * (0.41 + hash2d(seed, 0.3) * 0.06));
-  const radiusY = Math.max(1, height * (0.36 + hash2d(seed, 0.8) * 0.05));
-  return buildDabFromPixelMap(width, height, (x, y, rgba, pixelIndex) => {
-    const dx = (x + 0.5 - width / 2) / radiusX;
-    const dy = (y + 0.5 - height / 2) / radiusY;
-    const ellipseDistance = Math.sqrt(dx * dx + dy * dy);
-    const edgeNoise = (hash2d(x * 0.19 + seed * 13.1, y * 0.07 + seed * 4.3) - 0.5) * 0.2;
-    const profile = 1 - smoothstep(0.68 + edgeNoise, 1.02 + edgeNoise, ellipseDistance);
-    if (profile <= 0.001) {
-      return;
-    }
-    const centerWeight = 1 - Math.min(1, Math.abs(dy));
-    const streak = 0.8 + hash2d(x * 0.11 + seed * 2.3, y * 0.02 + seed * 8.7) * 0.2;
-    const alpha = clampUnit(profile * streak * (0.72 + centerWeight * 0.28));
-    rgba[pixelIndex] = clampByte(baseRed);
-    rgba[pixelIndex + 1] = clampByte(baseGreen);
-    rgba[pixelIndex + 2] = clampByte(baseBlue);
-    rgba[pixelIndex + 3] = clampByte(alpha * 255);
-  });
-}
-
-function buildInkDab(color: string, width: number, height: number, seed: number) {
-  const [baseRed, baseGreen, baseBlue] = Color(color).rgb().array();
-  const radiusX = Math.max(1, width * (0.38 + hash2d(seed, 1.1) * 0.04));
-  const radiusY = Math.max(1, height * (0.38 + hash2d(seed, 1.6) * 0.04));
-  return buildDabFromPixelMap(width, height, (x, y, rgba, pixelIndex) => {
-    const dx = (x + 0.5 - width / 2) / radiusX;
-    const dy = (y + 0.5 - height / 2) / radiusY;
-    const ellipseDistance = Math.sqrt(dx * dx + dy * dy);
-    const edgeNoise = (hash2d(x * 0.17 + seed * 9.9, y * 0.17 + seed * 3.7) - 0.5) * 0.14;
-    const body = 1 - smoothstep(0.72 + edgeNoise, 1.01 + edgeNoise, ellipseDistance);
-    if (body <= 0.001) {
-      return;
-    }
-    const grain = 0.88 + (hash2d(x * 0.29 + seed * 1.5, y * 0.33 + seed * 5.4) - 0.5) * 0.18;
-    const pool = 1 - smoothstep(0.05, 0.8, ellipseDistance);
-    const alpha = clampUnit(body * grain * (0.9 + pool * 0.1));
-    rgba[pixelIndex] = clampByte(baseRed);
-    rgba[pixelIndex + 1] = clampByte(baseGreen);
-    rgba[pixelIndex + 2] = clampByte(baseBlue);
-    rgba[pixelIndex + 3] = clampByte(alpha * 255);
-  });
-}
-
-function buildChalkDab(color: string, width: number, height: number, seed: number) {
-  const [baseRed, baseGreen, baseBlue] = Color(color).rgb().array();
-  const radiusX = Math.max(1, width * (0.4 + hash2d(seed, 2.1) * 0.05));
-  const radiusY = Math.max(1, height * (0.4 + hash2d(seed, 2.6) * 0.05));
-  return buildDabFromPixelMap(width, height, (x, y, rgba, pixelIndex) => {
-    const dx = (x + 0.5 - width / 2) / radiusX;
-    const dy = (y + 0.5 - height / 2) / radiusY;
-    const ellipseDistance = Math.sqrt(dx * dx + dy * dy);
-    const edgeNoise = (hash2d(x * 0.13 + seed * 12.3, y * 0.19 + seed * 7.7) - 0.5) * 0.28;
-    const body = 1 - smoothstep(0.58 + edgeNoise, 1.08 + edgeNoise, ellipseDistance);
-    if (body <= 0.001) {
-      return;
-    }
-    const grain = hash2d(x * 0.63 + seed * 4.7, y * 0.59 + seed * 9.1);
-    const voidNoise = hash2d(x * 1.41 + seed * 2.9, y * 1.27 + seed * 6.1);
-    let alpha = body * (0.16 + grain * 0.84);
-    if (voidNoise < 0.08) {
-      alpha *= 0.05;
-    } else if (voidNoise < 0.18) {
-      alpha *= 0.18;
-    } else if (voidNoise < 0.32) {
-      alpha *= 0.42;
-    }
-    const colorNoise = (hash2d(x * 0.29 + seed * 3.1, y * 0.31 + seed * 8.3) - 0.5) * 30;
-    rgba[pixelIndex] = clampByte(baseRed + colorNoise);
-    rgba[pixelIndex + 1] = clampByte(baseGreen + colorNoise);
-    rgba[pixelIndex + 2] = clampByte(baseBlue + colorNoise);
-    rgba[pixelIndex + 3] = clampByte(clampUnit(alpha) * 255);
-  });
 }
 
 function tintTextureSource(
@@ -299,7 +172,7 @@ function tintTextureSource(
 }
 
 export function getVectorStrokeBrushPreset(brushId: VectorStrokeBrushId | null | undefined): VectorStrokeBrushPreset {
-  return VECTOR_STROKE_BRUSH_PRESETS[brushId ?? DEFAULT_VECTOR_STROKE_BRUSH_ID] ?? VECTOR_STROKE_BRUSH_PRESETS[DEFAULT_VECTOR_STROKE_BRUSH_ID];
+  return VECTOR_STROKE_BRUSH_PRESETS[parseVectorStrokeBrushId(brushId)] ?? VECTOR_STROKE_BRUSH_PRESETS[DEFAULT_VECTOR_STROKE_BRUSH_ID];
 }
 
 export function createVectorStrokeBrushRenderStyle(
@@ -333,11 +206,7 @@ export function createVectorStrokeBrushRenderStyle(
     const seed = index + 1;
     const image = textureSource
       ? tintTextureSource(textureSource, strokeColor, dabWidth, dabHeight)
-      : preset.id === 'marker'
-        ? buildMarkerDab(strokeColor, dabWidth, dabHeight, seed)
-        : preset.id === 'ink'
-          ? buildInkDab(strokeColor, dabWidth, dabHeight, seed)
-          : buildChalkDab(strokeColor, dabWidth, dabHeight, seed);
+      : createVectorCrayonDab(strokeColor, dabWidth, dabHeight, seed);
     dabs.push({
       image,
       width: image.width,
