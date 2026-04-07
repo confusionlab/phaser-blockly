@@ -3906,12 +3906,13 @@ export function BackgroundCanvasEditor() {
     setVectorStyleCapabilities(capabilities);
   }, []);
 
-  const handleToolbarColorChange = useCallback((color: string, _meta?: ToolbarSliderChangeMeta) => {
+  const handleToolbarColorChange = useCallback((color: string, meta?: ToolbarSliderChangeMeta) => {
     if (busy) {
       return;
     }
+    registerSliderChangeMeta(meta);
     setBrushColor(color);
-  }, [busy]);
+  }, [busy, registerSliderChangeMeta]);
 
   const handleToolbarBrushOpacityChange = useCallback((opacity: number, _meta?: ToolbarSliderChangeMeta) => {
     if (busy) {

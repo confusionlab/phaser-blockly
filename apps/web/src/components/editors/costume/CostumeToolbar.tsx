@@ -594,8 +594,8 @@ interface CostumeToolbarProps {
   onVectorHandleModeChange: (mode: EditableVectorHandleMode) => void;
   onAlign: (action: AlignAction) => void;
   alignDisabled: boolean;
-  onColorChange: (color: string) => void;
-  onBrushOpacityChange: (opacity: number) => void;
+  onColorChange: (color: string, meta?: ToolbarSliderChangeMeta) => void;
+  onBrushOpacityChange: (opacity: number, meta?: ToolbarSliderChangeMeta) => void;
   onBitmapBrushKindChange: (kind: BitmapBrushKind) => void;
   onBrushSizeChange: (size: number, meta?: ToolbarSliderChangeMeta) => void;
   onBitmapFillStyleChange: (updates: Partial<BitmapFillStyle>) => void;
@@ -820,7 +820,7 @@ export const CostumeToolbar = memo(({
     ? textStyle.opacity
     : (editorMode === 'bitmap' && activeTool === 'brush' ? brushOpacity : undefined);
   const handlePrimaryColorOpacityChange = showTextControls
-    ? (opacity: number) => onTextStyleChange({ opacity })
+    ? (opacity: number, meta?: ToolbarSliderChangeMeta) => onTextStyleChange({ opacity }, meta)
     : (editorMode === 'bitmap' && activeTool === 'brush'
       ? onBrushOpacityChange
       : undefined);

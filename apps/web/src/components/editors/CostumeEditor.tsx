@@ -1677,6 +1677,16 @@ export function CostumeEditor() {
     setVectorStyle(next);
   }, [registerSliderChangeMeta]);
 
+  const handlePrimaryColorChange = useCallback((color: string, meta?: ToolbarSliderChangeMeta) => {
+    registerSliderChangeMeta(meta);
+    setBrushColor(color);
+  }, [registerSliderChangeMeta]);
+
+  const handlePrimaryBrushOpacityChange = useCallback((opacity: number, meta?: ToolbarSliderChangeMeta) => {
+    registerSliderChangeMeta(meta);
+    setBrushOpacity(opacity);
+  }, [registerSliderChangeMeta]);
+
   const handleVectorStyleSync = useCallback((snapshot: VectorToolStyleSelectionSnapshot) => {
     const nextStyle = { ...vectorStyleRef.current, ...snapshot.style };
     const didStyleChange = !areVectorToolStylesEqual(vectorStyleRef.current, nextStyle);
@@ -1796,8 +1806,8 @@ export function CostumeEditor() {
             onVectorHandleModeChange={(mode) => setVectorHandleMode(mode)}
             onAlign={handleAlign}
             alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
-            onColorChange={setBrushColor}
-            onBrushOpacityChange={setBrushOpacity}
+            onColorChange={handlePrimaryColorChange}
+            onBrushOpacityChange={handlePrimaryBrushOpacityChange}
             onBitmapBrushKindChange={setBitmapBrushKind}
             onBrushSizeChange={handleBrushSizeChange}
             onBitmapFillStyleChange={handleBitmapFillStyleChange}
