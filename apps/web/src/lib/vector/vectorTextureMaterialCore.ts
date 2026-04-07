@@ -29,11 +29,11 @@ export const VECTOR_TEXTURE_MATERIALS: Record<VectorTextureMaterialId, VectorTex
     id: 'crayon',
     label: 'Crayon',
     sourceKind: 'image',
-    texturePath: '/vector-materials/crayon/texture.svg',
-    strokeMaskPath: '/vector-materials/crayon/dab-mask.svg',
+    texturePath: '/vector-materials/crayon/texture.png',
+    strokeMaskPath: '/vector-materials/crayon/dab-mask.png',
     fill: {
       tileSize: DEFAULT_CRAYON_TILE_SIZE,
-      opacity: 0.76,
+      opacity: 1,
     },
     stroke: {
       dabAspectRatio: 1.08,

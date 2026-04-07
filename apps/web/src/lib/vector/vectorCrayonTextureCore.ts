@@ -28,6 +28,22 @@ function createTextureCanvas(width: number, height: number) {
   return canvas;
 }
 
+function getVectorCrayonDabBodyAlpha(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  seed: number,
+) {
+  const radiusX = Math.max(1, width * (0.4 + hash2d(seed, 2.1) * 0.05));
+  const radiusY = Math.max(1, height * (0.4 + hash2d(seed, 2.6) * 0.05));
+  const dx = (x + 0.5 - width / 2) / radiusX;
+  const dy = (y + 0.5 - height / 2) / radiusY;
+  const ellipseDistance = Math.sqrt(dx * dx + dy * dy);
+  const edgeNoise = (hash2d(x * 0.13 + seed * 12.3, y * 0.19 + seed * 7.7) - 0.5) * 0.28;
+  return 1 - smoothstep(0.58 + edgeNoise, 1.08 + edgeNoise, ellipseDistance);
+}
+
 function sampleVectorCrayonTexture(x: number, y: number, seed: number) {
   const grain = hash2d(x * 0.63 + seed * 4.7, y * 0.59 + seed * 9.1);
   const voidNoise = hash2d(x * 1.41 + seed * 2.9, y * 1.27 + seed * 6.1);
@@ -59,17 +75,11 @@ export function createVectorCrayonDab(
   }
 
   const [baseRed, baseGreen, baseBlue] = Color(color).rgb().array();
-  const radiusX = Math.max(1, width * (0.4 + hash2d(seed, 2.1) * 0.05));
-  const radiusY = Math.max(1, height * (0.4 + hash2d(seed, 2.6) * 0.05));
   const imageData = ctx.createImageData(width, height);
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const dx = (x + 0.5 - width / 2) / radiusX;
-      const dy = (y + 0.5 - height / 2) / radiusY;
-      const ellipseDistance = Math.sqrt(dx * dx + dy * dy);
-      const edgeNoise = (hash2d(x * 0.13 + seed * 12.3, y * 0.19 + seed * 7.7) - 0.5) * 0.28;
-      const body = 1 - smoothstep(0.58 + edgeNoise, 1.08 + edgeNoise, ellipseDistance);
+      const body = getVectorCrayonDabBodyAlpha(x, y, width, height, seed);
       if (body <= 0.001) {
         continue;
       }
@@ -80,6 +90,63 @@ export function createVectorCrayonDab(
       imageData.data[pixelIndex + 1] = clampByte(baseGreen + sample.colorNoise);
       imageData.data[pixelIndex + 2] = clampByte(baseBlue + sample.colorNoise);
       imageData.data[pixelIndex + 3] = clampByte(body * sample.alpha * 255);
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+export function createVectorCrayonDabMask(
+  width: number,
+  height: number,
+  seed: number,
+) {
+  const canvas = createTextureCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return canvas;
+  }
+
+  const imageData = ctx.createImageData(width, height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const body = getVectorCrayonDabBodyAlpha(x, y, width, height, seed);
+      if (body <= 0.001) {
+        continue;
+      }
+
+      const pixelIndex = (y * width + x) * 4;
+      imageData.data[pixelIndex] = 255;
+      imageData.data[pixelIndex + 1] = 255;
+      imageData.data[pixelIndex + 2] = 255;
+      imageData.data[pixelIndex + 3] = clampByte(body * 255);
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+export function createVectorCrayonTextureSourceTile(
+  tileSize: number,
+  seed = 1,
+) {
+  const canvas = createTextureCanvas(tileSize, tileSize);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return canvas;
+  }
+
+  const imageData = ctx.createImageData(tileSize, tileSize);
+  for (let y = 0; y < tileSize; y += 1) {
+    for (let x = 0; x < tileSize; x += 1) {
+      const sample = sampleVectorCrayonTexture(x, y, seed);
+      const pixelIndex = (y * tileSize + x) * 4;
+      imageData.data[pixelIndex] = 255;
+      imageData.data[pixelIndex + 1] = 255;
+      imageData.data[pixelIndex + 2] = 255;
+      imageData.data[pixelIndex + 3] = clampByte(sample.alpha * 255);
     }
   }
 

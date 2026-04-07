@@ -21,9 +21,9 @@ test.describe('vector texture renderer', () => {
       };
     });
 
-    expect(result.fillTexturePath).toBe('/vector-materials/crayon/texture.svg');
+    expect(result.fillTexturePath).toBe('/vector-materials/crayon/texture.png');
     expect(result.strokeTexturePath).toBe(result.fillTexturePath);
-    expect(result.strokeMaskPath).toBe('/vector-materials/crayon/dab-mask.svg');
+    expect(result.strokeMaskPath).toBe('/vector-materials/crayon/dab-mask.png');
   });
 
   test('keeps textured stroke dab placement stable when the object translates', async ({ page }) => {

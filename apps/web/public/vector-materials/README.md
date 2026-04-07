@@ -22,4 +22,4 @@ Practical guidance
 
 - Make `texture.*` seamless on both axes so fill tiling does not show seams
 - Keep `dab-mask.*` on a transparent background with a tight frame around the painted shape
-- SVG, PNG, and WebP all work; SVG is convenient for starter assets and iteration
+- PNG or WebP is preferred for production texture assets; SVG is fine for iteration
