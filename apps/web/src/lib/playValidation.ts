@@ -1,5 +1,4 @@
 import * as Blockly from 'blockly';
-import { normalizeBlocklyXml } from '../../../../packages/ui-shared/src/blocklyXml';
 import type { GameObject, Project, Scene } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
@@ -14,6 +13,8 @@ import {
   VARIABLE_REFERENCE_BLOCKS,
 } from '@/lib/blocklyReferenceMaps';
 import '@/components/blockly/toolbox';
+import { getVariableCompatibilityIssues } from '@/lib/variableTypeChangeImpact';
+import { parseBlocklyXmlRoot } from '@/lib/parseBlocklyXml';
 
 const TYPE_REFERENCE_BLOCKS: Record<string, string> = {
   control_spawn_type_at: 'TYPE',
@@ -40,18 +41,29 @@ export interface PlayValidationIssue {
 type SceneValidationContext = Pick<Scene, 'id' | 'name' | 'objects'>;
 type ObjectValidationContext = Pick<GameObject, 'id' | 'name'>;
 
+function getElementChildren(node: Element): Element[] {
+  const candidateChildren = (node as Element & { children?: HTMLCollectionOf<Element> | Element[] }).children;
+  if (candidateChildren) {
+    return Array.from(candidateChildren);
+  }
+
+  return Array.from((node as Element & { childNodes?: ArrayLike<ChildNode> }).childNodes || []).filter(
+    (child): child is Element => child.nodeType === 1,
+  );
+}
+
 function getFieldValue(blockElement: Element, fieldName: string): string {
-  const fields = Array.from(blockElement.children).filter((node) => node.tagName === 'field');
+  const fields = getElementChildren(blockElement).filter((node) => node.tagName === 'field');
   const field = fields.find((node) => node.getAttribute('name') === fieldName);
   return (field?.textContent || '').trim();
 }
 
 function getInputBlockElement(blockElement: Element, inputName: string): Element | null {
-  const valueNode = Array.from(blockElement.children).find(
+  const valueNode = getElementChildren(blockElement).find(
     (node) => node.tagName === 'value' && node.getAttribute('name') === inputName
   );
   if (!valueNode) return null;
-  const candidate = Array.from(valueNode.children).find(
+  const candidate = getElementChildren(valueNode).find(
     (node) => node.tagName === 'block' || node.tagName === 'shadow'
   );
   return candidate || null;
@@ -248,6 +260,21 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
     });
   }
 
+  for (const compatibilityIssue of getVariableCompatibilityIssues(project)) {
+    issues.push({
+      id: `variable-compatibility:${compatibilityIssue.owner.kind}:${compatibilityIssue.blockId}:${compatibilityIssue.message}`,
+      sceneId: compatibilityIssue.owner.kind === 'object' ? compatibilityIssue.owner.sceneId : project.scenes[0]?.id || '',
+      sceneName: compatibilityIssue.subtitle || project.scenes[0]?.name || 'Project',
+      objectId: compatibilityIssue.owner.kind === 'object' ? compatibilityIssue.owner.objectId : compatibilityIssue.owner.componentId,
+      objectName: compatibilityIssue.owner.kind === 'component'
+        ? `[Component] ${compatibilityIssue.title}`
+        : compatibilityIssue.title,
+      blockId: compatibilityIssue.blockId,
+      blockType: compatibilityIssue.blockType,
+      message: compatibilityIssue.message,
+    });
+  }
+
   for (const scene of project.scenes) {
     for (const object of scene.objects) {
       const { blocklyXml, sounds } = getEffectiveObjectProps(object, project.components || []);
@@ -266,7 +293,10 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
       }
 
       try {
-        const xml = Blockly.utils.xml.textToDom(normalizeBlocklyXml(blocklyXml));
+        const xml = parseBlocklyXmlRoot(blocklyXml);
+        if (!xml) {
+          throw new Error('Unable to parse block XML.');
+        }
         const blocks = Array.from(xml.getElementsByTagName('block'));
         for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
           issues.push(
@@ -316,7 +346,10 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
     }
 
     try {
-      const xml = Blockly.utils.xml.textToDom(normalizeBlocklyXml(blocklyXml));
+      const xml = parseBlocklyXmlRoot(blocklyXml);
+      if (!xml) {
+        throw new Error('Unable to parse block XML.');
+      }
       const blocks = Array.from(xml.getElementsByTagName('block'));
       for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
         issues.push(

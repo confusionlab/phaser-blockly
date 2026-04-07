@@ -115,7 +115,7 @@ test.describe('Project property manager interactions', () => {
     await expect(messagesDialog.getByText('round win', { exact: true })).toBeVisible();
   });
 
-  test('variables use double-click rename and right-click actions', async ({ page }) => {
+  test('variables use inline rename and right-click delete', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Variable Manager Interactions ${Date.now()}`,
       addObject: true,
@@ -152,39 +152,23 @@ test.describe('Project property manager interactions', () => {
     await expect(variablesDialog.getByRole('button', { name: 'Delete score' })).toHaveCount(0);
 
     const variableRow = getPropertyManagerRow(variablesDialog, 'score');
-    const variableName = variableRow.getByText('score', { exact: true });
-    const variableLabelTypography = await getTypographySnapshot(variableName);
-    const variableRowHeightBeforeRename = await getClosestPropertyManagerRowHeight(variableName);
-    await expect(variablesDialog.getByRole('textbox', { name: 'Rename score' })).toHaveCount(0);
-
-    await variableName.dblclick();
-    const renameInput = variablesDialog.getByRole('textbox', { name: 'Rename score' });
-    await expect(renameInput).toBeVisible();
-    await expectUserSelect(renameInput, 'text');
-    const renameTypography = await getTypographySnapshot(renameInput);
-    const variableRowHeightDuringRename = await getClosestPropertyManagerRowHeight(renameInput);
-    expect(renameTypography).toEqual(variableLabelTypography);
-    expect(variableRowHeightDuringRename).toBe(variableRowHeightBeforeRename);
-    await renameInput.fill('points');
-    await renameInput.press('Enter');
-
-    await expect(variablesDialog.getByText('points', { exact: true })).toBeVisible();
+    const nameInput = variableRow.getByRole('textbox');
+    await expect(nameInput).toBeVisible();
+    await expectUserSelect(nameInput, 'text');
+    await nameInput.fill('points');
+    await nameInput.press('Enter');
 
     const renamedRow = getPropertyManagerRow(variablesDialog, 'points');
-    await renamedRow.click({ button: 'right' });
-    await expect(page.getByRole('button', { name: 'Rename Variable' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Delete Variable' })).toBeVisible();
+    await expect(renamedRow.getByRole('textbox')).toHaveValue('points');
 
-    await page.getByRole('button', { name: 'Rename Variable' }).click();
-    const renameFromContextMenu = variablesDialog.getByRole('textbox', { name: 'Rename points' });
-    await expect(renameFromContextMenu).toBeVisible();
-    await renameFromContextMenu.press('Escape');
-    await expect(variablesDialog.getByText('points', { exact: true })).toBeVisible();
+    await renamedRow.click({ button: 'right' });
+    await expect(page.getByRole('button', { name: 'Delete Variable' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Rename Variable' })).toHaveCount(0);
 
     await renamedRow.click({ button: 'right' });
     await page.getByRole('button', { name: 'Delete Variable' }).click();
     await expect(page.getByRole('heading', { name: 'Delete Variable' })).toBeVisible();
     await page.getByRole('button', { name: 'Delete' }).click();
-    await expect(variablesDialog.getByText('points', { exact: true })).toHaveCount(0);
+    await expect(variablesDialog.getByDisplayValue('points')).toHaveCount(0);
   });
 });

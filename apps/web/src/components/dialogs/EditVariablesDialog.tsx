@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { AppIcon, ChevronDown, ChevronRight, Component as ComponentIcon, Earth, Pencil, Plus, Trash2, type AppIconName } from '@/components/ui/icons';
+import { AppIcon, ChevronDown, ChevronRight, Component as ComponentIcon, Earth, GripVertical, Plus, Trash2, type AppIconName } from '@/components/ui/icons';
 import { HoverHelp } from '@/components/ui/hover-help';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -29,6 +29,8 @@ import {
 } from '@/components/dialogs/ProjectPropertyManagerDialog';
 import { ReferenceUsageDialog } from '@/components/dialogs/ReferenceUsageDialog';
 import type { ProjectReferenceImpact, ProjectReferenceOwnerTarget } from '@/lib/projectReferenceUsage';
+import type { VariableKindDefinition, VariableTypeChangeImpact } from '@/lib/variableTypeChangeImpact';
+import { getVariableTypeChangeImpact } from '@/lib/variableTypeChangeImpact';
 
 interface EditVariablesDialogProps {
   open: boolean;
@@ -52,6 +54,13 @@ type VariableEntry = {
   key: string;
   variable: Variable;
   target: VariableTarget;
+};
+
+type PendingVariableKindChange = {
+  entry: VariableEntry;
+  nextKind: VariableKindDefinition;
+  nextDefaultValue: Variable['defaultValue'];
+  impact: VariableTypeChangeImpact;
 };
 
 type VariableDefaultDraft =
@@ -103,26 +112,13 @@ const VARIABLE_TYPES: { value: VariableType; label: string }[] = [
 ];
 const VARIABLE_CARDINALITIES: { value: VariableCardinality; label: string }[] = [
   { value: 'single', label: 'Single' },
-  { value: 'array', label: 'Multiple' },
+  { value: 'array', label: 'Array' },
 ];
-const VARIABLE_KIND_OPTIONS: ReadonlyArray<{
-  value: `${VariableType}:${VariableCardinality}`;
-  label: string;
-  type: VariableType;
-  cardinality: VariableCardinality;
-}> = [
-  { value: 'number:single', label: 'Number', type: 'number', cardinality: 'single' },
-  { value: 'string:single', label: 'Text', type: 'string', cardinality: 'single' },
-  { value: 'boolean:single', label: 'Boolean', type: 'boolean', cardinality: 'single' },
-  { value: 'number:array', label: 'Number Array', type: 'number', cardinality: 'array' },
-  { value: 'string:array', label: 'Text Array', type: 'string', cardinality: 'array' },
-  { value: 'boolean:array', label: 'Boolean Array', type: 'boolean', cardinality: 'array' },
-] as const;
 
 const VARIABLE_FIELD_HELP = {
   scope: 'Global variables are available everywhere. Local variables belong to the current object or reusable component selection.',
   type: 'Choose what kind of data the variable stores: text, number, or true/false.',
-  values: 'Single stores one value. Multiple stores a list of values in order.',
+  values: 'Single stores one value. Array stores a list of values in order.',
   startValue: 'This is the value the game starts with before any blocks change it.',
 } as const;
 
@@ -192,19 +188,21 @@ function createArrayDraftItem(type: VariableType): string | boolean {
   }
 }
 
-function getVariableKindValue(
-  type: VariableType,
-  cardinality: VariableCardinality,
-): `${VariableType}:${VariableCardinality}` {
-  return `${type}:${cardinality}`;
-}
+function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= items.length ||
+    toIndex >= items.length
+  ) {
+    return items;
+  }
 
-function parseVariableKindValue(value: string): {
-  type: VariableType;
-  cardinality: VariableCardinality;
-} | null {
-  const matched = VARIABLE_KIND_OPTIONS.find((option) => option.value === value);
-  return matched ? { type: matched.type, cardinality: matched.cardinality } : null;
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
 }
 
 function VariableOptionRow({
@@ -246,6 +244,47 @@ function VariableDefaultEditor({
   onCommit?: (draft: VariableDefaultDraft) => void;
   inputIdPrefix: string;
 }) {
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+
+  const commitArrayReorder = (items: string[] | boolean[]) => {
+    if (draft.cardinality !== 'array') {
+      return;
+    }
+
+    const nextDraft: VariableDefaultDraft = draft.type === 'boolean'
+      ? { ...draft, items: items as boolean[] }
+      : { ...draft, items: items as string[] };
+    onChange(nextDraft);
+    onCommit?.(nextDraft);
+  };
+
+  const handleArrayDragStart = (index: number) => {
+    setDraggedIndex(index);
+  };
+
+  const handleArrayDragEnd = () => {
+    setDraggedIndex(null);
+  };
+
+  const handleArrayDrop = (targetIndex: number) => {
+    if (draggedIndex === null || draggedIndex === targetIndex) {
+      setDraggedIndex(null);
+      return;
+    }
+
+    if (draft.cardinality !== 'array') {
+      setDraggedIndex(null);
+      return;
+    }
+
+    if (draft.type === 'boolean') {
+      commitArrayReorder(moveArrayItem(draft.items, draggedIndex, targetIndex));
+    } else {
+      commitArrayReorder(moveArrayItem(draft.items, draggedIndex, targetIndex));
+    }
+    setDraggedIndex(null);
+  };
+
   if (draft.cardinality === 'single') {
     if (draft.type === 'boolean') {
       const checkboxId = `${inputIdPrefix}-boolean`;
@@ -293,25 +332,37 @@ function VariableDefaultEditor({
               return (
                 <div
                   key={itemId}
-                  className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/80 px-3 py-2"
+                  className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 ${
+                    draggedIndex === index ? 'opacity-70' : ''
+                  }`}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => handleArrayDrop(index)}
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-3">
-                      <Checkbox
-                        checked={item}
-                        id={itemId}
-                        onCheckedChange={(checked) => {
-                          const nextItems = [...draft.items];
-                          nextItems[index] = checked === true;
-                          const nextDraft = { ...draft, items: nextItems };
-                          onChange(nextDraft);
-                          onCommit?.(nextDraft);
-                        }}
-                      />
-                      <Label className="cursor-pointer text-sm text-foreground" htmlFor={itemId}>
-                        Item {index + 1} is true
-                      </Label>
-                    </div>
+                  <button
+                    aria-label={`Reorder item ${index + 1}`}
+                    className="flex h-9 w-8 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                    draggable
+                    onDragEnd={handleArrayDragEnd}
+                    onDragStart={() => handleArrayDragStart(index)}
+                    type="button"
+                  >
+                    <GripVertical className="size-4" />
+                  </button>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Checkbox
+                      checked={item}
+                      id={itemId}
+                      onCheckedChange={(checked) => {
+                        const nextItems = [...draft.items];
+                        nextItems[index] = checked === true;
+                        const nextDraft = { ...draft, items: nextItems };
+                        onChange(nextDraft);
+                        onCommit?.(nextDraft);
+                      }}
+                    />
+                    <Label className="cursor-pointer text-sm text-foreground" htmlFor={itemId}>
+                      Item {index + 1} is true
+                    </Label>
                   </div>
                   <Button
                     aria-label={`Remove item ${index + 1}`}
@@ -341,7 +392,7 @@ function VariableDefaultEditor({
 
         <Button
           aria-label="Add item"
-          className="self-start"
+          className="mx-auto"
           size="icon-sm"
           variant="outline"
           onClick={() => {
@@ -368,24 +419,36 @@ function VariableDefaultEditor({
             return (
               <div
                 key={itemId}
-                className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/80 px-3 py-2"
+                className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 ${
+                  draggedIndex === index ? 'opacity-70' : ''
+                }`}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => handleArrayDrop(index)}
               >
-                <div className="min-w-0 flex-1">
-                  <Input
-                    id={itemId}
-                    type={draft.type === 'number' ? 'number' : 'text'}
-                    value={item}
-                    onChange={(event) => {
-                      const nextItems = [...draft.items];
-                      nextItems[index] = event.target.value;
-                      onChange({ ...draft, items: nextItems });
-                    }}
-                    onBlur={() => {
-                      onCommit?.(draft);
-                    }}
-                    placeholder={draft.type === 'number' ? '0' : `Item ${index + 1}`}
-                  />
-                </div>
+                <button
+                  aria-label={`Reorder item ${index + 1}`}
+                  className="flex h-9 w-8 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                  draggable
+                  onDragEnd={handleArrayDragEnd}
+                  onDragStart={() => handleArrayDragStart(index)}
+                  type="button"
+                >
+                  <GripVertical className="size-4" />
+                </button>
+                <Input
+                  id={itemId}
+                  type={draft.type === 'number' ? 'number' : 'text'}
+                  value={item}
+                  onChange={(event) => {
+                    const nextItems = [...draft.items];
+                    nextItems[index] = event.target.value;
+                    onChange({ ...draft, items: nextItems });
+                  }}
+                  onBlur={() => {
+                    onCommit?.(draft);
+                  }}
+                  placeholder={draft.type === 'number' ? '0' : `Item ${index + 1}`}
+                />
                 <Button
                   aria-label={`Remove item ${index + 1}`}
                   className="shrink-0"
@@ -414,7 +477,7 @@ function VariableDefaultEditor({
 
       <Button
         aria-label="Add item"
-        className="self-start"
+        className="mx-auto"
         size="icon-sm"
         variant="outline"
         onClick={() => {
@@ -469,12 +532,18 @@ function VariableDefaultField({
 
 function VariableGridHeader() {
   return (
-    <div className="grid grid-cols-[minmax(0,1.6fr)_180px_minmax(0,2.2fr)] items-center gap-3 px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
+    <div className="grid grid-cols-[minmax(0,1.35fr)_132px_118px_minmax(0,2fr)] items-center gap-3 px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
       <div>Name</div>
       <div>Type</div>
+      <div>Structure</div>
       <div>Default</div>
     </div>
   );
+}
+
+function getVariableKindLabel(type: VariableType, cardinality: VariableCardinality): string {
+  const base = type === 'string' ? 'Text' : type === 'boolean' ? 'Boolean' : 'Number';
+  return cardinality === 'array' ? `${base} Array` : base;
 }
 
 function LocalHierarchyBranch({
@@ -501,7 +570,7 @@ function LocalHierarchyBranch({
       <div
         aria-expanded={isExpanded}
         aria-label={toggleLabel}
-        className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         onClick={onToggle}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -562,13 +631,12 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const [scope, setScope] = useState<AddVariableScope>('global');
   const [activeTab, setActiveTab] = useState<VariableListTab>('global');
   const [error, setError] = useState<string | null>(null);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [editName, setEditName] = useState('');
   const [defaultDraft, setDefaultDraft] = useState<VariableDefaultDraft>(
     () => createVariableDefaultDraft('number', 'single'),
   );
   const [expandedLocalKeys, setExpandedLocalKeys] = useState<Set<string>>(new Set());
   const [blockedDelete, setBlockedDelete] = useState<{ entityLabel: string; impact: ProjectReferenceImpact } | null>(null);
+  const [pendingKindChange, setPendingKindChange] = useState<PendingVariableKindChange | null>(null);
 
   const components = useMemo(() => project?.components || [], [project?.components]);
   const scenes = useMemo(() => project?.scenes || [], [project?.scenes]);
@@ -618,10 +686,9 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   useEffect(() => {
     if (!open) return;
     setIsAdding(false);
-    setEditingKey(null);
-    setEditName('');
     setActiveTab(preferredScope);
     setBlockedDelete(null);
+    setPendingKindChange(null);
     resetAddDialog(preferredScope);
   }, [open, preferredScope]);
 
@@ -828,21 +895,21 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       return;
     }
 
-    if (editingKey === entry.key) {
-      setEditingKey(null);
-      setEditName('');
-    }
     emitVariablesChanged();
   };
 
-  const saveRename = (entry: VariableEntry) => {
-    const trimmed = normalizeVariableName(editName);
+  const saveRename = (entry: VariableEntry, nextName: string): boolean => {
+    const trimmed = normalizeVariableName(nextName);
     if (!trimmed) {
       void showAlert({
         title: 'Missing Variable Name',
         description: 'Please enter a variable name.',
       });
-      return;
+      return false;
+    }
+
+    if (trimmed === entry.variable.name) {
+      return true;
     }
 
     if (hasVariableNameConflict(getVariablesForTarget(entry.target), trimmed, entry.variable.id)) {
@@ -850,7 +917,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         title: 'Duplicate Variable Name',
         description: 'A variable with this name already exists in that location.',
       });
-      return;
+      return false;
     }
 
     switch (entry.target.kind) {
@@ -859,7 +926,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         break;
       case 'component': {
         const component = componentById.get(entry.target.componentId);
-        if (!component) return;
+        if (!component) return false;
         updateComponent(entry.target.componentId, {
           localVariables: (component.localVariables || []).map((variable) =>
             variable.id === entry.variable.id ? { ...variable, name: trimmed } : variable,
@@ -872,9 +939,8 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         break;
     }
 
-    setEditingKey(null);
-    setEditName('');
     emitVariablesChanged();
+    return true;
   };
 
   const applyVariableUpdates = (entry: VariableEntry, updates: Partial<Variable>) => {
@@ -897,6 +963,18 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         break;
     }
     emitVariablesChanged();
+  };
+
+  const commitVariableKindChange = (
+    entry: VariableEntry,
+    nextKind: VariableKindDefinition,
+    nextDefaultValue: Variable['defaultValue'],
+  ) => {
+    applyVariableUpdates(entry, {
+      type: nextKind.type,
+      cardinality: nextKind.cardinality,
+      defaultValue: nextDefaultValue,
+    });
   };
 
   const handleAdd = () => {
@@ -963,7 +1041,6 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   };
 
   const VariableRow = ({ entry }: { entry: VariableEntry }) => {
-    const isEditing = editingKey === entry.key;
     const {
       contextMenuPosition,
       contextMenuRef,
@@ -987,23 +1064,13 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         ),
       );
     }, [entry.variable.cardinality, entry.variable.defaultValue, entry.variable.type]);
+    const [inlineName, setInlineName] = useState(entry.variable.name);
 
-    const variableKindValue = getVariableKindValue(
-      entry.variable.type,
-      normalizeVariableCardinality(entry.variable.cardinality),
-    );
-    const beginRename = () => {
-      closeContextMenu();
-      setEditingKey(entry.key);
-      setEditName(entry.variable.name);
-    };
+    useEffect(() => {
+      setInlineName(entry.variable.name);
+    }, [entry.variable.name]);
+
     const contextMenuActions: ProjectPropertyManagerContextMenuAction[] = [
-      {
-        key: 'rename',
-        label: 'Rename Variable',
-        icon: <Pencil className="size-4" />,
-        onSelect: beginRename,
-      },
       {
         key: 'delete',
         label: 'Delete Variable',
@@ -1013,10 +1080,6 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       },
     ];
     const handleContextMenu = (event: MouseEvent<HTMLDivElement>) => {
-      if (isEditing) {
-        return;
-      }
-
       event.preventDefault();
       event.stopPropagation();
       openContextMenuAt({ left: event.clientX, top: event.clientY });
@@ -1026,19 +1089,8 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       <>
         <div
           data-property-manager-row="true"
-          className="grid grid-cols-[minmax(0,1.6fr)_180px_minmax(0,2.2fr)] items-start gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-3 transition-colors hover:bg-accent/70"
+          className="grid grid-cols-[minmax(0,1.35fr)_132px_118px_minmax(0,2fr)] items-start gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-3 transition-colors hover:bg-accent/70"
           onContextMenu={handleContextMenu}
-          onDoubleClick={(event) => {
-            if (isEditing) {
-              return;
-            }
-            const target = event.target as HTMLElement | null;
-            if (target?.closest('button, input, textarea, a')) {
-              return;
-            }
-            event.preventDefault();
-            beginRename();
-          }}
         >
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
@@ -1048,57 +1100,73 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                 name={getTypeIconName(entry.variable.type)}
                 title={getTypeLabel(entry.variable.type)}
               />
-              {isEditing ? (
-                <Input
-                  aria-label={`Rename ${entry.variable.name}`}
-                  autoFocus
-                  className="h-8"
-                  value={editName}
-                  onBlur={() => saveRename(entry)}
-                  onChange={(event) => setEditName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      saveRename(entry);
+              <Input
+                aria-label={`Variable name for ${entry.variable.name}`}
+                className="h-8"
+                value={inlineName}
+                onBlur={() => {
+                  if (!saveRename(entry, inlineName)) {
+                    setInlineName(entry.variable.name);
+                  }
+                }}
+                onChange={(event) => setInlineName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    if (!saveRename(entry, inlineName)) {
+                      setInlineName(entry.variable.name);
                     }
-                    if (event.key === 'Escape') {
-                      event.preventDefault();
-                      setEditingKey(null);
-                      setEditName('');
-                    }
-                  }}
-                />
-              ) : (
-                <div className="min-w-0 truncate text-sm font-medium text-foreground">
-                  {entry.variable.name}
-                </div>
-              )}
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setInlineName(entry.variable.name);
+                  }
+                }}
+              />
             </div>
           </div>
 
           <Select
-            value={variableKindValue}
+            value={entry.variable.type}
             onValueChange={(value) => {
-              const nextKind = parseVariableKindValue(value);
-              if (!nextKind) return;
+              const nextType = value as VariableType;
+              const nextKind = {
+                type: nextType,
+                cardinality: normalizeVariableCardinality(entry.variable.cardinality),
+              };
               const nextDraft = createVariableDefaultDraft(
                 nextKind.type,
                 nextKind.cardinality,
                 materializeVariableDefaultDraft(inlineDefaultDraft),
               );
+              const nextDefaultValue = materializeVariableDefaultDraft(nextDraft);
+
+              if (!project) {
+                setInlineDefaultDraft(nextDraft);
+                commitVariableKindChange(entry, nextKind, nextDefaultValue);
+                return;
+              }
+
+              const impact = getVariableTypeChangeImpact(project, entry.variable, nextKind);
+              if (impact.incompatibleBlockCount > 0) {
+                setPendingKindChange({
+                  entry,
+                  nextKind,
+                  nextDefaultValue,
+                  impact,
+                });
+                return;
+              }
+
               setInlineDefaultDraft(nextDraft);
-              applyVariableUpdates(entry, {
-                type: nextKind.type,
-                cardinality: nextKind.cardinality,
-                defaultValue: materializeVariableDefaultDraft(nextDraft),
-              });
+              commitVariableKindChange(entry, nextKind, nextDefaultValue);
             }}
           >
             <SelectTrigger className="h-9 w-full bg-muted/40 shadow-none focus-visible:ring-2" size="sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {VARIABLE_KIND_OPTIONS.map((option) => (
+              {VARIABLE_TYPES.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
                 </SelectItem>
@@ -1106,7 +1174,55 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
             </SelectContent>
           </Select>
 
-          <div className="min-w-0 rounded-md bg-muted/30 px-2 py-2">
+          <Select
+            value={normalizeVariableCardinality(entry.variable.cardinality)}
+            onValueChange={(value) => {
+              const nextCardinality = value as VariableCardinality;
+              const nextKind = {
+                type: entry.variable.type,
+                cardinality: nextCardinality,
+              };
+              const nextDraft = createVariableDefaultDraft(
+                nextKind.type,
+                nextKind.cardinality,
+                materializeVariableDefaultDraft(inlineDefaultDraft),
+              );
+              const nextDefaultValue = materializeVariableDefaultDraft(nextDraft);
+
+              if (!project) {
+                setInlineDefaultDraft(nextDraft);
+                commitVariableKindChange(entry, nextKind, nextDefaultValue);
+                return;
+              }
+
+              const impact = getVariableTypeChangeImpact(project, entry.variable, nextKind);
+              if (impact.incompatibleBlockCount > 0) {
+                setPendingKindChange({
+                  entry,
+                  nextKind,
+                  nextDefaultValue,
+                  impact,
+                });
+                return;
+              }
+
+              setInlineDefaultDraft(nextDraft);
+              commitVariableKindChange(entry, nextKind, nextDefaultValue);
+            }}
+          >
+            <SelectTrigger className="h-9 w-full bg-muted/40 shadow-none focus-visible:ring-2" size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {VARIABLE_CARDINALITIES.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <div className="min-w-0">
             <VariableDefaultEditor
               draft={inlineDefaultDraft}
               inputIdPrefix={`variable-${entry.variable.id}`}
@@ -1392,6 +1508,106 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         impact={blockedDelete?.impact ?? null}
         onNavigate={handleNavigateToUsage}
       />
+      <Modal
+        open={!!pendingKindChange}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setPendingKindChange(null);
+          }
+        }}
+        title="Change Variable Type?"
+        contentClassName="sm:max-w-2xl"
+        footer={(
+          <div className="flex w-full justify-end gap-2">
+            <Button variant="outline" onClick={() => setPendingKindChange(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!pendingKindChange) {
+                  return;
+                }
+                commitVariableKindChange(
+                  pendingKindChange.entry,
+                  pendingKindChange.nextKind,
+                  pendingKindChange.nextDefaultValue,
+                );
+                setPendingKindChange(null);
+              }}
+            >
+              Change Anyway
+            </Button>
+          </div>
+        )}
+      >
+        {pendingKindChange ? (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Changing <span className="font-medium text-foreground">{pendingKindChange.entry.variable.name}</span> from{' '}
+              <span className="font-medium text-foreground">
+                {getVariableKindLabel(
+                  pendingKindChange.impact.currentKind.type,
+                  pendingKindChange.impact.currentKind.cardinality,
+                )}
+              </span>{' '}
+              to{' '}
+              <span className="font-medium text-foreground">
+                {getVariableKindLabel(
+                  pendingKindChange.impact.nextKind.type,
+                  pendingKindChange.impact.nextKind.cardinality,
+                )}
+              </span>{' '}
+              will leave {pendingKindChange.impact.incompatibleBlockCount} incompatible block
+              {pendingKindChange.impact.incompatibleBlockCount === 1 ? '' : 's'} across{' '}
+              {pendingKindChange.impact.usages.length} object
+              {pendingKindChange.impact.usages.length === 1 ? '' : 's'} or component
+              {pendingKindChange.impact.usages.length === 1 ? '' : 's'}.
+            </p>
+
+            <div className="max-h-[18rem] overflow-y-auto rounded-md border">
+              {pendingKindChange.impact.usages.map((usage) => (
+                <div className="border-b last:border-b-0" key={
+                  usage.owner.kind === 'component'
+                    ? `component:${usage.owner.componentId}`
+                    : `object:${usage.owner.sceneId}:${usage.owner.objectId}`
+                }>
+                  <button
+                    className="w-full px-4 py-3 text-left transition-colors hover:bg-accent/50"
+                    onClick={() => {
+                      handleNavigateToUsage(usage.owner);
+                      setPendingKindChange(null);
+                    }}
+                    type="button"
+                  >
+                    <div className="text-sm font-medium text-foreground">
+                      {usage.title}
+                    </div>
+                    {usage.subtitle ? (
+                      <div className="text-xs text-muted-foreground">{usage.subtitle}</div>
+                    ) : null}
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {usage.blockCount} incompatible block{usage.blockCount === 1 ? '' : 's'}
+                    </div>
+                  </button>
+                  <div className="space-y-2 px-4 pb-3">
+                    {usage.issues.map((issue) => (
+                      <div className="rounded-md bg-muted/35 px-3 py-2" key={`${issue.blockId}:${issue.message}`}>
+                        <div className="text-xs font-medium text-foreground">
+                          [{issue.blockType}] {issue.message}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Cancel to keep the variable unchanged, or change it anyway and fix the listed blocks afterward.
+            </p>
+          </div>
+        ) : null}
+      </Modal>
     </>
   );
 }
