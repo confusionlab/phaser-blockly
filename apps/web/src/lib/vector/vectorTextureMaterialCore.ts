@@ -38,10 +38,10 @@ export const VECTOR_TEXTURE_MATERIALS: Record<VectorTextureMaterialId, VectorTex
     label: 'Crayon',
     sourceKind: 'image',
     toneMapping: {
-      contrast: 1.1,
-      highlightStrength: 0.28,
+      contrast: 1.4,
+      highlightStrength: 0.36,
       neutral: 0.77,
-      shadowStrength: 0.34,
+      shadowStrength: 0.46,
     },
     texturePath: '/vector-materials/crayon/texture.png',
     strokeMaskPath: '/vector-materials/crayon/dab-mask.png',
