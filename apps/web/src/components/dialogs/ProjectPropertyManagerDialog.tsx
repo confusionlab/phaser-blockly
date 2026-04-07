@@ -26,6 +26,7 @@ interface ProjectPropertyManagerDialogProps {
   addButtonLabel: string;
   onAdd: () => void;
   toolbar?: ReactNode;
+  layout?: 'compact' | 'workspace';
   children: ReactNode;
 }
 
@@ -129,6 +130,7 @@ export function ProjectPropertyManagerDialog({
   addButtonLabel,
   onAdd,
   toolbar,
+  layout = 'compact',
   children,
 }: ProjectPropertyManagerDialogProps) {
   return (
@@ -137,7 +139,9 @@ export function ProjectPropertyManagerDialog({
       onOpenChange={onOpenChange}
       title={title}
       description={description}
-      contentClassName="left-1/2 right-auto w-[760px] max-w-[calc(100vw-4rem)] translate-x-[-50%]"
+      contentClassName={layout === 'compact'
+        ? 'left-1/2 right-auto w-[760px] max-w-[calc(100vw-4rem)] translate-x-[-50%]'
+        : undefined}
       bodyClassName="flex min-h-0 flex-1 flex-col px-6 py-5"
     >
       <div className="flex min-h-0 flex-1 flex-col gap-4 select-none">

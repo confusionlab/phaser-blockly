@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { DisclosureButton } from '@/components/ui/disclosure-button';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -9,6 +9,7 @@ import { HoverHelp } from '@/components/ui/hover-help';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ShelfObjectThumbnail } from '@/components/stage/ShelfObjectThumbnail';
+import { getShelfRowDropPosition, getTransparentShelfDragImage, useShelfDropTargetBoundaryGuard, type ShelfDropPosition } from '@/components/stage/shelfDrag';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import {
@@ -245,6 +246,8 @@ function VariableDefaultEditor({
   inputIdPrefix: string;
 }) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ index: number; position: Exclude<ShelfDropPosition, 'on'> } | null>(null);
+  const dragBoundaryRef = useRef<HTMLDivElement | null>(null);
 
   const commitArrayReorder = (items: string[] | boolean[]) => {
     if (draft.cardinality !== 'array') {
@@ -264,25 +267,72 @@ function VariableDefaultEditor({
 
   const handleArrayDragEnd = () => {
     setDraggedIndex(null);
+    setDropTarget(null);
   };
 
-  const handleArrayDrop = (targetIndex: number) => {
-    if (draggedIndex === null || draggedIndex === targetIndex) {
+  useShelfDropTargetBoundaryGuard({
+    active: draggedIndex !== null,
+    boundaryRef: dragBoundaryRef,
+    onExit: () => setDropTarget(null),
+  });
+
+  const handleArrayDragOver = (
+    event: DragEvent<HTMLDivElement>,
+    targetIndex: number,
+  ) => {
+    if (draggedIndex === null) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = getShelfRowDropPosition({
+      isFolder: false,
+      isExpandedFolder: false,
+      clientY: event.clientY,
+      rect,
+    });
+
+    setDropTarget({
+      index: targetIndex,
+      position: position === 'before' ? 'before' : 'after',
+    });
+  };
+
+  const handleArrayDrop = () => {
+    if (draggedIndex === null || !dropTarget) {
       setDraggedIndex(null);
+      setDropTarget(null);
       return;
     }
 
     if (draft.cardinality !== 'array') {
       setDraggedIndex(null);
+      setDropTarget(null);
+      return;
+    }
+
+    const insertionIndex = dropTarget.position === 'before'
+      ? dropTarget.index
+      : dropTarget.index + 1;
+    const nextIndex = draggedIndex < insertionIndex ? insertionIndex - 1 : insertionIndex;
+
+    if (nextIndex === draggedIndex) {
+      setDraggedIndex(null);
+      setDropTarget(null);
       return;
     }
 
     if (draft.type === 'boolean') {
-      commitArrayReorder(moveArrayItem(draft.items, draggedIndex, targetIndex));
+      commitArrayReorder(moveArrayItem(draft.items, draggedIndex, nextIndex));
     } else {
-      commitArrayReorder(moveArrayItem(draft.items, draggedIndex, targetIndex));
+      commitArrayReorder(moveArrayItem(draft.items, draggedIndex, nextIndex));
     }
     setDraggedIndex(null);
+    setDropTarget(null);
   };
 
   if (draft.cardinality === 'single') {
@@ -300,7 +350,7 @@ function VariableDefaultEditor({
             }}
           />
           <Label className="cursor-pointer text-sm text-foreground" htmlFor={checkboxId}>
-            Start as true
+            True
           </Label>
         </div>
       );
@@ -324,26 +374,46 @@ function VariableDefaultEditor({
 
   if (draft.type === 'boolean') {
     return (
-      <div className="space-y-3">
+      <div className="space-y-3" ref={dragBoundaryRef}>
         {draft.items.length > 0 ? (
           <div className="space-y-2">
             {draft.items.map((item, index) => {
               const itemId = `${inputIdPrefix}-item-${index}`;
+              const showDropBefore = dropTarget?.index === index && dropTarget.position === 'before';
+              const showDropAfter = dropTarget?.index === index && dropTarget.position === 'after';
               return (
                 <div
                   key={itemId}
-                  className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 ${
+                  className={`relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 ${
                     draggedIndex === index ? 'opacity-70' : ''
                   }`}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={() => handleArrayDrop(index)}
+                  onDragOver={(event) => handleArrayDragOver(event, index)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleArrayDrop();
+                  }}
                 >
+                  {showDropBefore ? (
+                    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0 border-t-2 border-primary" />
+                  ) : null}
+                  {showDropAfter ? (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-0 border-t-2 border-primary" />
+                  ) : null}
                   <button
                     aria-label={`Reorder item ${index + 1}`}
                     className="flex h-9 w-8 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
                     draggable
                     onDragEnd={handleArrayDragEnd}
-                    onDragStart={() => handleArrayDragStart(index)}
+                    onDragStart={(event) => {
+                      handleArrayDragStart(index);
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', String(index));
+                      const dragImage = getTransparentShelfDragImage();
+                      if (dragImage) {
+                        event.dataTransfer.setDragImage(dragImage, 0, 0);
+                      }
+                    }}
                     type="button"
                   >
                     <GripVertical className="size-4" />
@@ -390,47 +460,68 @@ function VariableDefaultEditor({
           </div>
         )}
 
-        <Button
-          aria-label="Add item"
-          className="mx-auto"
-          size="icon-sm"
-          variant="outline"
-          onClick={() => {
-            const nextDraft = {
-              ...draft,
-              items: [...draft.items, false],
-            };
-            onChange(nextDraft);
-            onCommit?.(nextDraft);
-          }}
-        >
-          <Plus className="size-4" />
-        </Button>
+        <div className="flex justify-center">
+          <Button
+            aria-label="Add item"
+            size="icon-sm"
+            variant="outline"
+            onClick={() => {
+              const nextDraft = {
+                ...draft,
+                items: [...draft.items, false],
+              };
+              onChange(nextDraft);
+              onCommit?.(nextDraft);
+            }}
+          >
+            <Plus className="size-4" />
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" ref={dragBoundaryRef}>
       {draft.items.length > 0 ? (
         <div className="space-y-2">
           {draft.items.map((item, index) => {
             const itemId = `${inputIdPrefix}-item-${index}`;
+            const showDropBefore = dropTarget?.index === index && dropTarget.position === 'before';
+            const showDropAfter = dropTarget?.index === index && dropTarget.position === 'after';
             return (
               <div
                 key={itemId}
-                className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 ${
+                className={`relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 ${
                   draggedIndex === index ? 'opacity-70' : ''
                 }`}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={() => handleArrayDrop(index)}
+                onDragOver={(event) => handleArrayDragOver(event, index)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  handleArrayDrop();
+                }}
               >
+                {showDropBefore ? (
+                  <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0 border-t-2 border-primary" />
+                ) : null}
+                {showDropAfter ? (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-0 border-t-2 border-primary" />
+                ) : null}
                 <button
                   aria-label={`Reorder item ${index + 1}`}
                   className="flex h-9 w-8 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
                   draggable
                   onDragEnd={handleArrayDragEnd}
-                  onDragStart={() => handleArrayDragStart(index)}
+                  onDragStart={(event) => {
+                    handleArrayDragStart(index);
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', String(index));
+                    const dragImage = getTransparentShelfDragImage();
+                    if (dragImage) {
+                      event.dataTransfer.setDragImage(dragImage, 0, 0);
+                    }
+                  }}
                   type="button"
                 >
                   <GripVertical className="size-4" />
@@ -475,22 +566,23 @@ function VariableDefaultEditor({
           </div>
         )}
 
-      <Button
-        aria-label="Add item"
-        className="mx-auto"
-        size="icon-sm"
-        variant="outline"
-        onClick={() => {
-          const nextDraft = {
-            ...draft,
-            items: [...draft.items, String(createArrayDraftItem(draft.type))],
-          };
-          onChange(nextDraft);
-          onCommit?.(nextDraft);
-        }}
-      >
-        <Plus className="size-4" />
-      </Button>
+      <div className="flex justify-center">
+        <Button
+          aria-label="Add item"
+          size="icon-sm"
+          variant="outline"
+          onClick={() => {
+            const nextDraft = {
+              ...draft,
+              items: [...draft.items, String(createArrayDraftItem(draft.type))],
+            };
+            onChange(nextDraft);
+            onCommit?.(nextDraft);
+          }}
+        >
+          <Plus className="size-4" />
+        </Button>
+      </div>
     </div>
   );
 }
@@ -507,12 +599,7 @@ function VariableDefaultField({
   return (
     <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-3">
       <div className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
-          <div className="text-sm font-medium text-foreground">Starts with</div>
-          <p className="text-xs text-muted-foreground">
-            {VARIABLE_FIELD_HELP.startValue}
-          </p>
-        </div>
+        <div className="text-sm font-medium text-foreground">Starts with</div>
         <HoverHelp
           label="Startup value help"
           panelClassName="max-w-[18rem]"
@@ -1267,6 +1354,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       <ProjectPropertyManagerDialog
         open={open}
         onOpenChange={onOpenChange}
+        layout="workspace"
         title="Variables"
         addButtonLabel="Add variable"
         onAdd={() => {
