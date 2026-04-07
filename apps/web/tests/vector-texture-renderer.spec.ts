@@ -154,6 +154,211 @@ test.describe('vector texture renderer', () => {
     expect(result.averageAlphaDifference).toBeLessThan(5);
   });
 
+  test('keeps crayon fill texture density stable when the object scales', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 320;
+      const height = 240;
+      const sampleLeft = 136;
+      const sampleTop = 96;
+      const sampleWidth = 48;
+      const sampleHeight = 48;
+
+      const createOverlayContext = () => {
+        const overlayCanvas = document.createElement('canvas');
+        overlayCanvas.width = width;
+        overlayCanvas.height = height;
+        return overlayCanvas.getContext('2d', { willReadFrequently: true });
+      };
+      const baseCtx = createOverlayContext();
+      const scaledCtx = createOverlayContext();
+      if (!baseCtx || !scaledCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      const createRectObject = (scale: number) => ({
+        type: 'rect',
+        width: 72,
+        height: 72,
+        fill: 'rgba(37, 99, 235, 0)',
+        opacity: 1,
+        stroke: null,
+        strokeWidth: 0,
+        vectorFillTextureId: 'crayon',
+        vectorFillColor: '#2563eb',
+        vectorFillOpacity: 1,
+        calcTransformMatrix: () => [scale, 0, 0, scale, 160, 120],
+      });
+
+      const waitForTextureReady = () => new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        renderVectorTextureOverlayForObjects(baseCtx, [createRectObject(1)], {
+          canvasWidth: width,
+          canvasHeight: height,
+          onTextureSourceReady: done,
+        });
+        setTimeout(done, 100);
+      });
+
+      await waitForTextureReady();
+      baseCtx.clearRect(0, 0, width, height);
+      scaledCtx.clearRect(0, 0, width, height);
+
+      renderVectorTextureOverlayForObjects(baseCtx, [createRectObject(1)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+      renderVectorTextureOverlayForObjects(scaledCtx, [createRectObject(2)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const basePixels = baseCtx.getImageData(sampleLeft, sampleTop, sampleWidth, sampleHeight).data;
+      const scaledPixels = scaledCtx.getImageData(sampleLeft, sampleTop, sampleWidth, sampleHeight).data;
+
+      let opaqueIntersection = 0;
+      let opaqueUnion = 0;
+      let alphaDifference = 0;
+      for (let index = 3; index < basePixels.length; index += 4) {
+        const baseAlpha = basePixels[index] ?? 0;
+        const scaledAlpha = scaledPixels[index] ?? 0;
+        const baseOpaque = baseAlpha > 16;
+        const scaledOpaque = scaledAlpha > 16;
+        if (baseOpaque || scaledOpaque) {
+          opaqueUnion += 1;
+        }
+        if (baseOpaque && scaledOpaque) {
+          opaqueIntersection += 1;
+        }
+        alphaDifference += Math.abs(baseAlpha - scaledAlpha);
+      }
+
+      return {
+        averageAlphaDifference: alphaDifference / (sampleWidth * sampleHeight),
+        opaqueIntersection,
+        opaqueUnion,
+      };
+    });
+
+    expect(result.opaqueUnion).toBeGreaterThan(1400);
+    expect(result.opaqueIntersection / result.opaqueUnion).toBeGreaterThan(0.94);
+    expect(result.averageAlphaDifference).toBeLessThan(4);
+  });
+
+  test('keeps crayon stroke texture density stable when the object scales', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 340;
+      const height = 220;
+      const sampleLeft = 48;
+      const sampleTop = 92;
+      const sampleWidth = 92;
+      const sampleHeight = 56;
+
+      const createOverlayContext = () => {
+        const overlayCanvas = document.createElement('canvas');
+        overlayCanvas.width = width;
+        overlayCanvas.height = height;
+        return overlayCanvas.getContext('2d', { willReadFrequently: true });
+      };
+      const baseCtx = createOverlayContext();
+      const scaledCtx = createOverlayContext();
+      if (!baseCtx || !scaledCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      const createPathObject = (scale: number) => ({
+        type: 'path',
+        path: [
+          ['M', 0, 0],
+          ['L', 120, 0],
+        ],
+        pathOffset: { x: 0, y: 0 },
+        fill: null,
+        opacity: 1,
+        stroke: 'rgba(37, 99, 235, 0)',
+        strokeWidth: 18,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+        vectorStrokeBrushId: 'crayon',
+        vectorStrokeColor: '#2563eb',
+        vectorStrokeOpacity: 1,
+        calcTransformMatrix: () => [scale, 0, 0, scale, 56, 120],
+      });
+
+      const waitForTextureReady = () => new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        renderVectorTextureOverlayForObjects(baseCtx, [createPathObject(1)], {
+          canvasWidth: width,
+          canvasHeight: height,
+          onTextureSourceReady: done,
+        });
+        setTimeout(done, 100);
+      });
+
+      await waitForTextureReady();
+      baseCtx.clearRect(0, 0, width, height);
+      scaledCtx.clearRect(0, 0, width, height);
+
+      renderVectorTextureOverlayForObjects(baseCtx, [createPathObject(1)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+      renderVectorTextureOverlayForObjects(scaledCtx, [createPathObject(2)], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const basePixels = baseCtx.getImageData(sampleLeft, sampleTop, sampleWidth, sampleHeight).data;
+      const scaledPixels = scaledCtx.getImageData(sampleLeft, sampleTop, sampleWidth, sampleHeight).data;
+
+      let opaqueIntersection = 0;
+      let opaqueUnion = 0;
+      let alphaDifference = 0;
+      for (let index = 3; index < basePixels.length; index += 4) {
+        const baseAlpha = basePixels[index] ?? 0;
+        const scaledAlpha = scaledPixels[index] ?? 0;
+        const baseOpaque = baseAlpha > 16;
+        const scaledOpaque = scaledAlpha > 16;
+        if (baseOpaque || scaledOpaque) {
+          opaqueUnion += 1;
+        }
+        if (baseOpaque && scaledOpaque) {
+          opaqueIntersection += 1;
+        }
+        alphaDifference += Math.abs(baseAlpha - scaledAlpha);
+      }
+
+      return {
+        averageAlphaDifference: alphaDifference / (sampleWidth * sampleHeight),
+        opaqueIntersection,
+        opaqueUnion,
+      };
+    });
+
+    expect(result.opaqueUnion).toBeGreaterThan(1200);
+    expect(result.opaqueIntersection / result.opaqueUnion).toBeGreaterThan(0.9);
+    expect(result.averageAlphaDifference).toBeLessThan(6);
+  });
+
   test('keeps early textured stroke dabs anchored when the path extends', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');
