@@ -1,5 +1,8 @@
 import { createVectorCrayonDab } from './vectorCrayonTextureCore';
-import { getVectorTextureMaterial } from './vectorTextureMaterialCore';
+import {
+  getVectorTextureMaterial,
+  type VectorTextureMaterialId,
+} from './vectorTextureMaterialCore';
 import {
   createAlphaMaskFromSource,
   canvasHasVisibleAlpha,
@@ -19,6 +22,7 @@ export interface VectorStrokeBrushPreset {
   id: VectorStrokeBrushId;
   label: string;
   kind: 'solid' | 'bitmap-dab';
+  materialId?: VectorTextureMaterialId;
   maskPath?: string;
   texturePath?: string;
   dabAspectRatio: number;
@@ -110,6 +114,7 @@ export const VECTOR_STROKE_BRUSH_PRESETS: Record<VectorStrokeBrushId, VectorStro
     id: 'crayon',
     label: 'Crayon',
     kind: 'bitmap-dab',
+    materialId: CRAYON_MATERIAL.id,
     texturePath: CRAYON_MATERIAL.texturePath,
     maskPath: CRAYON_MATERIAL.strokeMaskPath,
     dabAspectRatio: CRAYON_MATERIAL.stroke.dabAspectRatio,

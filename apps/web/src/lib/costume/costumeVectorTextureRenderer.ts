@@ -1402,6 +1402,83 @@ function renderVectorObjectBaseToContext(
   return true;
 }
 
+function renderVectorTexturedStrokeForObject(
+  ctx: CanvasRenderingContext2D,
+  obj: any,
+  renderStyle: Exclude<VectorStrokeBrushRenderStyle, { kind: 'solid' }>,
+  options: {
+    canvasWidth: number;
+    canvasHeight: number;
+    contextTransform?: number[] | null;
+  },
+): boolean {
+  const contourSeeds = getVectorStrokeContourSeedEntries(obj);
+  if (contourSeeds.length === 0) {
+    return false;
+  }
+
+  if (renderStyle.kind === 'texture-mask-dab') {
+    if (typeof obj.calcTransformMatrix !== 'function') {
+      return false;
+    }
+    const transformedContours = getTransformedVectorStrokeContours(obj, contourSeeds);
+    if (transformedContours.length !== contourSeeds.length) {
+      return false;
+    }
+    return drawVectorStrokeBrushTextureMaskPath(
+      ctx,
+      renderStyle,
+      transformedContours,
+      {
+        canvasWidth: options.canvasWidth,
+        canvasHeight: options.canvasHeight,
+        contextTransform: options.contextTransform,
+        textureAnchorTransform: obj.calcTransformMatrix(),
+      },
+    );
+  }
+
+  const contourPaths = getVectorObjectContourPaths(obj);
+  if (contourPaths.length !== contourSeeds.length) {
+    return false;
+  }
+
+  let rendered = false;
+  for (let contourIndex = 0; contourIndex < contourPaths.length; contourIndex += 1) {
+    const contour = contourPaths[contourIndex];
+    const contourSeed = contourSeeds[contourIndex]?.contourSeed;
+    rendered = drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, renderStyle, {
+      contourSeed,
+    }) || rendered;
+  }
+  return rendered;
+}
+
+function colorsMatchForSharedTextureComposition(
+  fillColor: string | undefined,
+  strokeColor: string | undefined,
+) {
+  return Boolean(
+    typeof fillColor === 'string'
+    && fillColor.length > 0
+    && typeof strokeColor === 'string'
+    && strokeColor.length > 0
+    && fillColor === strokeColor,
+  );
+}
+
+function shouldShareTextureCompositionBetweenFillAndStroke(
+  fillTextureId: VectorFillTextureId,
+  brushId: VectorStrokeBrushId,
+) {
+  const fillMaterialId = getVectorFillTexturePreset(fillTextureId).materialId;
+  const strokeMaterialId = getVectorStrokeBrushPreset(brushId).materialId;
+  if (fillMaterialId && strokeMaterialId) {
+    return fillMaterialId === strokeMaterialId;
+  }
+  return fillTextureId !== DEFAULT_VECTOR_FILL_TEXTURE_ID && brushId !== DEFAULT_VECTOR_STROKE_BRUSH_ID;
+}
+
 function renderVectorTextureDecorationsForObject(
   ctx: CanvasRenderingContext2D,
   obj: any,
@@ -1458,9 +1535,14 @@ function renderVectorTextureDecorationsForObject(
             }
       )
     : null;
-
   const fillTextureId = getVectorObjectFillTextureId(obj);
   const fillColor = getVectorObjectFillColor(obj);
+  const canShareTextureComposition = Boolean(
+    texturedStrokeRenderStyle
+    && shouldShareTextureCompositionBetweenFillAndStroke(fillTextureId, brushId),
+  );
+  const sharesStrokeColorWithFill = colorsMatchForSharedTextureComposition(fillColor, strokeColor);
+  let renderedSharedFillStrokeDecoration = false;
   if (vectorObjectSupportsFill(obj) && fillTextureId !== DEFAULT_VECTOR_FILL_TEXTURE_ID && fillColor) {
     const textureTile = createVectorFillTextureTile(
       fillTextureId,
@@ -1469,17 +1551,55 @@ function renderVectorTextureDecorationsForObject(
     );
     if (textureTile) {
       const fillOpacity = getVectorObjectFillOpacity(obj) ?? 1;
-      const strokeMaskContours = texturedStrokeRenderStyle
+      const strokeMaskContours = canShareTextureComposition && texturedStrokeRenderStyle
         ? getTransformedVectorStrokeContours(obj, getVectorStrokeContourSeedEntries(obj))
         : [];
-      rendered = drawVectorFillTextureWithCombinedMask(ctx, obj, textureTile, {
-        canvasWidth,
-        canvasHeight,
-        contextTransform: options.contextTransform,
-        fillOpacity,
-        strokeMaskContours,
-        strokeMaskRenderStyle: texturedStrokeRenderStyle,
-      }) || rendered;
+      const fillTargetCanvas = canShareTextureComposition
+        ? createScratchCanvas(canvasWidth, canvasHeight)
+        : null;
+      const fillTargetCtx = fillTargetCanvas
+        ? getCanvas2dContext(fillTargetCanvas)
+        : ctx;
+      const fillRendered = fillTargetCtx
+        ? drawVectorFillTextureWithCombinedMask(fillTargetCtx, obj, textureTile, {
+            canvasWidth,
+            canvasHeight,
+            contextTransform: options.contextTransform,
+            fillOpacity,
+            strokeMaskContours,
+            strokeMaskRenderStyle: canShareTextureComposition ? texturedStrokeRenderStyle : null,
+          })
+        : false;
+      if (fillRendered && fillTargetCanvas && fillTargetCtx) {
+        if (texturedStrokeRenderStyle && !sharesStrokeColorWithFill) {
+          const strokeOverlayCanvas = createScratchCanvas(canvasWidth, canvasHeight);
+          const strokeOverlayCtx = getCanvas2dContext(strokeOverlayCanvas);
+          if (strokeOverlayCtx) {
+            const renderedStrokeOverlay = renderVectorTexturedStrokeForObject(
+              strokeOverlayCtx,
+              obj,
+              texturedStrokeRenderStyle,
+              {
+                canvasWidth,
+                canvasHeight,
+                contextTransform: options.contextTransform,
+              },
+            );
+            if (renderedStrokeOverlay) {
+              fillTargetCtx.save();
+              fillTargetCtx.globalCompositeOperation = 'source-atop';
+              fillTargetCtx.drawImage(strokeOverlayCanvas, 0, 0);
+              fillTargetCtx.restore();
+            }
+          }
+        }
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(fillTargetCanvas, 0, 0);
+        ctx.restore();
+      }
+      rendered = fillRendered || rendered;
+      renderedSharedFillStrokeDecoration = fillRendered && canShareTextureComposition;
       if (!texturedStrokeRenderStyle) {
         // Remove the fill under a solid stroke so the object's base stroke remains visible.
         cutOutSolidStrokeFromTexturedFill(ctx, obj);
@@ -1489,35 +1609,12 @@ function renderVectorTextureDecorationsForObject(
 
   if (brushId !== DEFAULT_VECTOR_STROKE_BRUSH_ID) {
     if (strokeColor && strokeWidth > 0) {
-      if (texturedStrokeRenderStyle) {
-        const contourSeeds = getVectorStrokeContourSeedEntries(obj);
-        if (texturedStrokeRenderStyle.kind === 'texture-mask-dab') {
-          if (typeof obj.calcTransformMatrix === 'function') {
-            const transformedContours = getTransformedVectorStrokeContours(obj, contourSeeds);
-            rendered = drawVectorStrokeBrushTextureMaskPath(
-              ctx,
-              texturedStrokeRenderStyle,
-              transformedContours,
-              {
-                canvasWidth,
-                canvasHeight,
-                contextTransform: options.contextTransform,
-                textureAnchorTransform: obj.calcTransformMatrix(),
-              },
-            ) || rendered;
-          }
-        } else {
-          const contourPaths = getVectorObjectContourPaths(obj);
-          if (contourPaths.length === contourSeeds.length) {
-            for (let contourIndex = 0; contourIndex < contourPaths.length; contourIndex += 1) {
-              const contour = contourPaths[contourIndex];
-              const contourSeed = contourSeeds[contourIndex]?.contourSeed;
-              rendered = drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, texturedStrokeRenderStyle, {
-                contourSeed,
-              }) || rendered;
-            }
-          }
-        }
+      if (texturedStrokeRenderStyle && !renderedSharedFillStrokeDecoration) {
+        rendered = renderVectorTexturedStrokeForObject(ctx, obj, texturedStrokeRenderStyle, {
+          canvasWidth,
+          canvasHeight,
+          contextTransform: options.contextTransform,
+        }) || rendered;
       }
     }
   }

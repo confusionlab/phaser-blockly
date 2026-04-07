@@ -1,5 +1,8 @@
 import { createVectorCrayonTile } from './vectorCrayonTextureCore';
-import { getVectorTextureMaterial } from './vectorTextureMaterialCore';
+import {
+  getVectorTextureMaterial,
+  type VectorTextureMaterialId,
+} from './vectorTextureMaterialCore';
 import { createTintedTextureFromSource } from './vectorTextureImageCore';
 
 export type VectorFillTextureId = 'solid' | 'crayon';
@@ -15,6 +18,7 @@ export interface VectorFillTexturePreset {
   id: VectorFillTextureId;
   label: string;
   kind: 'solid' | 'textured';
+  materialId?: VectorTextureMaterialId;
   texturePath?: string;
   tileSize: number;
   opacity: number;
@@ -42,6 +46,7 @@ export const VECTOR_FILL_TEXTURE_PRESETS: Record<VectorFillTextureId, VectorFill
     id: 'crayon',
     label: 'Crayon',
     kind: 'textured',
+    materialId: CRAYON_MATERIAL.id,
     texturePath: CRAYON_MATERIAL.texturePath,
     tileSize: CRAYON_MATERIAL.fill.tileSize,
     opacity: CRAYON_MATERIAL.fill.opacity,
