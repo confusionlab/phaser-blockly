@@ -706,6 +706,7 @@ export function BackgroundCanvasEditor() {
   const [brushOpacity, setBrushOpacity] = useState(1);
   const [backgroundColor, setBackgroundColor] = useState('#87CEEB');
   const [backgroundColorPickerOpen, setBackgroundColorPickerOpen] = useState(false);
+  const backgroundColorPickerPreviewActiveRef = useRef(false);
   const [brushSize, setBrushSize] = useState(INITIAL_BRUSH_SIZE);
   const [bitmapFillStyle, setBitmapFillStyle] = useState<BitmapFillStyle>({
     textureId: DEFAULT_BITMAP_FILL_TEXTURE_ID,
@@ -1655,6 +1656,9 @@ export function BackgroundCanvasEditor() {
 
   useEffect(() => {
     if (!scene || busy) {
+      return;
+    }
+    if (backgroundColorPickerPreviewActiveRef.current) {
       return;
     }
     if (backgroundColor === initialBackgroundColorRef.current) {
@@ -3902,19 +3906,40 @@ export function BackgroundCanvasEditor() {
     setVectorStyleCapabilities(capabilities);
   }, []);
 
-  const handleToolbarColorChange = useCallback((color: string) => {
+  const handleToolbarColorChange = useCallback((color: string, _meta?: ToolbarSliderChangeMeta) => {
     if (busy) {
       return;
     }
     setBrushColor(color);
   }, [busy]);
 
-  const handleToolbarBrushOpacityChange = useCallback((opacity: number) => {
+  const handleToolbarBrushOpacityChange = useCallback((opacity: number, _meta?: ToolbarSliderChangeMeta) => {
     if (busy) {
       return;
     }
     setBrushOpacity(opacity);
   }, [busy]);
+
+  const handleBackgroundColorControlChange = useCallback((color: string, meta?: ToolbarSliderChangeMeta) => {
+    if (busy) {
+      return;
+    }
+
+    backgroundColorPickerPreviewActiveRef.current = meta?.source === 'picker' && meta.phase === 'preview';
+    setBackgroundColor(color);
+
+    if (meta?.source === 'picker' && meta.phase === 'commit') {
+      backgroundColorPickerPreviewActiveRef.current = false;
+      flushPendingBackgroundColorCommit();
+    }
+  }, [busy, flushPendingBackgroundColorCommit]);
+
+  const handleBackgroundColorPickerOpenChange = useCallback((open: boolean) => {
+    setBackgroundColorPickerOpen(open);
+    if (!open && !backgroundColorPickerPreviewActiveRef.current) {
+      flushPendingBackgroundColorCommit();
+    }
+  }, [flushPendingBackgroundColorCommit]);
 
   const handleToolbarBitmapBrushKindChange = useCallback((kind: BitmapBrushKind) => {
     if (busy) {
@@ -4057,8 +4082,8 @@ export function BackgroundCanvasEditor() {
                 label="BG"
                 value={backgroundColor}
                 open={backgroundColorPickerOpen}
-                onOpenChange={setBackgroundColorPickerOpen}
-                onColorChange={setBackgroundColor}
+                onOpenChange={handleBackgroundColorPickerOpenChange}
+                onColorChange={handleBackgroundColorControlChange}
                 disabled={busy}
               />
             )}

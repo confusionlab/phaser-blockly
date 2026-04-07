@@ -507,6 +507,11 @@ function lerpNumber(start: number, end: number, amount: number) {
   return start + (end - start) * amount;
 }
 
+function smoothstepUnit(value: number) {
+  const t = clampUnit(value);
+  return t * t * (3 - (2 * t));
+}
+
 function getDistanceBetweenPoints(a: Point, b: Point) {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
@@ -516,6 +521,36 @@ function getDistanceBetweenPoints(a: Point, b: Point) {
 function hashNumberTriplet(a: number, b: number, c: number) {
   const value = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453123;
   return value - Math.floor(value);
+}
+
+function sampleDeterministicValueNoise1d(position: number, seed: number) {
+  const startIndex = Math.floor(position);
+  const endIndex = startIndex + 1;
+  const blend = smoothstepUnit(position - startIndex);
+  const startValue = (hashNumberTriplet(startIndex, seed, 0.173) * 2) - 1;
+  const endValue = (hashNumberTriplet(endIndex, seed, 0.173) * 2) - 1;
+  return lerpNumber(startValue, endValue, blend);
+}
+
+function sampleDeterministicSmoothNoise1d(position: number, seed: number) {
+  let amplitude = 1;
+  let frequency = 1;
+  let total = 0;
+  let totalWeight = 0;
+
+  for (let octave = 0; octave < 3; octave += 1) {
+    total += sampleDeterministicValueNoise1d(
+      (position * frequency) + (octave * 0.37),
+      seed + (octave * 19.19),
+    ) * amplitude;
+    totalWeight += amplitude;
+    amplitude *= 0.5;
+    frequency *= 2;
+  }
+
+  return totalWeight > 0
+    ? Math.max(-1, Math.min(1, total / totalWeight))
+    : 0;
 }
 
 function getQuadraticBezierPoint(start: Point, control: Point, end: Point, t: number) {
@@ -860,13 +895,17 @@ function drawVectorStrokeBrushDabsAlongPath(
   }
 
   const tangentWindow = Math.max(1, renderStyle.spacing * 0.85);
+  const wiggleNoiseWavelength = Math.max(12, renderStyle.spacing * 4);
   const contourSeed = Number.isFinite(options.contourSeed)
     ? Number(options.contourSeed)
     : hashNumberTriplet(pathPoints[0]?.x ?? 0, pathPoints[0]?.y ?? 0, closed ? 1 : 0);
 
   const renderDabAt = (distanceAlongPath: number, dabIndex: number) => {
     const dabPositionSeed = dabIndex + 1;
-    const wiggleRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.61);
+    const wiggleNoise = sampleDeterministicSmoothNoise1d(
+      distanceAlongPath / wiggleNoiseWavelength,
+      contourSeed + 11.3,
+    );
     const point = samplePointAlongPolyline(
       pathPoints,
       cumulativeLengths,
@@ -897,7 +936,7 @@ function drawVectorStrokeBrushDabsAlongPath(
     const drawHeight = Math.max(1, dab.height * jitterScale);
     const wiggleOffset = renderStyle.wiggle > 0
       ? (
-          ((wiggleRandom * 2) - 1)
+          wiggleNoise
           * drawHeight
           * renderStyle.wiggle
           * MAX_VECTOR_STROKE_WIGGLE_NORMAL_MULTIPLIER

@@ -57,6 +57,31 @@ test.describe('toolbar slider commit boundary', () => {
     });
   });
 
+  test('treats picker preview and commit as the same history boundary flow', () => {
+    const previewState = reduceToolbarSliderCommitBoundaryState(
+      INITIAL_TOOLBAR_SLIDER_COMMIT_BOUNDARY_STATE,
+      {
+        source: 'picker',
+        phase: 'preview',
+      },
+    );
+
+    expect(previewState).toEqual({
+      commitRevision: 0,
+      isPreviewActive: true,
+    });
+
+    const commitState = reduceToolbarSliderCommitBoundaryState(previewState, {
+      source: 'picker',
+      phase: 'commit',
+    });
+
+    expect(commitState).toEqual({
+      commitRevision: 1,
+      isPreviewActive: false,
+    });
+  });
+
   test('keeps non-slider style changes on the existing scheduled commit path', () => {
     expect(resolveStyleSliderCommitAction({
       commitRequested: false,
