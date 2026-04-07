@@ -171,6 +171,7 @@ export function createVectorStrokeBrushRenderStyle(
   options: CreateVectorStrokeBrushRenderStyleOptions = {},
 ): VectorStrokeBrushRenderStyle {
   const preset = getVectorStrokeBrushPreset(brushId);
+  const material = preset.materialId ? getVectorTextureMaterial(preset.materialId) : null;
   const wiggle = normalizeVectorStrokeWiggle(options.wiggle);
   if (preset.kind === 'solid') {
     return {
@@ -200,6 +201,7 @@ export function createVectorStrokeBrushRenderStyle(
       width: textureTileSize,
       height: textureTileSize,
       opacity: preset.textureOpacity ?? 1,
+      toneMapping: material?.toneMapping,
     });
     const maskDab = createAlphaMaskFromSource({
       source: maskSource,
@@ -241,11 +243,12 @@ export function createVectorStrokeBrushRenderStyle(
           height: dabHeight,
           opacity: 1,
           minSampleSize: 48,
+          toneMapping: material?.toneMapping,
         })
       : null;
     const resolvedImage = image && canvasHasVisibleAlpha(image)
       ? image
-      : createVectorCrayonDab(strokeColor, dabWidth, dabHeight, seed);
+      : createVectorCrayonDab(strokeColor, dabWidth, dabHeight, seed, material?.toneMapping);
     dabs.push({
       image: resolvedImage,
       width: resolvedImage.width,

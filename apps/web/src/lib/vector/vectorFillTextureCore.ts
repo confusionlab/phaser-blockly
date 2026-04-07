@@ -82,6 +82,7 @@ export function createVectorFillTextureTile(
   textureSource?: CanvasImageSource | null,
 ): HTMLCanvasElement | null {
   const preset = getVectorFillTexturePreset(textureId);
+  const material = preset.materialId ? getVectorTextureMaterial(preset.materialId) : null;
   if (preset.kind === 'solid') {
     return null;
   }
@@ -93,8 +94,9 @@ export function createVectorFillTextureTile(
       width: preset.tileSize,
       height: preset.tileSize,
       opacity: preset.opacity,
+      toneMapping: material?.toneMapping,
     });
   }
 
-  return createVectorCrayonTile(fillColor, preset.tileSize, preset.opacity);
+  return createVectorCrayonTile(fillColor, preset.tileSize, preset.opacity, material?.toneMapping);
 }

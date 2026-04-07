@@ -1,7 +1,16 @@
 import Color from 'color';
+import type { VectorTextureToneMapping } from './vectorTextureMaterialCore';
 
 function clampUnit(value: number) {
   return Math.max(0, Math.min(1, value));
+}
+
+function clampSignedUnit(value: number) {
+  return Math.max(-1, Math.min(1, value));
+}
+
+function lerpNumber(start: number, end: number, amount: number) {
+  return start + ((end - start) * amount);
 }
 
 function resolveTextureSourceDimension(value: unknown, fallback: number) {
@@ -71,6 +80,10 @@ function drawSourceToCanvas(
   return canvas;
 }
 
+function clampByte(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
 function sampleSourceStrength(
   pixels: Uint8ClampedArray,
   pixelIndex: number,
@@ -84,11 +97,76 @@ function sampleSourceStrength(
   return clampUnit(alpha * luminance);
 }
 
+function sampleSourceAlpha(
+  pixels: Uint8ClampedArray,
+  pixelIndex: number,
+) {
+  return clampUnit((pixels[pixelIndex + 3] ?? 0) / 255);
+}
+
+function sampleSourceLuminance(
+  pixels: Uint8ClampedArray,
+  pixelIndex: number,
+) {
+  return clampUnit((
+    0.2126 * (pixels[pixelIndex] ?? 0)
+    + 0.7152 * (pixels[pixelIndex + 1] ?? 0)
+    + 0.0722 * (pixels[pixelIndex + 2] ?? 0)
+  ) / 255);
+}
+
+export function resolveTextureToneSignal(
+  textureValue: number,
+  toneMapping?: VectorTextureToneMapping | null,
+) {
+  const neutral = clampUnit(toneMapping?.neutral ?? 0.5);
+  const contrast = Math.max(0, toneMapping?.contrast ?? 1);
+  const scale = textureValue >= neutral
+    ? Math.max(0.0001, 1 - neutral)
+    : Math.max(0.0001, neutral);
+  return clampSignedUnit(((textureValue - neutral) / scale) * contrast);
+}
+
+export function applyTextureToneToColorChannels(
+  color: [number, number, number],
+  baseLightness: number,
+  textureValue: number,
+  toneMapping?: VectorTextureToneMapping | null,
+  participation = 1,
+): [number, number, number] {
+  const resolvedParticipation = clampUnit(participation);
+  const signedSignal = resolveTextureToneSignal(textureValue, toneMapping) * resolvedParticipation;
+  const shadowStrength = clampUnit(toneMapping?.shadowStrength ?? 0.32);
+  const highlightStrength = clampUnit(toneMapping?.highlightStrength ?? 0.18);
+  const shadowBias = lerpNumber(0.35, 1, clampUnit(baseLightness));
+  const highlightBias = lerpNumber(1, 0.35, clampUnit(baseLightness));
+  const shadowMix = clampUnit(Math.max(0, -signedSignal) * shadowStrength * shadowBias);
+  const highlightMix = clampUnit(Math.max(0, signedSignal) * highlightStrength * highlightBias);
+
+  let [red, green, blue] = color;
+  if (shadowMix > 0) {
+    red = lerpNumber(red, 0, shadowMix);
+    green = lerpNumber(green, 0, shadowMix);
+    blue = lerpNumber(blue, 0, shadowMix);
+  }
+  if (highlightMix > 0) {
+    red = lerpNumber(red, 255, highlightMix);
+    green = lerpNumber(green, 255, highlightMix);
+    blue = lerpNumber(blue, 255, highlightMix);
+  }
+  return [
+    clampByte(red),
+    clampByte(green),
+    clampByte(blue),
+  ];
+}
+
 export function createTintedTextureFromSource(options: {
   color: string;
   minSampleSize?: number;
   maskSource?: CanvasImageSource | null;
   opacity?: number;
+  toneMapping?: VectorTextureToneMapping | null;
   textureSource: CanvasImageSource;
   width: number;
   height: number;
@@ -127,7 +205,9 @@ export function createTintedTextureFromSource(options: {
         ?.getImageData(0, 0, sampleDimensions.width, sampleDimensions.height).data
     : null;
 
-  const [red, green, blue] = Color(options.color).rgb().array();
+  const baseColor = Color(options.color);
+  const [red, green, blue] = baseColor.rgb().array();
+  const baseLightness = (baseColor.hsl().array()[2] ?? 0) / 100;
   const sampledCanvas = createTextureCanvas(sampleDimensions.width, sampleDimensions.height);
   const sampledCtx = sampledCanvas.getContext('2d');
   if (!sampledCtx) {
@@ -137,13 +217,23 @@ export function createTintedTextureFromSource(options: {
   const opacity = clampUnit(options.opacity ?? 1);
 
   for (let pixelIndex = 0; pixelIndex < output.data.length; pixelIndex += 4) {
-    const textureStrength = sampleSourceStrength(texturePixels, pixelIndex);
+    const textureLuminance = sampleSourceLuminance(texturePixels, pixelIndex);
+    const textureParticipation = sampleSourceAlpha(texturePixels, pixelIndex);
     const maskStrength = maskPixels ? sampleSourceStrength(maskPixels, pixelIndex) : 1;
-    const alpha = clampUnit(textureStrength * maskStrength * opacity);
-    output.data[pixelIndex] = Math.round(red);
-    output.data[pixelIndex + 1] = Math.round(green);
-    output.data[pixelIndex + 2] = Math.round(blue);
-    output.data[pixelIndex + 3] = Math.round(alpha * 255);
+    // Named vector materials keep shape coverage in alpha while the texture
+    // modulates the visible tone of the color field.
+    const [tonedRed, tonedGreen, tonedBlue] = applyTextureToneToColorChannels(
+      [red, green, blue],
+      baseLightness,
+      textureLuminance,
+      options.toneMapping,
+      textureParticipation,
+    );
+    const coverageAlpha = clampUnit(maskStrength * opacity);
+    output.data[pixelIndex] = tonedRed;
+    output.data[pixelIndex + 1] = tonedGreen;
+    output.data[pixelIndex + 2] = tonedBlue;
+    output.data[pixelIndex + 3] = Math.round(coverageAlpha * 255);
   }
 
   sampledCtx.putImageData(output, 0, 0);

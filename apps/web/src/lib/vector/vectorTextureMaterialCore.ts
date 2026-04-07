@@ -1,9 +1,17 @@
 export type VectorTextureMaterialId = 'crayon';
 
+export interface VectorTextureToneMapping {
+  contrast: number;
+  highlightStrength: number;
+  neutral: number;
+  shadowStrength: number;
+}
+
 export interface VectorTextureMaterialDefinition {
   id: VectorTextureMaterialId;
   label: string;
   sourceKind: 'image' | 'procedural';
+  toneMapping: VectorTextureToneMapping;
   texturePath?: string;
   strokeMaskPath?: string;
   fill: {
@@ -29,6 +37,12 @@ export const VECTOR_TEXTURE_MATERIALS: Record<VectorTextureMaterialId, VectorTex
     id: 'crayon',
     label: 'Crayon',
     sourceKind: 'image',
+    toneMapping: {
+      contrast: 1.1,
+      highlightStrength: 0.28,
+      neutral: 0.77,
+      shadowStrength: 0.34,
+    },
     texturePath: '/vector-materials/crayon/texture.png',
     strokeMaskPath: '/vector-materials/crayon/dab-mask.png',
     fill: {
@@ -37,8 +51,8 @@ export const VECTOR_TEXTURE_MATERIALS: Record<VectorTextureMaterialId, VectorTex
     },
     stroke: {
       dabAspectRatio: 1.08,
-      opacity: 0.78,
-      opacityJitter: 0.14,
+      opacity: 1,
+      opacityJitter: 0,
       rotationJitter: 0.12,
       scaleJitter: 0.1,
       scatterRatio: 0.05,

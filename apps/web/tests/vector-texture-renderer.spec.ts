@@ -63,6 +63,173 @@ test.describe('vector texture renderer', () => {
     expect(result.textureTileHeight).toBe(result.textureTileWidth);
   });
 
+  test('renders crayon fill as an opaque textured color field', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 280;
+      const height = 240;
+      const sampleLeft = 142;
+      const sampleTop = 102;
+      const sampleWidth = 36;
+      const sampleHeight = 36;
+
+      const overlayCanvas = document.createElement('canvas');
+      overlayCanvas.width = width;
+      overlayCanvas.height = height;
+      const overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+      if (!overlayCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      const object = {
+        type: 'rect',
+        width: 72,
+        height: 72,
+        fill: 'rgba(37, 99, 235, 0)',
+        opacity: 1,
+        stroke: null,
+        strokeWidth: 0,
+        vectorFillTextureId: 'crayon',
+        vectorFillColor: '#2563eb',
+        vectorFillOpacity: 1,
+        calcTransformMatrix: () => [1, 0, 0, 1, 160, 120],
+      };
+
+      const waitForTextureReady = () => new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        renderVectorTextureOverlayForObjects(overlayCtx, [object], {
+          canvasWidth: width,
+          canvasHeight: height,
+          onTextureSourceReady: done,
+        });
+        setTimeout(done, 100);
+      });
+
+      await waitForTextureReady();
+      overlayCtx.clearRect(0, 0, width, height);
+      renderVectorTextureOverlayForObjects(overlayCtx, [object], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const pixels = overlayCtx.getImageData(sampleLeft, sampleTop, sampleWidth, sampleHeight).data;
+      let alphaTotal = 0;
+      let minAlpha = 255;
+      const uniqueColors = new Set<string>();
+      for (let index = 0; index < pixels.length; index += 4) {
+        const red = pixels[index] ?? 0;
+        const green = pixels[index + 1] ?? 0;
+        const blue = pixels[index + 2] ?? 0;
+        const alpha = pixels[index + 3] ?? 0;
+        alphaTotal += alpha;
+        minAlpha = Math.min(minAlpha, alpha);
+        uniqueColors.add(`${red},${green},${blue}`);
+      }
+
+      return {
+        averageAlpha: alphaTotal / (sampleWidth * sampleHeight),
+        minAlpha,
+        uniqueColorCount: uniqueColors.size,
+      };
+    });
+
+    expect(result.averageAlpha).toBeGreaterThan(250);
+    expect(result.minAlpha).toBeGreaterThan(245);
+    expect(result.uniqueColorCount).toBeGreaterThan(20);
+  });
+
+  test('renders visible crayon variation for dark fill colors', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 280;
+      const height = 240;
+      const sampleLeft = 142;
+      const sampleTop = 102;
+      const sampleWidth = 36;
+      const sampleHeight = 36;
+
+      const overlayCanvas = document.createElement('canvas');
+      overlayCanvas.width = width;
+      overlayCanvas.height = height;
+      const overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+      if (!overlayCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      const object = {
+        type: 'rect',
+        width: 72,
+        height: 72,
+        fill: 'rgba(10, 20, 40, 0)',
+        opacity: 1,
+        stroke: null,
+        strokeWidth: 0,
+        vectorFillTextureId: 'crayon',
+        vectorFillColor: '#0f172a',
+        vectorFillOpacity: 1,
+        calcTransformMatrix: () => [1, 0, 0, 1, 160, 120],
+      };
+
+      const waitForTextureReady = () => new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        renderVectorTextureOverlayForObjects(overlayCtx, [object], {
+          canvasWidth: width,
+          canvasHeight: height,
+          onTextureSourceReady: done,
+        });
+        setTimeout(done, 100);
+      });
+
+      await waitForTextureReady();
+      overlayCtx.clearRect(0, 0, width, height);
+      renderVectorTextureOverlayForObjects(overlayCtx, [object], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const pixels = overlayCtx.getImageData(sampleLeft, sampleTop, sampleWidth, sampleHeight).data;
+      let minAlpha = 255;
+      let minLuminance = 255;
+      let maxLuminance = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        const red = pixels[index] ?? 0;
+        const green = pixels[index + 1] ?? 0;
+        const blue = pixels[index + 2] ?? 0;
+        const alpha = pixels[index + 3] ?? 0;
+        const luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
+        minAlpha = Math.min(minAlpha, alpha);
+        minLuminance = Math.min(minLuminance, luminance);
+        maxLuminance = Math.max(maxLuminance, luminance);
+      }
+
+      return {
+        luminanceSpread: maxLuminance - minLuminance,
+        minAlpha,
+      };
+    });
+
+    expect(result.minAlpha).toBeGreaterThan(245);
+    expect(result.luminanceSpread).toBeGreaterThan(18);
+  });
+
   test('extends textured fill into the textured stroke fringe to avoid a hard interior edge', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');
@@ -156,7 +323,7 @@ test.describe('vector texture renderer', () => {
     expect(result.fillAndStrokeAverageAlpha).toBeGreaterThan(result.fillOnlyAverageAlpha + 20);
   });
 
-  test('changing textured stroke color does not change the shared alpha field', async ({ page }) => {
+  test('changing textured stroke color does not change the shared coverage field', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');
 

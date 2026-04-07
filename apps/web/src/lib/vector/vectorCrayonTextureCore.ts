@@ -1,4 +1,6 @@
 import Color from 'color';
+import type { VectorTextureToneMapping } from './vectorTextureMaterialCore';
+import { applyTextureToneToColorChannels } from './vectorTextureImageCore';
 
 function clampUnit(value: number) {
   return Math.max(0, Math.min(1, value));
@@ -62,11 +64,20 @@ function sampleVectorCrayonTexture(x: number, y: number, seed: number) {
   };
 }
 
+function resolveProceduralCrayonTextureValue(
+  textureAlpha: number,
+  toneMapping?: VectorTextureToneMapping | null,
+) {
+  const neutral = toneMapping?.neutral ?? 0.77;
+  return clampUnit(neutral + ((textureAlpha - 0.5) * 0.8));
+}
+
 export function createVectorCrayonDab(
   color: string,
   width: number,
   height: number,
   seed: number,
+  toneMapping?: VectorTextureToneMapping | null,
 ) {
   const canvas = createTextureCanvas(width, height);
   const ctx = canvas.getContext('2d');
@@ -74,7 +85,9 @@ export function createVectorCrayonDab(
     return canvas;
   }
 
-  const [baseRed, baseGreen, baseBlue] = Color(color).rgb().array();
+  const baseColor = Color(color);
+  const [baseRed, baseGreen, baseBlue] = baseColor.rgb().array();
+  const baseLightness = (baseColor.hsl().array()[2] ?? 0) / 100;
   const imageData = ctx.createImageData(width, height);
 
   for (let y = 0; y < height; y += 1) {
@@ -85,11 +98,18 @@ export function createVectorCrayonDab(
       }
 
       const sample = sampleVectorCrayonTexture(x, y, seed);
+      const textureValue = resolveProceduralCrayonTextureValue(sample.alpha, toneMapping);
+      const [tonedRed, tonedGreen, tonedBlue] = applyTextureToneToColorChannels(
+        [baseRed, baseGreen, baseBlue],
+        baseLightness,
+        textureValue,
+        toneMapping,
+      );
       const pixelIndex = (y * width + x) * 4;
-      imageData.data[pixelIndex] = clampByte(baseRed + sample.colorNoise);
-      imageData.data[pixelIndex + 1] = clampByte(baseGreen + sample.colorNoise);
-      imageData.data[pixelIndex + 2] = clampByte(baseBlue + sample.colorNoise);
-      imageData.data[pixelIndex + 3] = clampByte(body * sample.alpha * 255);
+      imageData.data[pixelIndex] = clampByte(tonedRed + sample.colorNoise);
+      imageData.data[pixelIndex + 1] = clampByte(tonedGreen + sample.colorNoise);
+      imageData.data[pixelIndex + 2] = clampByte(tonedBlue + sample.colorNoise);
+      imageData.data[pixelIndex + 3] = clampByte(body * 255);
     }
   }
 
@@ -158,6 +178,7 @@ export function createVectorCrayonTile(
   fillColor: string,
   tileSize: number,
   opacity: number,
+  toneMapping?: VectorTextureToneMapping | null,
 ) {
   const canvas = createTextureCanvas(tileSize, tileSize);
   const ctx = canvas.getContext('2d');
@@ -165,16 +186,25 @@ export function createVectorCrayonTile(
     return canvas;
   }
 
-  const [baseRed, baseGreen, baseBlue] = Color(fillColor).rgb().array();
+  const baseColor = Color(fillColor);
+  const [baseRed, baseGreen, baseBlue] = baseColor.rgb().array();
+  const baseLightness = (baseColor.hsl().array()[2] ?? 0) / 100;
   const imageData = ctx.createImageData(tileSize, tileSize);
   for (let y = 0; y < tileSize; y += 1) {
     for (let x = 0; x < tileSize; x += 1) {
       const sample = sampleVectorCrayonTexture(x, y, 1);
+      const textureValue = resolveProceduralCrayonTextureValue(sample.alpha, toneMapping);
+      const [tonedRed, tonedGreen, tonedBlue] = applyTextureToneToColorChannels(
+        [baseRed, baseGreen, baseBlue],
+        baseLightness,
+        textureValue,
+        toneMapping,
+      );
       const pixelIndex = (y * tileSize + x) * 4;
-      imageData.data[pixelIndex] = clampByte(baseRed + sample.colorNoise);
-      imageData.data[pixelIndex + 1] = clampByte(baseGreen + sample.colorNoise);
-      imageData.data[pixelIndex + 2] = clampByte(baseBlue + sample.colorNoise);
-      imageData.data[pixelIndex + 3] = clampByte(sample.alpha * opacity * 255);
+      imageData.data[pixelIndex] = clampByte(tonedRed + sample.colorNoise);
+      imageData.data[pixelIndex + 1] = clampByte(tonedGreen + sample.colorNoise);
+      imageData.data[pixelIndex + 2] = clampByte(tonedBlue + sample.colorNoise);
+      imageData.data[pixelIndex + 3] = clampByte(opacity * 255);
     }
   }
 
