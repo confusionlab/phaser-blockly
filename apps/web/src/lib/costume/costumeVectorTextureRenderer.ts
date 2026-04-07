@@ -23,7 +23,7 @@ import { getCanvas2dContext } from '@/utils/canvas2d';
 import { COSTUME_CANVAS_SIZE } from './costumeDocument';
 
 const MAX_VECTOR_STROKE_BRUSH_RENDER_CACHE_ENTRIES = 256;
-const MAX_VECTOR_STROKE_WIGGLE_SPACING_MULTIPLIER = 6;
+const MAX_VECTOR_STROKE_WIGGLE_NORMAL_MULTIPLIER = 0.9;
 
 const vectorStrokeBrushRenderCache = new Map<string, VectorStrokeBrushRenderStyle>();
 const vectorTextureCache = new Map<string, HTMLImageElement | null>();
@@ -786,27 +786,18 @@ function drawVectorStrokeBrushPath(
   const renderDabAt = (distanceAlongPath: number, dabIndex: number) => {
     const dabPositionSeed = dabIndex + 1;
     const wiggleRandom = hashNumberTriplet(dabPositionSeed, contourSeed, dabIndex * 0.61);
-    const wiggleDistance = renderStyle.wiggle > 0
-      ? (
-          ((wiggleRandom * 2) - 1)
-          * renderStyle.spacing
-          * renderStyle.wiggle
-          * MAX_VECTOR_STROKE_WIGGLE_SPACING_MULTIPLIER
-        )
-      : 0;
-    const sampleDistance = distanceAlongPath + wiggleDistance;
     const point = samplePointAlongPolyline(
       pathPoints,
       cumulativeLengths,
       totalLength,
-      sampleDistance,
+      distanceAlongPath,
       closed,
     );
     const angle = sampleAngleAlongPolyline(
       pathPoints,
       cumulativeLengths,
       totalLength,
-      sampleDistance,
+      distanceAlongPath,
       closed,
       tangentWindow,
     );
@@ -821,10 +812,25 @@ function drawVectorStrokeBrushPath(
     const jitterOpacity = clampUnit(1 + (((opacityRandom * 2) - 1) * renderStyle.opacityJitter));
     const scatterAngle = scatterAngleRandom * Math.PI * 2;
     const scatterRadius = renderStyle.scatter > 0 ? scatterRadiusRandom * renderStyle.scatter : 0;
-    const renderX = point.x + Math.cos(scatterAngle) * scatterRadius;
-    const renderY = point.y + Math.sin(scatterAngle) * scatterRadius;
     const drawWidth = Math.max(1, dab.width * jitterScale);
     const drawHeight = Math.max(1, dab.height * jitterScale);
+    const wiggleOffset = renderStyle.wiggle > 0
+      ? (
+          ((wiggleRandom * 2) - 1)
+          * drawHeight
+          * renderStyle.wiggle
+          * MAX_VECTOR_STROKE_WIGGLE_NORMAL_MULTIPLIER
+        )
+      : 0;
+    const normalAngle = angle + (Math.PI / 2);
+    const renderX =
+      point.x +
+      Math.cos(scatterAngle) * scatterRadius +
+      Math.cos(normalAngle) * wiggleOffset;
+    const renderY =
+      point.y +
+      Math.sin(scatterAngle) * scatterRadius +
+      Math.sin(normalAngle) * wiggleOffset;
 
     ctx.save();
     ctx.globalAlpha = dab.opacity * jitterOpacity;

@@ -664,7 +664,7 @@ test.describe('vector texture renderer', () => {
     expect(result.topLeftPixels).toBe(0);
   });
 
-  test('wiggle shifts textured dabs along the stroke tangent', async ({ page }) => {
+  test('wiggle offsets textured dabs along the stroke normal', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');
 
@@ -687,9 +687,8 @@ test.describe('vector texture renderer', () => {
       const createPathObject = (vectorStrokeWiggle: number) => ({
         type: 'path',
         path: [
-          ['M', 46, 128],
-          ['C', 102, 56, 158, 62, 214, 116],
-          ['L', 270, 148],
+          ['M', 44, 110],
+          ['L', 276, 110],
         ],
         pathOffset: { x: 0, y: 0 },
         fill: null,
@@ -717,6 +716,29 @@ test.describe('vector texture renderer', () => {
       const stablePixels = stableCtx.getImageData(0, 0, width, height).data;
       const wigglyPixels = wigglyCtx.getImageData(0, 0, width, height).data;
 
+      const getOpaqueBounds = (pixels: Uint8ClampedArray) => {
+        let minY = height;
+        let maxY = -1;
+        let count = 0;
+        for (let index = 3; index < pixels.length; index += 4) {
+          const alpha = pixels[index] ?? 0;
+          if (alpha <= 16) {
+            continue;
+          }
+          const pixelIndex = Math.floor(index / 4);
+          const y = Math.floor(pixelIndex / width);
+          minY = Math.min(minY, y);
+          maxY = Math.max(maxY, y);
+          count += 1;
+        }
+        return {
+          count,
+          minY,
+          maxY,
+          height: maxY >= minY ? (maxY - minY) + 1 : 0,
+        };
+      };
+
       let opaqueUnion = 0;
       let opaqueIntersection = 0;
       let alphaDifference = 0;
@@ -735,6 +757,8 @@ test.describe('vector texture renderer', () => {
       }
 
       return {
+        stableBounds: getOpaqueBounds(stablePixels),
+        wigglyBounds: getOpaqueBounds(wigglyPixels),
         opaqueUnion,
         overlapRatio: opaqueUnion > 0 ? opaqueIntersection / opaqueUnion : 1,
         averageAlphaDifference: alphaDifference / (width * height),
@@ -744,5 +768,7 @@ test.describe('vector texture renderer', () => {
     expect(result.opaqueUnion).toBeGreaterThan(1800);
     expect(result.overlapRatio).toBeLessThan(0.98);
     expect(result.averageAlphaDifference).toBeGreaterThan(0.3);
+    expect(result.wigglyBounds.count).toBeGreaterThan(1800);
+    expect(result.wigglyBounds.height).toBeGreaterThan(result.stableBounds.height + 6);
   });
 });
