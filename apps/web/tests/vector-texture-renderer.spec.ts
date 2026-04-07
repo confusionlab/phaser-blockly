@@ -26,6 +26,22 @@ test.describe('vector texture renderer', () => {
     expect(result.strokeMaskPath).toBe('/vector-materials/crayon/dab-mask.png');
   });
 
+  test('uses 30% denser crayon stroke stamp spacing', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { createVectorStrokeBrushRenderStyle } = await import('/src/lib/vector/vectorStrokeBrushCore.ts');
+
+      const renderStyle = createVectorStrokeBrushRenderStyle('crayon', '#2563eb', 18);
+      return {
+        spacing: renderStyle.spacing,
+      };
+    });
+
+    expect(result.spacing).toBeCloseTo(18 * (0.1 / 1.3), 5);
+  });
+
   test('uses the shared crayon texture as a masked stroke field when assets are available', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');

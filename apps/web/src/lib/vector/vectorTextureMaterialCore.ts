@@ -31,6 +31,8 @@ export interface VectorTextureMaterialDefinition {
 }
 
 const DEFAULT_CRAYON_TILE_SIZE = 160;
+const LEGACY_CRAYON_STROKE_SPACING_RATIO = 0.1;
+const CRAYON_STROKE_STAMP_DENSITY_MULTIPLIER = 1.3;
 
 export const VECTOR_TEXTURE_MATERIALS: Record<VectorTextureMaterialId, VectorTextureMaterialDefinition> = {
   crayon: {
@@ -56,7 +58,7 @@ export const VECTOR_TEXTURE_MATERIALS: Record<VectorTextureMaterialId, VectorTex
       rotationJitter: 0.12,
       scaleJitter: 0.1,
       scatterRatio: 0.05,
-      spacingRatio: 0.1,
+      spacingRatio: LEGACY_CRAYON_STROKE_SPACING_RATIO / CRAYON_STROKE_STAMP_DENSITY_MULTIPLIER,
       variantCount: 4,
     },
   },
