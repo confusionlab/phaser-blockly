@@ -384,7 +384,7 @@ function VariableDefaultEditor({
               return (
                 <div
                   key={itemId}
-                  className={`relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 ${
+                  className={`relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-0 ${
                     draggedIndex === index ? 'opacity-70' : ''
                   }`}
                   onDragOver={(event) => handleArrayDragOver(event, index)}
@@ -402,7 +402,7 @@ function VariableDefaultEditor({
                   ) : null}
                   <button
                     aria-label={`Reorder item ${index + 1}`}
-                    className="flex h-9 w-8 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                    className="flex h-9 w-6 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
                     draggable
                     onDragEnd={handleArrayDragEnd}
                     onDragStart={(event) => {
@@ -436,7 +436,7 @@ function VariableDefaultEditor({
                   </div>
                   <Button
                     aria-label={`Remove item ${index + 1}`}
-                    className="shrink-0"
+                    className="h-8 w-8 shrink-0 px-0"
                     size="icon-sm"
                     variant="ghost"
                     onClick={() => {
@@ -492,7 +492,7 @@ function VariableDefaultEditor({
             return (
               <div
                 key={itemId}
-                className={`relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 ${
+                className={`relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-0 ${
                   draggedIndex === index ? 'opacity-70' : ''
                 }`}
                 onDragOver={(event) => handleArrayDragOver(event, index)}
@@ -510,7 +510,7 @@ function VariableDefaultEditor({
                 ) : null}
                 <button
                   aria-label={`Reorder item ${index + 1}`}
-                  className="flex h-9 w-8 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                  className="flex h-9 w-6 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
                   draggable
                   onDragEnd={handleArrayDragEnd}
                   onDragStart={(event) => {
@@ -542,7 +542,7 @@ function VariableDefaultEditor({
                 />
                 <Button
                   aria-label={`Remove item ${index + 1}`}
-                  className="shrink-0"
+                  className="h-8 w-8 shrink-0 px-0"
                   size="icon-sm"
                   variant="ghost"
                   onClick={() => {
