@@ -769,7 +769,6 @@ export const CostumeToolbar = memo(({
     editorMode === 'bitmap' &&
     !shapeToolIsActive &&
     (activeTool === 'brush' || activeTool === 'fill');
-  const showPrimaryColorControl = showBitmapPrimaryColorControl || showTextControls;
   const showVectorStyleControls =
     editorMode === 'vector' &&
     !showTextControls &&
@@ -784,14 +783,14 @@ export const CostumeToolbar = memo(({
   const linkedVectorTextureValue = resolveLinkedVectorTextureValue(vectorStyle, vectorStyleMixedState, showVectorFillControl);
   const showTextToolbarControls = editorMode === 'vector' && showTextControls;
   const showVectorTopRowControls = showSelectionActions || showVectorHandleControl;
-  const useVectorSelectionTwoRowLayout =
+  const useSelectionTwoRowLayout =
     editorMode === 'vector' &&
     showVectorTopRowControls &&
-    showVectorStyleControls;
+    (showVectorStyleControls || showTextToolbarControls);
   const showContextualPropertyBar =
     showSelectionActions ||
     showVectorHandleControl ||
-    showPrimaryColorControl ||
+    showBitmapPrimaryColorControl ||
     showBitmapBrushTypeControl ||
     showBitmapFillTextureControl ||
     showBitmapShapeStyleControls ||
@@ -1007,12 +1006,151 @@ export const CostumeToolbar = memo(({
     </div>
   ) : null;
 
+  const textToolbarControlGroup = showTextToolbarControls ? (
+    <>
+      <FloatingToolbarColorControl
+        label="Color"
+        value={brushColor}
+        open={openMenu === 'color'}
+        onOpenChange={(open) => handleMenuOpenChange('color', open)}
+        onColorChange={onColorChange}
+        opacity={primaryColorOpacity}
+        onOpacityChange={handlePrimaryColorOpacityChange}
+        labelDisplay="none"
+      />
+
+      <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+        <DropdownMenu
+          open={openMenu === 'font-family'}
+          onOpenChange={(open) => handleMenuOpenChange('font-family', open)}
+        >
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 min-w-[120px] justify-between gap-2 px-2 text-xs"
+            >
+              <span className="truncate">{textStyle.fontFamily}</span>
+              <ChevronDown className="size-3 shrink-0" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[156px]">
+            <DropdownMenuRadioGroup
+              value={textStyle.fontFamily}
+              onValueChange={(fontFamily) => onTextStyleChange({ fontFamily })}
+            >
+              {fontFamilyOptions.map((family) => (
+                <DropdownMenuRadioItem key={family} value={family}>
+                  {family}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <ScrubNumberInput
+          label="Size"
+          value={textStyle.fontSize}
+          onChange={(fontSize, source) => onTextStyleChange(
+            { fontSize },
+            { source: 'field', phase: source === 'drag' ? 'preview' : 'commit' },
+          )}
+          onCommit={(fontSize) => onTextStyleChange({ fontSize }, { source: 'field', phase: 'commit' })}
+          min={8}
+          max={120}
+          precision={0}
+          density="compact"
+          className="min-w-[120px]"
+        />
+
+        <DropdownMenu
+          open={openMenu === 'text-format'}
+          onOpenChange={(open) => handleMenuOpenChange('text-format', open)}
+        >
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-2 px-2 text-xs"
+            >
+              <span className={cn('font-semibold', textStyle.fontWeight === 'bold' && 'text-foreground')}>
+                B
+              </span>
+              <span className={cn('italic', textStyle.fontStyle === 'italic' && 'text-foreground')}>
+                I
+              </span>
+              <span className={cn('underline underline-offset-2', textStyle.underline && 'text-foreground')}>
+                U
+              </span>
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[156px]">
+            <DropdownMenuCheckboxItem
+              checked={textStyle.fontWeight === 'bold'}
+              onCheckedChange={(checked) => onTextStyleChange({ fontWeight: checked ? 'bold' : 'normal' })}
+              onSelect={(event) => event.preventDefault()}
+            >
+              B
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={textStyle.fontStyle === 'italic'}
+              onCheckedChange={(checked) => onTextStyleChange({ fontStyle: checked ? 'italic' : 'normal' })}
+              onSelect={(event) => event.preventDefault()}
+            >
+              I
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={textStyle.underline}
+              onCheckedChange={(checked) => onTextStyleChange({ underline: checked === true })}
+              onSelect={(event) => event.preventDefault()}
+            >
+              U
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu
+          open={openMenu === 'text-align'}
+          onOpenChange={(open) => handleMenuOpenChange('text-align', open)}
+        >
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-2 px-2 text-xs"
+              aria-label={`Text alignment: ${activeTextAlign.label}`}
+            >
+              <ActiveTextAlignIcon className="size-3.5" />
+              <ChevronDown className="size-3 shrink-0" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
+            <DropdownMenuRadioGroup
+              value={textStyle.textAlign}
+              onValueChange={(textAlign) => onTextStyleChange({ textAlign: textAlign as TextToolStyle['textAlign'] })}
+            >
+              {textAlignOptions.map(({ value, label, Icon }) => (
+                <DropdownMenuRadioItem key={value} value={value}>
+                  <span className="inline-flex items-center gap-2">
+                    <Icon className="size-3.5" />
+                    <span>{label}</span>
+                  </span>
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </>
+  ) : null;
+
   return (
     <>
       <FloatingBottomToolbarDock>
           {showContextualPropertyBar && (
             <FloatingPropertyToolbar testId="costume-toolbar-properties">
-                <div className={cn('min-w-max', useVectorSelectionTwoRowLayout ? 'flex flex-col items-center gap-2' : 'flex items-center justify-center gap-2')}>
+                <div className={cn('min-w-max', useSelectionTwoRowLayout ? 'flex flex-col items-center gap-2' : 'flex items-center justify-center gap-2')}>
                   <div className="flex min-w-max items-center justify-center gap-2">
                   {showVectorHandleControl && (
                     <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
@@ -1175,7 +1313,7 @@ export const CostumeToolbar = memo(({
                     </div>
                   )}
 
-                  {showPrimaryColorControl && (
+                  {showBitmapPrimaryColorControl && (
                     <FloatingToolbarColorControl
                       label="Color"
                       value={brushColor}
@@ -1292,7 +1430,7 @@ export const CostumeToolbar = memo(({
                     </>
                   )}
 
-                  {!useVectorSelectionTwoRowLayout && vectorStyleControlGroup}
+                  {!useSelectionTwoRowLayout && vectorStyleControlGroup}
 
                   {showBitmapBrushSizeControl && (
                     <ToolbarPreviewSlider
@@ -1311,136 +1449,12 @@ export const CostumeToolbar = memo(({
                     />
                   )}
 
-                  {showTextToolbarControls && (
-                    <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                      <DropdownMenu
-                        open={openMenu === 'font-family'}
-                        onOpenChange={(open) => handleMenuOpenChange('font-family', open)}
-                      >
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 min-w-[120px] justify-between gap-2 px-2 text-xs"
-                          >
-                            <span className="truncate">{textStyle.fontFamily}</span>
-                            <ChevronDown className="size-3 shrink-0" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[156px]">
-                          <DropdownMenuRadioGroup
-                            value={textStyle.fontFamily}
-                            onValueChange={(fontFamily) => onTextStyleChange({ fontFamily })}
-                          >
-                            {fontFamilyOptions.map((family) => (
-                              <DropdownMenuRadioItem key={family} value={family}>
-                                {family}
-                              </DropdownMenuRadioItem>
-                            ))}
-                          </DropdownMenuRadioGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-
-                      <ScrubNumberInput
-                        label="Size"
-                        value={textStyle.fontSize}
-                        onChange={(fontSize, source) => onTextStyleChange(
-                          { fontSize },
-                          { source: 'field', phase: source === 'drag' ? 'preview' : 'commit' },
-                        )}
-                        onCommit={(fontSize) => onTextStyleChange({ fontSize }, { source: 'field', phase: 'commit' })}
-                        min={8}
-                        max={120}
-                        precision={0}
-                        density="compact"
-                        className="min-w-[120px]"
-                      />
-
-                      <DropdownMenu
-                        open={openMenu === 'text-format'}
-                        onOpenChange={(open) => handleMenuOpenChange('text-format', open)}
-                      >
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-2 px-2 text-xs"
-                          >
-                            <span className={cn('font-semibold', textStyle.fontWeight === 'bold' && 'text-foreground')}>
-                              B
-                            </span>
-                            <span className={cn('italic', textStyle.fontStyle === 'italic' && 'text-foreground')}>
-                              I
-                            </span>
-                            <span className={cn('underline underline-offset-2', textStyle.underline && 'text-foreground')}>
-                              U
-                            </span>
-                            <ChevronDown className="size-3" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[156px]">
-                          <DropdownMenuCheckboxItem
-                            checked={textStyle.fontWeight === 'bold'}
-                            onCheckedChange={(checked) => onTextStyleChange({ fontWeight: checked ? 'bold' : 'normal' })}
-                            onSelect={(event) => event.preventDefault()}
-                          >
-                            B
-                          </DropdownMenuCheckboxItem>
-                          <DropdownMenuCheckboxItem
-                            checked={textStyle.fontStyle === 'italic'}
-                            onCheckedChange={(checked) => onTextStyleChange({ fontStyle: checked ? 'italic' : 'normal' })}
-                            onSelect={(event) => event.preventDefault()}
-                          >
-                            I
-                          </DropdownMenuCheckboxItem>
-                          <DropdownMenuCheckboxItem
-                            checked={textStyle.underline}
-                            onCheckedChange={(checked) => onTextStyleChange({ underline: checked === true })}
-                            onSelect={(event) => event.preventDefault()}
-                          >
-                            U
-                          </DropdownMenuCheckboxItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-
-                      <DropdownMenu
-                        open={openMenu === 'text-align'}
-                        onOpenChange={(open) => handleMenuOpenChange('text-align', open)}
-                      >
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-2 px-2 text-xs"
-                            aria-label={`Text alignment: ${activeTextAlign.label}`}
-                          >
-                            <ActiveTextAlignIcon className="size-3.5" />
-                            <ChevronDown className="size-3 shrink-0" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
-                          <DropdownMenuRadioGroup
-                            value={textStyle.textAlign}
-                            onValueChange={(textAlign) => onTextStyleChange({ textAlign: textAlign as TextToolStyle['textAlign'] })}
-                          >
-                            {textAlignOptions.map(({ value, label, Icon }) => (
-                              <DropdownMenuRadioItem key={value} value={value}>
-                                <span className="inline-flex items-center gap-2">
-                                  <Icon className="size-3.5" />
-                                  <span>{label}</span>
-                                </span>
-                              </DropdownMenuRadioItem>
-                            ))}
-                          </DropdownMenuRadioGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  )}
+                  {!useSelectionTwoRowLayout && textToolbarControlGroup}
                   </div>
 
-                  {useVectorSelectionTwoRowLayout && (
+                  {useSelectionTwoRowLayout && (
                     <div className="flex min-w-max items-center justify-center gap-2">
-                      {vectorStyleControlGroup}
+                      {showVectorStyleControls ? vectorStyleControlGroup : textToolbarControlGroup}
                     </div>
                   )}
                 </div>
