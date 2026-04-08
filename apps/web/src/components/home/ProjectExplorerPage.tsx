@@ -45,7 +45,6 @@ import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -1111,15 +1110,14 @@ export function ProjectExplorerPage({
                     </IconButton>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-44">
-                    <DropdownMenuCheckboxItem
-                      checked={isDarkMode}
-                      onCheckedChange={() => {
+                    <DropdownMenuItem
+                      onClick={() => {
                         void handleToggleDarkMode();
                       }}
                     >
                       <Palette className="size-4" />
-                      Dark mode
-                    </DropdownMenuCheckboxItem>
+                      {isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => setTrashOpen(true)}
@@ -1270,10 +1268,9 @@ export function ProjectExplorerPage({
                       </div>
 
                       {item.kind === 'folder' ? (
-                        <div className="flex aspect-[16/10] items-center justify-center bg-muted/60 text-muted-foreground dark:bg-muted/35">
-                          <div className="flex size-[4.5rem] items-center justify-center rounded-[28px] border border-border/70 bg-surface-elevated shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]">
-                            <FolderOpen className="size-8" />
-                          </div>
+                        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 py-8 text-center">
+                          <FolderOpen className="size-12 text-muted-foreground" />
+                          <div className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">{item.label}</div>
                         </div>
                       ) : (
                         <div className="relative aspect-[16/10] overflow-hidden border-b border-border/60 bg-muted">
@@ -1296,20 +1293,22 @@ export function ProjectExplorerPage({
                         </div>
                       )}
 
-                      <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-                        <div className="min-w-0">
-                          <div className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">{item.label}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            Updated {formatExplorerTimestamp(new Date(item.updatedAt))}
+                      {item.kind === 'project' ? (
+                        <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+                          <div className="min-w-0">
+                            <div className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">{item.label}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              Updated {formatExplorerTimestamp(new Date(item.updatedAt))}
+                            </div>
                           </div>
-                        </div>
 
-                        {item.kind === 'project' && isOpeningProjectId === item.id ? (
-                          <div className="mt-auto flex items-center justify-end text-xs text-muted-foreground">
-                            <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                          </div>
-                        ) : null}
-                      </div>
+                          {isOpeningProjectId === item.id ? (
+                            <div className="mt-auto flex items-center justify-end text-xs text-muted-foreground">
+                              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -1341,9 +1340,7 @@ export function ProjectExplorerPage({
                       {selectionMode ? <CollectionSelectionCheckbox checked={isSelected} /> : null}
 
                       {item.kind === 'folder' ? (
-                        <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted text-muted-foreground">
-                          <FolderOpen className="size-6" />
-                        </div>
+                        <FolderOpen className="size-6 shrink-0 text-muted-foreground" />
                       ) : (
                         <div className="relative flex h-16 w-28 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted">
                           {item.thumbnailUrl ? (
@@ -1363,9 +1360,11 @@ export function ProjectExplorerPage({
 
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-foreground">{item.label}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          Updated {formatExplorerTimestamp(new Date(item.updatedAt))}
-                        </div>
+                        {item.kind === 'project' ? (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Updated {formatExplorerTimestamp(new Date(item.updatedAt))}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
