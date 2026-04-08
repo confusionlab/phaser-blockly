@@ -178,17 +178,6 @@ function AlignMenuIcon() {
   );
 }
 
-function MoveOrderMenuIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="size-4" aria-hidden="true">
-      <rect x="5" y="7" width="10" height="10" rx="2" fill="currentColor" opacity="0.35" />
-      <rect x="9" y="4" width="10" height="10" rx="2" fill="currentColor" />
-      <path d="M12 20V11.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path d="M9.5 14 12 11.5 14.5 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 interface FloatingToolButtonProps {
   tool: DrawingTool;
   icon: React.ReactNode;
@@ -1204,12 +1193,12 @@ export const CostumeToolbar = memo(({
                         >
                           <DropdownMenuTrigger asChild>
                             <IconButton
-                              className="h-8 w-8"
-                              label="Move Order"
-                              size="md"
-                              variant="outline"
-                            >
-                              <MoveOrderMenuIcon />
+                            className="h-8 w-8"
+                            label="Move Order"
+                            size="md"
+                            variant="outline"
+                          >
+                              <Layers3 className="size-3.5" />
                             </IconButton>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[160px]">

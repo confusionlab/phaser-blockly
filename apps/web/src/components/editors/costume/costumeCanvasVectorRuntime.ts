@@ -1307,13 +1307,26 @@ export class VectorPencilBrush extends PencilBrush {
 
   override createPath(pathData: any) {
     const path = super.createPath(pathData);
+    const transparentFillTextureId = this.strokeBrushId as VectorFillTextureId;
+    const transparentFillColor = this.strokeColor;
+    const transparentFillOpacity = 0;
     path.set({
-      fill: null,
+      // Freehand vector strokes should keep mirrored fill metadata so later
+      // selection/editing reads back a transparent fill instead of falling
+      // through to the default solid-fill texture.
+      fill: getFabricFillValueForVectorTexture(
+        transparentFillTextureId,
+        transparentFillColor,
+        transparentFillOpacity,
+      ),
       opacity: 1,
       stroke: getFabricStrokeValueForVectorBrush(this.strokeBrushId, this.strokeColor, this.strokeOpacityValue),
       strokeWidth: this.strokeWidthValue,
       strokeUniform: true,
       noScaleCache: false,
+      vectorFillTextureId: transparentFillTextureId,
+      vectorFillColor: transparentFillColor,
+      vectorFillOpacity: transparentFillOpacity,
       vectorStrokeBrushId: this.strokeBrushId,
       vectorStrokeColor: this.strokeColor,
       vectorStrokeOpacity: this.strokeOpacityValue,
