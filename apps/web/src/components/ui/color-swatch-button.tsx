@@ -15,11 +15,19 @@ interface SwatchOutlineState {
   visible: boolean;
 }
 
+interface SwatchRenderState {
+  color: RgbaColor | null;
+  isHidden: boolean;
+}
+
 const LIGHT_SURFACE_OUTLINE = 'rgba(15, 23, 42, 0.24)';
 const DARK_SURFACE_OUTLINE = 'rgba(255, 255, 255, 0.72)';
 const MIN_SWATCH_SURFACE_CONTRAST = 1.35;
 const FALLBACK_LIGHT_SURFACE: RgbaColor = { red: 255, green: 255, blue: 255, alpha: 1 };
 const FALLBACK_DARK_SURFACE: RgbaColor = { red: 17, green: 17, blue: 17, alpha: 1 };
+const SWATCH_HIDDEN_ALPHA_THRESHOLD = 0.001;
+const SWATCH_EMPTY_OUTLINE_LIGHT = 'rgba(15, 23, 42, 0.18)';
+const SWATCH_EMPTY_OUTLINE_DARK = 'rgba(255, 255, 255, 0.22)';
 
 function parseResolvedColor(value: string | null | undefined): RgbaColor | null {
   if (!value) {
@@ -91,6 +99,41 @@ function getContrastRatio(a: RgbaColor, b: RgbaColor): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function colorToCssString(color: RgbaColor): string {
+  if (color.alpha >= 0.999) {
+    return `rgb(${color.red} ${color.green} ${color.blue})`;
+  }
+
+  return `rgb(${color.red} ${color.green} ${color.blue} / ${color.alpha})`;
+}
+
+function resolveSwatchRenderState(value: string, opacity?: number): SwatchRenderState {
+  const baseColor = parseResolvedColor(value);
+  if (!baseColor) {
+    return {
+      color: null,
+      isHidden: false,
+    };
+  }
+
+  const resolvedOpacity = typeof opacity === 'number' && Number.isFinite(opacity)
+    ? clampUnit(opacity)
+    : 1;
+  const effectiveAlpha = clampUnit(baseColor.alpha * resolvedOpacity);
+
+  return {
+    color: {
+      ...baseColor,
+      alpha: effectiveAlpha,
+    },
+    isHidden: effectiveAlpha <= SWATCH_HIDDEN_ALPHA_THRESHOLD,
+  };
+}
+
 function resolveFallbackSurfaceColor(document: Document): RgbaColor {
   const root = document.documentElement;
   const colorScheme = document.defaultView?.getComputedStyle(root).colorScheme ?? '';
@@ -124,13 +167,12 @@ function resolveSurfaceColor(surface: HTMLElement | null): RgbaColor {
   );
 }
 
-function getSwatchOutlineState(value: string, surface: RgbaColor): SwatchOutlineState {
-  const swatch = parseResolvedColor(value);
-  if (!swatch) {
+function getSwatchOutlineState(renderState: SwatchRenderState, surface: RgbaColor): SwatchOutlineState {
+  if (!renderState.color || renderState.isHidden) {
     return { visible: false, color: LIGHT_SURFACE_OUTLINE };
   }
 
-  const displayedSwatch = toOpaqueColor(swatch, surface);
+  const displayedSwatch = toOpaqueColor(renderState.color, surface);
   const needsOutline = getContrastRatio(displayedSwatch, surface) < MIN_SWATCH_SURFACE_CONTRAST;
   const outlineColor = getRelativeLuminance(surface) < 0.42 ? DARK_SURFACE_OUTLINE : LIGHT_SURFACE_OUTLINE;
 
@@ -156,6 +198,8 @@ function assignButtonRef(
 
 export interface ColorSwatchButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   mixed?: boolean;
+  opacity?: number;
+  variant?: 'fill' | 'stroke';
   swatchClassName?: string;
   value: string;
 }
@@ -165,7 +209,9 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
     {
       className,
       mixed = false,
+      opacity,
       style,
+      variant = 'fill',
       swatchClassName,
       type = 'button',
       value,
@@ -179,6 +225,15 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
       visible: false,
     });
     const outlineStateRef = React.useRef(outlineState);
+    const renderState = React.useMemo(
+      () => resolveSwatchRenderState(value, opacity),
+      [opacity, value],
+    );
+    const displayColor = renderState.color ? colorToCssString(renderState.color) : value;
+    const emptyOutlineColor = React.useMemo(
+      () => (outlineState.color === DARK_SURFACE_OUTLINE ? SWATCH_EMPTY_OUTLINE_DARK : SWATCH_EMPTY_OUTLINE_LIGHT),
+      [outlineState.color],
+    );
 
     const updateOutline = React.useCallback(() => {
       const button = buttonRef.current;
@@ -186,7 +241,7 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
         return;
       }
 
-      const nextState = getSwatchOutlineState(value, resolveSurfaceColor(button));
+      const nextState = getSwatchOutlineState(renderState, resolveSurfaceColor(button));
       const currentState = outlineStateRef.current;
       if (currentState.visible === nextState.visible && currentState.color === nextState.color) {
         return;
@@ -194,7 +249,7 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
 
       outlineStateRef.current = nextState;
       setOutlineState(nextState);
-    }, [value]);
+    }, [renderState]);
 
     const handleRef = React.useCallback((node: HTMLButtonElement | null) => {
       buttonRef.current = node;
@@ -275,12 +330,35 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
         <span
           className={cn('relative block size-full rounded-md', swatchClassName)}
           style={{
-            backgroundColor: value,
-            boxShadow: outlineState.visible ? `inset 0 0 0 1px ${outlineState.color}` : undefined,
+            backgroundColor: renderState.isHidden
+              ? 'transparent'
+              : (variant === 'stroke' ? 'transparent' : displayColor),
+            boxShadow: renderState.isHidden
+              ? `inset 0 0 0 1px ${emptyOutlineColor}`
+              : variant === 'stroke'
+              ? [
+                  `inset 0 0 0 2px ${displayColor}`,
+                  outlineState.visible ? `0 0 0 1px ${outlineState.color}` : null,
+                ].filter(Boolean).join(', ')
+              : (outlineState.visible ? `inset 0 0 0 1px ${outlineState.color}` : undefined),
           }}
           data-outline-visible={outlineState.visible ? 'true' : 'false'}
+          data-zero-opacity={renderState.isHidden ? 'true' : 'false'}
+          data-variant={variant}
           aria-hidden="true"
         >
+          {renderState.isHidden ? (
+            <>
+              <span
+                className="absolute left-1/2 top-1/2 h-[2px] w-[78%] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-full bg-red-500"
+                aria-hidden="true"
+              />
+              <span
+                className="absolute left-1/2 top-1/2 h-[2px] w-[78%] -translate-x-1/2 -translate-y-1/2 -rotate-45 rounded-full bg-red-500"
+                aria-hidden="true"
+              />
+            </>
+          ) : null}
           {mixed ? (
             <span
               className="absolute inset-0 flex items-center justify-center text-[13px] font-semibold leading-none text-foreground"

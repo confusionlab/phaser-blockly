@@ -47,4 +47,21 @@ test.describe('Color picker opacity placement', () => {
     await propertyBar.getByRole('button', { name: /^stroke$/i }).click();
     await expect(page.getByTestId('compact-color-picker-opacity')).toBeVisible();
   });
+
+  test('renders a red X swatch state when opacity reaches zero', async ({ page }) => {
+    await openCostumeEditor(page);
+
+    await page.getByTestId('costume-toolbar-tools').getByRole('button', { name: /^brush$/i }).click();
+    const colorButton = page.getByTestId('costume-toolbar-properties').getByRole('button', { name: /^color$/i });
+    await colorButton.click();
+
+    const slider = page.getByTestId('compact-color-picker-opacity').getByRole('slider');
+    await expect(slider).toBeVisible();
+    await slider.focus();
+    await slider.press('Home');
+    await expect(slider).toHaveAttribute('aria-valuenow', '0');
+
+    await colorButton.click();
+    await expect(colorButton.locator('span').first()).toHaveAttribute('data-zero-opacity', 'true');
+  });
 });

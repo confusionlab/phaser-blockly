@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
+import { ScrubNumberInput } from '@/components/ui/scrub-number-input';
 import {
   FloatingBottomToolbarDock,
   FloatingPropertyToolbar,
@@ -30,6 +31,7 @@ import {
   AlignCenter,
   AlignRight,
   FlipHorizontal2,
+  Link,
   Layers3,
   FlipVertical2,
   RotateCw,
@@ -56,8 +58,6 @@ import {
   type BitmapFillTextureId,
 } from '@/lib/background/bitmapFillCore';
 import {
-  DEFAULT_VECTOR_STROKE_BRUSH_ID,
-  VECTOR_STROKE_BRUSH_OPTIONS,
   type VectorStrokeBrushId,
 } from '@/lib/vector/vectorStrokeBrushCore';
 import {
@@ -206,7 +206,6 @@ type ToolbarMenuId =
   | 'brush-kind'
   | 'bitmap-fill-texture'
   | 'vector-fill-texture'
-  | 'vector-stroke-brush'
   | ToolbarColorMenuId
   | 'font-family'
   | 'text-format'
@@ -512,49 +511,6 @@ const StrokeWidthPreview = memo(({
 
 StrokeWidthPreview.displayName = 'StrokeWidthPreview';
 
-interface TextSizePreviewProps {
-  textStyle: TextToolStyle;
-  color: string;
-  previewScale: number;
-}
-
-const TextSizePreview = memo(({
-  textStyle,
-  color,
-  previewScale,
-}: TextSizePreviewProps) => {
-  const displayFontSize = Math.max(1, textStyle.fontSize * previewScale);
-  const previewHeight = Math.max(96, Math.min(220, displayFontSize + 44));
-  const previewWidth = Math.max(176, Math.min(320, displayFontSize * 2.8));
-
-  return (
-    <div
-      className="flex items-center justify-center"
-      style={{
-        minHeight: `${previewHeight}px`,
-        minWidth: `${previewWidth}px`,
-      }}
-    >
-      <span
-        className="whitespace-nowrap text-center"
-        style={{
-          color,
-          fontFamily: textStyle.fontFamily,
-          fontSize: `${displayFontSize}px`,
-          fontWeight: textStyle.fontWeight,
-          fontStyle: textStyle.fontStyle,
-          textDecoration: textStyle.underline ? 'underline' : 'none',
-          lineHeight: 1.1,
-        }}
-      >
-        Text
-      </span>
-    </div>
-  );
-});
-
-TextSizePreview.displayName = 'TextSizePreview';
-
 interface CostumeToolbarProps {
   editorMode: EditorMode;
   activeTool: DrawingTool;
@@ -679,16 +635,43 @@ function getVectorHandleModeLabel(mode: VectorHandleMode) {
   }
 }
 
-function getVectorStrokeBrushLabel(brushId: VectorStrokeBrushId) {
-  return VECTOR_STROKE_BRUSH_OPTIONS.find((option) => option.value === brushId)?.label ?? 'Solid';
-}
-
 function getBitmapFillTextureLabel(textureId: BitmapFillTextureId) {
   return BITMAP_FILL_TEXTURE_OPTIONS.find((option) => option.value === textureId)?.label ?? 'Solid';
 }
 
 function getVectorFillTextureLabel(textureId: VectorFillTextureId) {
   return VECTOR_FILL_TEXTURE_OPTIONS.find((option) => option.value === textureId)?.label ?? 'Solid';
+}
+
+type VectorLinkedTextureValue = VectorFillTextureId | 'multiple';
+
+const VECTOR_STROKE_WIDTH_MIN = 0;
+const VECTOR_STROKE_WIDTH_MAX = 50;
+const VECTOR_STROKE_WIGGLE_PERCENT_MIN = 0;
+const VECTOR_STROKE_WIGGLE_PERCENT_MAX = 100;
+
+function resolveLinkedVectorTextureValue(
+  vectorStyle: VectorToolStyle,
+  mixedState: VectorToolStyleMixedState,
+  showFillControl: boolean,
+): VectorLinkedTextureValue {
+  if (mixedState.strokeBrushId) {
+    return 'multiple';
+  }
+
+  if (!showFillControl) {
+    return vectorStyle.strokeBrushId;
+  }
+
+  if (mixedState.fillTextureId || vectorStyle.fillTextureId !== vectorStyle.strokeBrushId) {
+    return 'multiple';
+  }
+
+  return vectorStyle.fillTextureId;
+}
+
+function getLinkedVectorTextureLabel(textureValue: VectorLinkedTextureValue) {
+  return textureValue === 'multiple' ? 'Multiple' : getVectorFillTextureLabel(textureValue);
 }
 
 function isShapeTool(tool: DrawingTool) {
@@ -739,6 +722,7 @@ export const CostumeToolbar = memo(({
   toolAccessory,
 }: CostumeToolbarProps) => {
   const [openMenu, setOpenMenu] = useState<ToolbarMenuId | null>(null);
+  const [areVectorColorsLinked, setAreVectorColorsLinked] = useState(true);
   const sliderPreviewEnabled = activeTool !== 'select';
   const showSelectTool = toolVisibility?.showSelectTool ?? true;
   const showPenTool = toolVisibility?.showPenTool ?? true;
@@ -795,11 +779,9 @@ export const CostumeToolbar = memo(({
     (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line' && activeTool !== 'brush');
   const hasMixedVectorStrokeColor = vectorStyleMixedState.strokeColor === true;
   const hasMixedVectorFillColor = vectorStyleMixedState.fillColor === true;
-  const hasMixedVectorStrokeBrush = vectorStyleMixedState.strokeBrushId === true;
-  const hasMixedVectorFillTexture = vectorStyleMixedState.fillTextureId === true;
-  const showVectorStrokeWiggleControl =
-    showVectorStyleControls &&
-    (hasMixedVectorStrokeBrush || vectorStyle.strokeBrushId !== DEFAULT_VECTOR_STROKE_BRUSH_ID);
+  const hasMixedVectorStrokeWidth = vectorStyleMixedState.strokeWidth === true;
+  const hasMixedVectorStrokeWiggle = vectorStyleMixedState.strokeWiggle === true;
+  const linkedVectorTextureValue = resolveLinkedVectorTextureValue(vectorStyle, vectorStyleMixedState, showVectorFillControl);
   const showTextToolbarControls = editorMode === 'vector' && showTextControls;
   const showVectorTopRowControls = showSelectionActions || showVectorHandleControl;
   const useVectorSelectionTwoRowLayout =
@@ -826,6 +808,69 @@ export const CostumeToolbar = memo(({
       : undefined);
   const activeTextAlign = textAlignOptions.find((option) => option.value === textStyle.textAlign) ?? textAlignOptions[0];
   const ActiveTextAlignIcon = activeTextAlign.Icon;
+  const strokeWigglePercent = Math.round(vectorStyle.strokeWiggle * 100);
+
+  const handleFillColorChange = (fillColor: string, meta?: ToolbarSliderChangeMeta) => {
+    if (areVectorColorsLinked) {
+      onVectorStyleChange({ fillColor, strokeColor: fillColor }, meta);
+      return;
+    }
+    onVectorStyleChange({ fillColor }, meta);
+  };
+
+  const handleStrokeColorChange = (strokeColor: string, meta?: ToolbarSliderChangeMeta) => {
+    if (areVectorColorsLinked && showVectorFillControl) {
+      onVectorStyleChange({ fillColor: strokeColor, strokeColor }, meta);
+      return;
+    }
+    onVectorStyleChange({ strokeColor }, meta);
+  };
+
+  const handleVectorColorLinkToggle = () => {
+    if (!showVectorFillControl) {
+      return;
+    }
+
+    if (!areVectorColorsLinked) {
+      onVectorStyleChange({ strokeColor: vectorStyle.fillColor });
+    }
+    setAreVectorColorsLinked((current) => !current);
+  };
+
+  const handleLinkedVectorTextureChange = useCallback((textureId: VectorFillTextureId) => {
+    onVectorStyleChange({
+      fillTextureId: textureId,
+      strokeBrushId: textureId as VectorStrokeBrushId,
+    });
+  }, [onVectorStyleChange]);
+
+  const handleVectorStrokeWidthChange = useCallback((strokeWidth: number, source?: 'input' | 'drag') => {
+    onVectorStyleChange(
+      { strokeWidth },
+      {
+        source: 'field',
+        phase: source === 'drag' ? 'preview' : 'commit',
+      },
+    );
+  }, [onVectorStyleChange]);
+
+  const handleVectorStrokeWidthCommit = useCallback((strokeWidth: number) => {
+    onVectorStyleChange({ strokeWidth }, { source: 'field', phase: 'commit' });
+  }, [onVectorStyleChange]);
+
+  const handleVectorStrokeWiggleChange = useCallback((wigglePercent: number, source?: 'input' | 'drag') => {
+    onVectorStyleChange(
+      { strokeWiggle: wigglePercent / 100 },
+      {
+        source: 'field',
+        phase: source === 'drag' ? 'preview' : 'commit',
+      },
+    );
+  }, [onVectorStyleChange]);
+
+  const handleVectorStrokeWiggleCommit = useCallback((wigglePercent: number) => {
+    onVectorStyleChange({ strokeWiggle: wigglePercent / 100 }, { source: 'field', phase: 'commit' });
+  }, [onVectorStyleChange]);
   useEffect(() => {
     if (!showContextualPropertyBar) {
       setOpenMenu(null);
@@ -837,6 +882,112 @@ export const CostumeToolbar = memo(({
       setOpenMenu(null);
     }
   }, [hasSelectedVectorPoints, openMenu]);
+
+  const vectorStyleControlGroup = showVectorStyleControls ? (
+    <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+      {showVectorFillControl ? (
+        <>
+          <FloatingToolbarColorControl
+            label="Fill"
+            value={vectorStyle.fillColor}
+            mixed={hasMixedVectorFillColor}
+            open={openMenu === 'fill-color'}
+            onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
+            onColorChange={handleFillColorChange}
+            opacity={vectorStyle.fillOpacity}
+            onOpacityChange={(fillOpacity, meta) => onVectorStyleChange({ fillOpacity }, meta)}
+            labelDisplay="none"
+          />
+          <IconButton
+            label={areVectorColorsLinked ? 'Unlink fill and stroke colors' : 'Link fill and stroke colors'}
+            onClick={handleVectorColorLinkToggle}
+            className={cn(
+              'h-8 w-8 rounded-md border border-border/70 bg-transparent',
+              areVectorColorsLinked
+                ? 'bg-surface-interactive text-foreground hover:bg-surface-interactive-hover'
+                : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+            )}
+            size="sm"
+            variant="ghost"
+          >
+            {areVectorColorsLinked ? <Link className="size-4" /> : <Unlink className="size-4" />}
+          </IconButton>
+        </>
+      ) : null}
+
+      <FloatingToolbarColorControl
+        label="Stroke"
+        value={vectorStyle.strokeColor}
+        mixed={hasMixedVectorStrokeColor}
+        swatchVariant="stroke"
+        open={openMenu === 'stroke-color'}
+        onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
+        onColorChange={handleStrokeColorChange}
+        opacity={vectorStyle.strokeOpacity}
+        onOpacityChange={(strokeOpacity, meta) => onVectorStyleChange({ strokeOpacity }, meta)}
+        labelDisplay="none"
+      />
+
+      <ScrubNumberInput
+        label="W"
+        value={vectorStyle.strokeWidth}
+        mixed={hasMixedVectorStrokeWidth}
+        onChange={handleVectorStrokeWidthChange}
+        onCommit={handleVectorStrokeWidthCommit}
+        min={VECTOR_STROKE_WIDTH_MIN}
+        max={VECTOR_STROKE_WIDTH_MAX}
+        precision={2}
+        density="compact"
+        className="min-w-[104px]"
+      />
+
+      <div className="mx-1 h-6 w-px bg-border/70" aria-hidden="true" />
+
+      <div className="flex items-center gap-2">
+        <span className="whitespace-nowrap text-xs text-muted-foreground">Texture</span>
+        <DropdownMenu
+          open={openMenu === 'vector-fill-texture'}
+          onOpenChange={(open) => handleMenuOpenChange('vector-fill-texture', open)}
+        >
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
+            >
+              <span>{getLinkedVectorTextureLabel(linkedVectorTextureValue)}</span>
+              <ChevronDown className="size-3 shrink-0" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
+            <DropdownMenuRadioGroup
+              value={linkedVectorTextureValue === 'multiple' ? '' : linkedVectorTextureValue}
+              onValueChange={(textureId) => handleLinkedVectorTextureChange(textureId as VectorFillTextureId)}
+            >
+              {VECTOR_FILL_TEXTURE_OPTIONS.map((option) => (
+                <DropdownMenuRadioItem key={option.value} value={option.value}>
+                  {option.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <ScrubNumberInput
+        label="Wiggle"
+        value={strokeWigglePercent}
+        mixed={hasMixedVectorStrokeWiggle}
+        onChange={handleVectorStrokeWiggleChange}
+        onCommit={handleVectorStrokeWiggleCommit}
+        min={VECTOR_STROKE_WIGGLE_PERCENT_MIN}
+        max={VECTOR_STROKE_WIGGLE_PERCENT_MAX}
+        precision={0}
+        density="compact"
+        className="min-w-[132px]"
+      />
+    </div>
+  ) : null;
 
   return (
     <>
@@ -1124,138 +1275,7 @@ export const CostumeToolbar = memo(({
                     </>
                   )}
 
-                  {!useVectorSelectionTwoRowLayout && showVectorStyleControls && (
-                    <>
-                      <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                        <span className="whitespace-nowrap text-xs text-muted-foreground">Stroke</span>
-                        <FloatingToolbarColorControl
-                          label="Stroke"
-                          value={vectorStyle.strokeColor}
-                          mixed={hasMixedVectorStrokeColor}
-                          open={openMenu === 'stroke-color'}
-                          onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
-                          onColorChange={(strokeColor, meta) => onVectorStyleChange({ strokeColor }, meta)}
-                          opacity={vectorStyle.strokeOpacity}
-                          onOpacityChange={(strokeOpacity, meta) => onVectorStyleChange({ strokeOpacity }, meta)}
-                          labelDisplay="none"
-                        />
-                        <DropdownMenu
-                          open={openMenu === 'vector-stroke-brush'}
-                          onOpenChange={(open) => handleMenuOpenChange('vector-stroke-brush', open)}
-                        >
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
-                            >
-                              <span>{hasMixedVectorStrokeBrush ? 'Multiple' : getVectorStrokeBrushLabel(vectorStyle.strokeBrushId)}</span>
-                              <ChevronDown className="size-3 shrink-0" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
-                            <DropdownMenuRadioGroup
-                              value={vectorStyle.strokeBrushId}
-                              onValueChange={(strokeBrushId) => onVectorStyleChange({ strokeBrushId: strokeBrushId as VectorStrokeBrushId })}
-                            >
-                              {VECTOR_STROKE_BRUSH_OPTIONS.map((option) => (
-                                <DropdownMenuRadioItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </DropdownMenuRadioItem>
-                              ))}
-                            </DropdownMenuRadioGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        <ToolbarPreviewSlider
-                          value={vectorStyle.strokeWidth}
-                          onValueChange={(strokeWidth, meta) => onVectorStyleChange({ strokeWidth }, meta)}
-                          min={0}
-                          max={50}
-                          previewEnabled={sliderPreviewEnabled}
-                          labelDisplay="none"
-                          className="min-w-[124px] border-r-0 pr-0"
-                          sliderClassName="w-16"
-                          preview={(
-                            <StrokeWidthPreview
-                              brushId={vectorStyle.strokeBrushId}
-                              thickness={vectorStyle.strokeWidth}
-                              color={vectorStyle.strokeColor}
-                              opacity={vectorStyle.strokeOpacity}
-                              previewScale={previewScale}
-                              wiggle={vectorStyle.strokeWiggle}
-                            />
-                          )}
-                        />
-                        {showVectorStrokeWiggleControl ? (
-                          <ToolbarPreviewSlider
-                            label="Wiggle"
-                            value={Math.round(vectorStyle.strokeWiggle * 100)}
-                            onValueChange={(wigglePercent, meta) => onVectorStyleChange({ strokeWiggle: wigglePercent / 100 }, meta)}
-                            min={0}
-                            max={100}
-                            previewEnabled={sliderPreviewEnabled}
-                            className="min-w-[148px] border-r-0 pr-0"
-                            sliderClassName="w-16"
-                            valueClassName="w-10"
-                            preview={(
-                              <StrokeWidthPreview
-                                brushId={vectorStyle.strokeBrushId}
-                                thickness={vectorStyle.strokeWidth}
-                                color={vectorStyle.strokeColor}
-                                opacity={vectorStyle.strokeOpacity}
-                                previewScale={previewScale}
-                                wiggle={vectorStyle.strokeWiggle}
-                              />
-                            )}
-                          />
-                        ) : null}
-                      </div>
-
-                      {showVectorFillControl && (
-                        <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                          <span className="whitespace-nowrap text-xs text-muted-foreground">Fill</span>
-                          <FloatingToolbarColorControl
-                            label="Fill"
-                            value={vectorStyle.fillColor}
-                            mixed={hasMixedVectorFillColor}
-                            open={openMenu === 'fill-color'}
-                            onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
-                            onColorChange={(fillColor, meta) => onVectorStyleChange({ fillColor }, meta)}
-                            opacity={vectorStyle.fillOpacity}
-                            onOpacityChange={(fillOpacity, meta) => onVectorStyleChange({ fillOpacity }, meta)}
-                            labelDisplay="none"
-                          />
-                          <DropdownMenu
-                            open={openMenu === 'vector-fill-texture'}
-                            onOpenChange={(open) => handleMenuOpenChange('vector-fill-texture', open)}
-                          >
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
-                              >
-                                <span>{hasMixedVectorFillTexture ? 'Multiple' : getVectorFillTextureLabel(vectorStyle.fillTextureId)}</span>
-                                <ChevronDown className="size-3 shrink-0" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
-                              <DropdownMenuRadioGroup
-                                value={vectorStyle.fillTextureId}
-                                onValueChange={(fillTextureId) => onVectorStyleChange({ fillTextureId: fillTextureId as VectorFillTextureId })}
-                              >
-                                {VECTOR_FILL_TEXTURE_OPTIONS.map((option) => (
-                                  <DropdownMenuRadioItem key={option.value} value={option.value}>
-                                    {option.label}
-                                  </DropdownMenuRadioItem>
-                                ))}
-                              </DropdownMenuRadioGroup>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      )}
-                    </>
-                  )}
+                  {!useVectorSelectionTwoRowLayout && vectorStyleControlGroup}
 
                   {showBitmapBrushSizeControl && (
                     <ToolbarPreviewSlider
@@ -1304,22 +1324,19 @@ export const CostumeToolbar = memo(({
                         </DropdownMenuContent>
                       </DropdownMenu>
 
-                      <ToolbarPreviewSlider
+                      <ScrubNumberInput
                         label="Size"
                         value={textStyle.fontSize}
-                        onValueChange={(fontSize, meta) => onTextStyleChange({ fontSize }, meta)}
+                        onChange={(fontSize, source) => onTextStyleChange(
+                          { fontSize },
+                          { source: 'field', phase: source === 'drag' ? 'preview' : 'commit' },
+                        )}
+                        onCommit={(fontSize) => onTextStyleChange({ fontSize }, { source: 'field', phase: 'commit' })}
                         min={8}
                         max={120}
-                        previewEnabled={sliderPreviewEnabled}
-                        sliderClassName="w-16"
-                        thumbClassName="size-3"
-                        preview={(
-                          <TextSizePreview
-                            textStyle={textStyle}
-                            color={brushColor}
-                            previewScale={previewScale}
-                          />
-                        )}
+                        precision={0}
+                        density="compact"
+                        className="min-w-[120px]"
                       />
 
                       <DropdownMenu
@@ -1406,134 +1423,7 @@ export const CostumeToolbar = memo(({
 
                   {useVectorSelectionTwoRowLayout && (
                     <div className="flex min-w-max items-center justify-center gap-2">
-                      <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                        <span className="whitespace-nowrap text-xs text-muted-foreground">Stroke</span>
-                        <FloatingToolbarColorControl
-                          label="Stroke"
-                          value={vectorStyle.strokeColor}
-                          mixed={hasMixedVectorStrokeColor}
-                          open={openMenu === 'stroke-color'}
-                          onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
-                          onColorChange={(strokeColor, meta) => onVectorStyleChange({ strokeColor }, meta)}
-                          opacity={vectorStyle.strokeOpacity}
-                          onOpacityChange={(strokeOpacity, meta) => onVectorStyleChange({ strokeOpacity }, meta)}
-                          labelDisplay="none"
-                        />
-                        <DropdownMenu
-                          open={openMenu === 'vector-stroke-brush'}
-                          onOpenChange={(open) => handleMenuOpenChange('vector-stroke-brush', open)}
-                        >
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
-                            >
-                              <span>{hasMixedVectorStrokeBrush ? 'Multiple' : getVectorStrokeBrushLabel(vectorStyle.strokeBrushId)}</span>
-                              <ChevronDown className="size-3 shrink-0" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
-                            <DropdownMenuRadioGroup
-                              value={vectorStyle.strokeBrushId}
-                              onValueChange={(strokeBrushId) => onVectorStyleChange({ strokeBrushId: strokeBrushId as VectorStrokeBrushId })}
-                            >
-                              {VECTOR_STROKE_BRUSH_OPTIONS.map((option) => (
-                                <DropdownMenuRadioItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </DropdownMenuRadioItem>
-                              ))}
-                            </DropdownMenuRadioGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        <ToolbarPreviewSlider
-                          value={vectorStyle.strokeWidth}
-                          onValueChange={(strokeWidth, meta) => onVectorStyleChange({ strokeWidth }, meta)}
-                          min={0}
-                          max={50}
-                          previewEnabled={sliderPreviewEnabled}
-                          labelDisplay="none"
-                          className="min-w-[124px] border-r-0 pr-0"
-                          sliderClassName="w-16"
-                          preview={(
-                            <StrokeWidthPreview
-                              brushId={vectorStyle.strokeBrushId}
-                              thickness={vectorStyle.strokeWidth}
-                              color={vectorStyle.strokeColor}
-                              opacity={vectorStyle.strokeOpacity}
-                              previewScale={previewScale}
-                              wiggle={vectorStyle.strokeWiggle}
-                            />
-                          )}
-                        />
-                        {showVectorStrokeWiggleControl ? (
-                          <ToolbarPreviewSlider
-                            label="Wiggle"
-                            value={Math.round(vectorStyle.strokeWiggle * 100)}
-                            onValueChange={(wigglePercent, meta) => onVectorStyleChange({ strokeWiggle: wigglePercent / 100 }, meta)}
-                            min={0}
-                            max={100}
-                            previewEnabled={sliderPreviewEnabled}
-                            className="min-w-[148px] border-r-0 pr-0"
-                            sliderClassName="w-16"
-                            valueClassName="w-10"
-                            preview={(
-                              <StrokeWidthPreview
-                                brushId={vectorStyle.strokeBrushId}
-                                thickness={vectorStyle.strokeWidth}
-                                color={vectorStyle.strokeColor}
-                                opacity={vectorStyle.strokeOpacity}
-                                previewScale={previewScale}
-                                wiggle={vectorStyle.strokeWiggle}
-                              />
-                            )}
-                          />
-                        ) : null}
-                      </div>
-
-                      {showVectorFillControl && (
-                        <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                          <span className="whitespace-nowrap text-xs text-muted-foreground">Fill</span>
-                          <FloatingToolbarColorControl
-                            label="Fill"
-                            value={vectorStyle.fillColor}
-                            mixed={hasMixedVectorFillColor}
-                            open={openMenu === 'fill-color'}
-                            onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
-                            onColorChange={(fillColor, meta) => onVectorStyleChange({ fillColor }, meta)}
-                            opacity={vectorStyle.fillOpacity}
-                            onOpacityChange={(fillOpacity, meta) => onVectorStyleChange({ fillOpacity }, meta)}
-                            labelDisplay="none"
-                          />
-                          <DropdownMenu
-                            open={openMenu === 'vector-fill-texture'}
-                            onOpenChange={(open) => handleMenuOpenChange('vector-fill-texture', open)}
-                          >
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
-                              >
-                                <span>{hasMixedVectorFillTexture ? 'Multiple' : getVectorFillTextureLabel(vectorStyle.fillTextureId)}</span>
-                                <ChevronDown className="size-3 shrink-0" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
-                              <DropdownMenuRadioGroup
-                                value={vectorStyle.fillTextureId}
-                                onValueChange={(fillTextureId) => onVectorStyleChange({ fillTextureId: fillTextureId as VectorFillTextureId })}
-                              >
-                                {VECTOR_FILL_TEXTURE_OPTIONS.map((option) => (
-                                  <DropdownMenuRadioItem key={option.value} value={option.value}>
-                                    {option.label}
-                                  </DropdownMenuRadioItem>
-                                ))}
-                              </DropdownMenuRadioGroup>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      )}
+                      {vectorStyleControlGroup}
                     </div>
                   )}
                 </div>

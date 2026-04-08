@@ -20,6 +20,7 @@ export interface FloatingToolbarColorControlProps {
   label: string;
   value: string;
   mixed?: boolean;
+  swatchVariant?: 'fill' | 'stroke';
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onColorChange: (color: string, meta?: ToolbarSliderChangeMeta) => void;
@@ -33,6 +34,7 @@ export function FloatingToolbarColorControl({
   label,
   value,
   mixed = false,
+  swatchVariant = 'fill',
   open,
   onOpenChange,
   onColorChange,
@@ -133,6 +135,8 @@ export function FloatingToolbarColorControl({
           ref={buttonRef}
           value={value}
           mixed={mixed}
+          opacity={opacity}
+          variant={swatchVariant}
           className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60"
           swatchClassName="size-6 rounded-md"
           onClick={() => handleOpenChange(!open)}

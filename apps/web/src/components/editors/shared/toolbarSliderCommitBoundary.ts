@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 
 export interface ToolbarSliderChangeMeta {
-  source: 'slider' | 'picker';
+  source: 'slider' | 'picker' | 'field';
   phase: 'preview' | 'commit';
 }
 
@@ -42,7 +42,7 @@ export function reduceToolbarSliderCommitBoundaryState(
   current: ToolbarSliderCommitBoundaryState,
   meta?: ToolbarSliderChangeMeta,
 ): ToolbarSliderCommitBoundaryState {
-  if (!meta || (meta.source !== 'slider' && meta.source !== 'picker')) {
+  if (!meta || (meta.source !== 'slider' && meta.source !== 'picker' && meta.source !== 'field')) {
     return current;
   }
 

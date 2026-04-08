@@ -19,6 +19,7 @@ import {
 import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
 import { InlineActionButton } from '@/components/ui/inline-action-button';
 import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Paintbrush, Pencil } from '@/components/ui/icons';
+import { ScrubNumberInput } from '@/components/ui/scrub-number-input';
 import type { ComponentDefinition, GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig, createDefaultPhysicsConfig, getEffectiveObjectProps } from '@/types';
 import {
@@ -80,189 +81,6 @@ function ColorSwatch({ value, onChange }: ColorSwatchProps) {
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-// Scrubbing input component with alt+drag support
-interface ScrubInputProps {
-  label: string;
-  value: number;
-  onChange: (value: number, source?: 'input' | 'drag', delta?: number) => void;
-  className?: string;
-  step?: number;
-  precision?: number;
-  min?: number;
-  max?: number;
-  suffix?: string;
-  mixed?: boolean;
-  onDragStart?: () => void;
-  onDragEnd?: () => void;
-}
-
-function ScrubInput({
-  label,
-  value,
-  onChange,
-  className,
-  step = 1,
-  precision = 2,
-  min,
-  max,
-  suffix = '',
-  mixed = false,
-  onDragStart,
-  onDragEnd,
-}: ScrubInputProps) {
-  const [localValue, setLocalValue] = useState(mixed ? 'multiple' : value.toFixed(precision));
-  const [isDragging, setIsDragging] = useState(false);
-  const [isAltHover, setIsAltHover] = useState(false);
-  const startXRef = useRef(0);
-  const startValueRef = useRef(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const isHoveringRef = useRef(false);
-
-  useEffect(() => {
-    if (!isDragging) {
-      setLocalValue(mixed ? 'multiple' : value.toFixed(precision));
-    }
-  }, [value, precision, mixed, isDragging]);
-
-  // Listen for alt key while hovering
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Alt' && isHoveringRef.current) {
-        setIsAltHover(true);
-      }
-    };
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') {
-        setIsAltHover(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
-
-  const handleMouseEnter = () => {
-    isHoveringRef.current = true;
-  };
-
-  const handleMouseLeave = () => {
-    isHoveringRef.current = false;
-    setIsAltHover(false);
-  };
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.altKey) {
-      e.preventDefault();
-      setIsDragging(true);
-      startXRef.current = e.clientX;
-      startValueRef.current = value;
-      onDragStart?.();
-      document.body.style.cursor = 'ew-resize';
-    }
-  }, [value, onDragStart]);
-
-  useEffect(() => {
-    if (!isDragging) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const deltaX = e.clientX - startXRef.current;
-      const sensitivity = e.shiftKey ? 0.1 : 1;
-      let newValue = startValueRef.current + (deltaX * step * sensitivity);
-
-      if (min !== undefined) newValue = Math.max(min, newValue);
-      if (max !== undefined) newValue = Math.min(max, newValue);
-
-      const roundedValue = Number(newValue.toFixed(precision));
-      const delta = Number((roundedValue - startValueRef.current).toFixed(precision));
-      setLocalValue(roundedValue.toFixed(precision));
-      onChange(roundedValue, 'drag', delta);
-    };
-
-    const handleMouseUp = () => {
-      setIsDragging(false);
-      onDragEnd?.();
-      document.body.style.cursor = '';
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging, step, precision, min, max, onChange, onDragEnd]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const nextValue = suffix ? e.target.value.replace(suffix, '') : e.target.value;
-    setLocalValue(nextValue);
-  };
-
-  const handleFocus = () => {
-    if (mixed) {
-      setLocalValue('');
-    }
-  };
-
-  const handleBlur = () => {
-    const trimmed = localValue.trim();
-    if (!trimmed || trimmed.toLowerCase() === 'multiple') {
-      setLocalValue(mixed ? 'multiple' : value.toFixed(precision));
-      return;
-    }
-
-    let newValue = Number.parseFloat(trimmed);
-    if (Number.isNaN(newValue)) {
-      setLocalValue(mixed ? 'multiple' : value.toFixed(precision));
-      return;
-    }
-
-    if (min !== undefined) newValue = Math.max(min, newValue);
-    if (max !== undefined) newValue = Math.min(max, newValue);
-    const roundedValue = Number(newValue.toFixed(precision));
-    onChange(roundedValue, 'input');
-    setLocalValue(roundedValue.toFixed(precision));
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      inputRef.current?.blur();
-    }
-  };
-
-  return (
-    <div
-      ref={containerRef}
-      className={cn(
-        'flex w-full min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2',
-        isDragging && 'ring-1 ring-primary',
-        className,
-      )}
-      style={{ cursor: isAltHover || isDragging ? 'ew-resize' : 'default' }}
-      onMouseDown={handleMouseDown}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    >
-      <span className="text-xs text-muted-foreground shrink-0 select-none">{label}</span>
-      <input
-        ref={inputRef}
-        type="text"
-        value={localValue === 'multiple' ? localValue : localValue + suffix}
-        onChange={handleChange}
-        onFocus={handleFocus}
-        onBlur={handleBlur}
-        onKeyDown={handleKeyDown}
-        className="w-0 min-w-0 flex-1 bg-transparent text-sm outline-none text-foreground"
-        style={{ cursor: isAltHover || isDragging ? 'ew-resize' : 'text' }}
-      />
     </div>
   );
 }
@@ -589,7 +407,7 @@ function ObjectProperties({
       <div>
         <div className="text-xs text-muted-foreground mb-2">Position</div>
         <div className="inspector-field-grid">
-          <ScrubInput
+          <ScrubNumberInput
             className="min-w-0"
             label="X"
             value={xField.value}
@@ -599,7 +417,7 @@ function ObjectProperties({
             onDragStart={() => saveDragStart('x', (selectedObj) => selectedObj.x)}
             onDragEnd={() => clearDragStart('x')}
           />
-          <ScrubInput
+          <ScrubNumberInput
             className="min-w-0"
             label="Y"
             value={yField.value}
@@ -616,7 +434,7 @@ function ObjectProperties({
       <div>
         <div className="text-xs text-muted-foreground mb-2">Scale</div>
         <div className="inspector-scale-row">
-          <ScrubInput
+          <ScrubNumberInput
             className="min-w-0"
             label="W"
             value={scaleXField.value}
@@ -628,7 +446,7 @@ function ObjectProperties({
             onDragStart={() => saveDragStart('scaleX', (selectedObj) => Math.abs(selectedObj.scaleX))}
             onDragEnd={() => clearDragStart('scaleX')}
           />
-          <ScrubInput
+          <ScrubNumberInput
             className="min-w-0"
             label="H"
             value={scaleYField.value}
@@ -658,7 +476,7 @@ function ObjectProperties({
       <div>
         <div className="text-xs text-muted-foreground mb-2">Rotation</div>
         <div className="inspector-rotation-row">
-          <ScrubInput
+          <ScrubNumberInput
             className="inspector-rotation-input min-w-0"
             label="↻"
             value={rotationField.value}
@@ -820,7 +638,7 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
         {ground.enabled && (
           <div className="space-y-3">
             <div className="inspector-select-row">
-              <ScrubInput
+              <ScrubNumberInput
                 className="min-w-0"
                 label="Y"
                 value={ground.y}
@@ -1065,7 +883,7 @@ function PhysicsProperties({
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Gravity</div>
         <div className="inspector-field-grid">
-          <ScrubInput
+          <ScrubNumberInput
             className="min-w-0"
             label="Y"
             value={resolvedPhysics.gravityY}
@@ -1079,7 +897,7 @@ function PhysicsProperties({
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Bounce</div>
         <div className="inspector-field-grid">
-          <ScrubInput
+          <ScrubNumberInput
             className="min-w-0"
             label=""
             value={resolvedPhysics.bounce ?? 0.2}
@@ -1096,7 +914,7 @@ function PhysicsProperties({
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Friction</div>
         <div className="inspector-field-grid">
-          <ScrubInput
+          <ScrubNumberInput
             className="min-w-0"
             label=""
             value={resolvedPhysics.friction ?? 0.1}
@@ -1232,21 +1050,21 @@ function ComponentPhysicsProperties({
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Gravity</div>
         <div className="inspector-field-grid">
-          <ScrubInput className="min-w-0" label="Y" value={resolvedPhysics.gravityY} onChange={(gravityY) => updatePhysics({ gravityY })} precision={2} />
+          <ScrubNumberInput className="min-w-0" label="Y" value={resolvedPhysics.gravityY} onChange={(gravityY) => updatePhysics({ gravityY })} precision={2} />
         </div>
       </div>
 
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Bounce</div>
         <div className="inspector-field-grid">
-          <ScrubInput className="min-w-0" label="B" value={resolvedPhysics.bounce ?? 0.2} onChange={(bounce) => updatePhysics({ bounce })} precision={2} />
+          <ScrubNumberInput className="min-w-0" label="B" value={resolvedPhysics.bounce ?? 0.2} onChange={(bounce) => updatePhysics({ bounce })} precision={2} />
         </div>
       </div>
 
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Friction</div>
         <div className="inspector-field-grid">
-          <ScrubInput className="min-w-0" label="F" value={resolvedPhysics.friction ?? 0.1} onChange={(friction) => updatePhysics({ friction })} precision={2} />
+          <ScrubNumberInput className="min-w-0" label="F" value={resolvedPhysics.friction ?? 0.1} onChange={(friction) => updatePhysics({ friction })} precision={2} />
         </div>
       </div>
 
