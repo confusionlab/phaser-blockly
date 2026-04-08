@@ -1036,7 +1036,7 @@ export function ProjectExplorerPage({
                   )}
                 </nav>
 
-                <div className="mt-3 min-w-0">
+                <div className="mt-3 min-w-0 pl-2">
                   {currentFolder && !isRootFolder ? (
                     <InlineRenameField
                       autoFocus={isEditingCurrentFolder}
@@ -1141,23 +1141,19 @@ export function ProjectExplorerPage({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center">
-                    {parentFolder ? (
-                      <IconButton
-                        className={cn(dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
-                        disabled={isExplorerInteractionBlocked}
-                        label="Back to parent folder"
-                        onClick={() => setCurrentFolderId(parentFolder.id)}
-                        shape="pill"
-                        size="sm"
-                        {...dropTargetProps(parentFolder.id)}
-                      >
-                        <ArrowLeft className="size-4" />
-                      </IconButton>
-                    ) : (
-                      <div aria-hidden="true" className="h-9 w-9 rounded-full opacity-0" />
-                    )}
-                  </div>
+                  {parentFolder ? (
+                    <IconButton
+                      className={cn(dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
+                      disabled={isExplorerInteractionBlocked}
+                      label="Back to parent folder"
+                      onClick={() => setCurrentFolderId(parentFolder.id)}
+                      shape="pill"
+                      size="sm"
+                      {...dropTargetProps(parentFolder.id)}
+                    >
+                      <ArrowLeft className="size-4" />
+                    </IconButton>
+                  ) : null}
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
