@@ -1232,8 +1232,15 @@ export function ProjectExplorerPage({
                 </div>
                 <div>
                   <div className="text-lg font-semibold text-foreground">Nothing here yet</div>
-                  <div className="mt-2 text-sm leading-6">
-                    Create a new project, import one, or drop projects into this folder from somewhere else in the explorer.
+                  <div className="mt-4">
+                    <Button
+                      disabled={isExplorerReadOnly}
+                      onClick={() => void handleCreateProject()}
+                      shape="pill"
+                      size="sm"
+                    >
+                      + Create project
+                    </Button>
                   </div>
                 </div>
               </div>
