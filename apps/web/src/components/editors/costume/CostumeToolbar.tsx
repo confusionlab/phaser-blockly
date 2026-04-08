@@ -826,13 +826,32 @@ export const CostumeToolbar = memo(({
     onVectorStyleChange({ strokeColor }, meta);
   };
 
+  const handleFillOpacityChange = (fillOpacity: number, meta?: ToolbarSliderChangeMeta) => {
+    if (areVectorColorsLinked) {
+      onVectorStyleChange({ fillOpacity, strokeOpacity: fillOpacity }, meta);
+      return;
+    }
+    onVectorStyleChange({ fillOpacity }, meta);
+  };
+
+  const handleStrokeOpacityChange = (strokeOpacity: number, meta?: ToolbarSliderChangeMeta) => {
+    if (areVectorColorsLinked && showVectorFillControl) {
+      onVectorStyleChange({ fillOpacity: strokeOpacity, strokeOpacity }, meta);
+      return;
+    }
+    onVectorStyleChange({ strokeOpacity }, meta);
+  };
+
   const handleVectorColorLinkToggle = () => {
     if (!showVectorFillControl) {
       return;
     }
 
     if (!areVectorColorsLinked) {
-      onVectorStyleChange({ strokeColor: vectorStyle.fillColor });
+      onVectorStyleChange({
+        strokeColor: vectorStyle.fillColor,
+        strokeOpacity: vectorStyle.fillOpacity,
+      });
     }
     setAreVectorColorsLinked((current) => !current);
   };
@@ -885,48 +904,48 @@ export const CostumeToolbar = memo(({
 
   const vectorStyleControlGroup = showVectorStyleControls ? (
     <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-      {showVectorFillControl ? (
-        <>
-          <FloatingToolbarColorControl
-            label="Fill"
-            value={vectorStyle.fillColor}
-            mixed={hasMixedVectorFillColor}
-            open={openMenu === 'fill-color'}
-            onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
-            onColorChange={handleFillColorChange}
-            opacity={vectorStyle.fillOpacity}
-            onOpacityChange={(fillOpacity, meta) => onVectorStyleChange({ fillOpacity }, meta)}
-            labelDisplay="none"
-          />
-          <IconButton
-            label={areVectorColorsLinked ? 'Unlink fill and stroke colors' : 'Link fill and stroke colors'}
-            onClick={handleVectorColorLinkToggle}
-            className={cn(
-              'h-8 w-8 rounded-md border border-border/70 bg-transparent',
-              areVectorColorsLinked
-                ? 'bg-surface-interactive text-foreground hover:bg-surface-interactive-hover'
-                : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-            )}
-            size="sm"
-            variant="ghost"
-          >
-            {areVectorColorsLinked ? <Link className="size-4" /> : <Unlink className="size-4" />}
-          </IconButton>
-        </>
-      ) : null}
+      <div className="flex items-center gap-[2px]">
+        {showVectorFillControl ? (
+          <>
+            <FloatingToolbarColorControl
+              label="Fill"
+              value={vectorStyle.fillColor}
+              mixed={hasMixedVectorFillColor}
+              open={openMenu === 'fill-color'}
+              onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
+              onColorChange={handleFillColorChange}
+              opacity={vectorStyle.fillOpacity}
+              onOpacityChange={handleFillOpacityChange}
+              labelDisplay="none"
+            />
+            <IconButton
+              label={areVectorColorsLinked ? 'Unlink fill and stroke colors' : 'Link fill and stroke colors'}
+              onClick={handleVectorColorLinkToggle}
+              className={cn(
+                'h-8 min-w-0 w-auto px-1 rounded-[10px] bg-transparent hover:bg-accent/60',
+                areVectorColorsLinked ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+              )}
+              size="sm"
+              variant="ghost"
+            >
+              {areVectorColorsLinked ? <Link className="size-3.5" /> : <Unlink className="size-3.5" />}
+            </IconButton>
+          </>
+        ) : null}
 
-      <FloatingToolbarColorControl
-        label="Stroke"
-        value={vectorStyle.strokeColor}
-        mixed={hasMixedVectorStrokeColor}
-        swatchVariant="stroke"
-        open={openMenu === 'stroke-color'}
-        onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
-        onColorChange={handleStrokeColorChange}
-        opacity={vectorStyle.strokeOpacity}
-        onOpacityChange={(strokeOpacity, meta) => onVectorStyleChange({ strokeOpacity }, meta)}
-        labelDisplay="none"
-      />
+        <FloatingToolbarColorControl
+          label="Stroke"
+          value={vectorStyle.strokeColor}
+          mixed={hasMixedVectorStrokeColor}
+          swatchVariant="stroke"
+          open={openMenu === 'stroke-color'}
+          onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
+          onColorChange={handleStrokeColorChange}
+          opacity={vectorStyle.strokeOpacity}
+          onOpacityChange={handleStrokeOpacityChange}
+          labelDisplay="none"
+        />
+      </div>
 
       <ScrubNumberInput
         label="W"
@@ -944,7 +963,6 @@ export const CostumeToolbar = memo(({
       <div className="mx-1 h-6 w-px bg-border/70" aria-hidden="true" />
 
       <div className="flex items-center gap-2">
-        <span className="whitespace-nowrap text-xs text-muted-foreground">Texture</span>
         <DropdownMenu
           open={openMenu === 'vector-fill-texture'}
           onOpenChange={(open) => handleMenuOpenChange('vector-fill-texture', open)}
@@ -1204,7 +1222,6 @@ export const CostumeToolbar = memo(({
 
                   {showBitmapFillTextureControl && (
                     <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                      <span className="whitespace-nowrap text-xs text-muted-foreground">Texture</span>
                       <DropdownMenu
                         open={openMenu === 'bitmap-fill-texture'}
                         onOpenChange={(open) => handleMenuOpenChange('bitmap-fill-texture', open)}

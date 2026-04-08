@@ -206,7 +206,7 @@ export function ScrubNumberInput({
   return (
     <div
       className={cn(
-        'flex w-full min-w-0 flex-1 items-center border border-border/70 bg-surface-interactive shadow-none transition-colors duration-150 hover:bg-surface-interactive-hover focus-within:bg-surface-interactive-hover',
+        'flex w-full min-w-0 flex-1 items-center border border-border/70 bg-surface-subtle shadow-none transition-colors duration-150 hover:bg-surface-subtle focus-within:bg-surface-subtle',
         densityClassName,
         isDragging && 'ring-1 ring-primary',
         !isDragging && 'focus-within:ring-1 focus-within:ring-primary/40',
