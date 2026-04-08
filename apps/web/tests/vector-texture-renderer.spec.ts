@@ -339,6 +339,86 @@ test.describe('vector texture renderer', () => {
     expect(result.fillAndStrokeAverageAlpha).toBeGreaterThan(result.fillOnlyAverageAlpha + 20);
   });
 
+  test('keeps textured stroke visible when textured fill opacity is zero', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const { renderVectorTextureOverlayForObjects } = await import('/src/lib/costume/costumeVectorTextureRenderer.ts');
+      const width = 280;
+      const height = 240;
+
+      const overlayCanvas = document.createElement('canvas');
+      overlayCanvas.width = width;
+      overlayCanvas.height = height;
+      const overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+      if (!overlayCtx) {
+        throw new Error('Failed to acquire texture overlay context.');
+      }
+
+      const object = {
+        type: 'rect',
+        width: 72,
+        height: 72,
+        fill: 'rgba(37, 99, 235, 0)',
+        opacity: 1,
+        stroke: 'rgba(37, 99, 235, 0)',
+        strokeWidth: 20,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+        vectorFillTextureId: 'crayon',
+        vectorFillColor: '#2563eb',
+        vectorFillOpacity: 0,
+        vectorStrokeBrushId: 'crayon',
+        vectorStrokeColor: '#2563eb',
+        vectorStrokeOpacity: 1,
+        calcTransformMatrix: () => [1, 0, 0, 1, 160, 120],
+      };
+
+      const waitForTextureReady = () => new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        renderVectorTextureOverlayForObjects(overlayCtx, [object], {
+          canvasWidth: width,
+          canvasHeight: height,
+          onTextureSourceReady: done,
+        });
+        setTimeout(done, 100);
+      });
+
+      await waitForTextureReady();
+      overlayCtx.clearRect(0, 0, width, height);
+      renderVectorTextureOverlayForObjects(overlayCtx, [object], {
+        canvasWidth: width,
+        canvasHeight: height,
+      });
+
+      const countVisiblePixelsInRect = (left: number, top: number, rectWidth: number, rectHeight: number) => {
+        const imageData = overlayCtx.getImageData(left, top, rectWidth, rectHeight).data;
+        let count = 0;
+        for (let index = 3; index < imageData.length; index += 4) {
+          if ((imageData[index] ?? 0) > 0) {
+            count += 1;
+          }
+        }
+        return count;
+      };
+
+      return {
+        centerPixels: countVisiblePixelsInRect(150, 110, 20, 20),
+        topEdgePixels: countVisiblePixelsInRect(140, 74, 40, 18),
+      };
+    });
+
+    expect(result.centerPixels).toBeLessThan(10);
+    expect(result.topEdgePixels).toBeGreaterThan(120);
+  });
+
   test('changing textured stroke color does not change the shared coverage field', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');
