@@ -1186,119 +1186,127 @@ export const CostumeToolbar = memo(({
 
                   {showSelectionActions && (
                     <div className="flex items-center gap-1 border-r pr-2 last:border-r-0 last:pr-0">
-                      {editorMode === 'vector' && hasActiveSelection && (
+                      {(editorMode === 'vector' && onGroupSelection) || (editorMode === 'vector' && onUngroupSelection) ? (
+                        <>
+                          <div className="flex items-center gap-1">
+                            {editorMode === 'vector' && onGroupSelection ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-3 text-xs"
+                                onClick={onGroupSelection}
+                                disabled={!canGroupSelection}
+                              >
+                                Group
+                              </Button>
+                            ) : null}
+                            {editorMode === 'vector' && onUngroupSelection ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-3 text-xs"
+                                onClick={onUngroupSelection}
+                                disabled={!canUngroupSelection}
+                              >
+                                Ungroup
+                              </Button>
+                            ) : null}
+                          </div>
+                          <div className="mx-1 h-6 w-px bg-border/70" aria-hidden="true" />
+                        </>
+                      ) : null}
+
+                      <div className="flex items-center gap-1">
+                        {editorMode === 'vector' && hasActiveSelection && (
+                          <DropdownMenu
+                            open={openMenu === 'move-order'}
+                            onOpenChange={(open) => handleMenuOpenChange('move-order', open)}
+                          >
+                            <DropdownMenuTrigger asChild>
+                              <IconButton
+                                className="h-8 w-8"
+                                label="Move Order"
+                                size="md"
+                                variant="outline"
+                              >
+                                <Layers3 className="size-3.5" />
+                              </IconButton>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="center" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[160px]">
+                              <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
+                                Move Forward
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => onMoveOrder('backward')}>
+                                Move Backward
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => onMoveOrder('front')}>
+                                Move To Front
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => onMoveOrder('back')}>
+                                Move To Back
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
                         <DropdownMenu
-                          open={openMenu === 'move-order'}
-                          onOpenChange={(open) => handleMenuOpenChange('move-order', open)}
+                          open={openMenu === 'align'}
+                          onOpenChange={(open) => handleMenuOpenChange('align', open)}
                         >
                           <DropdownMenuTrigger asChild>
                             <IconButton
-                            className="h-8 w-8"
-                            label="Move Order"
-                            size="md"
-                            variant="outline"
-                          >
-                              <Layers3 className="size-3.5" />
+                              className="h-8 w-8"
+                              disabled={alignDisabled}
+                              label="Align"
+                              size="md"
+                              variant="outline"
+                            >
+                              <AlignMenuIcon />
                             </IconButton>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[160px]">
-                            <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
-                              Move Forward
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => onMoveOrder('backward')}>
-                              Move Backward
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => onMoveOrder('front')}>
-                              Move To Front
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => onMoveOrder('back')}>
-                              Move To Back
-                            </DropdownMenuItem>
+                          <DropdownMenuContent align="center" side="top" sideOffset={toolbarPopupSideOffset} className="w-auto p-2">
+                            <div className="grid grid-cols-3 gap-1">
+                              {alignOptions.map((item) => (
+                                <DropdownMenuItem
+                                  key={item.action}
+                                  className="h-8 w-8 justify-center rounded border p-0 text-muted-foreground"
+                                  title={item.title}
+                                  onSelect={(event) => event.preventDefault()}
+                                  onClick={() => onAlign(item.action)}
+                                >
+                                  <AlignCanvasActionIcon action={item.action} />
+                                </DropdownMenuItem>
+                              ))}
+                            </div>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                      )}
-                      {editorMode === 'vector' && onGroupSelection ? (
-                        <Button
+                        <IconButton
+                          className="h-8 w-8"
+                          label="Flip Horizontal"
+                          onClick={() => onFlipSelection('horizontal')}
+                          size="md"
                           variant="outline"
-                          size="sm"
-                          className="h-8 gap-1.5 px-3 text-xs"
-                          onClick={onGroupSelection}
-                          disabled={!canGroupSelection}
                         >
-                          <Layers3 className="size-3.5" />
-                          Group
-                        </Button>
-                      ) : null}
-                      {editorMode === 'vector' && onUngroupSelection ? (
-                        <Button
+                          <FlipHorizontal2 className="size-4" />
+                        </IconButton>
+                        <IconButton
+                          className="h-8 w-8"
+                          label="Flip Vertical"
+                          onClick={() => onFlipSelection('vertical')}
+                          size="md"
                           variant="outline"
-                          size="sm"
-                          className="h-8 gap-1.5 px-3 text-xs"
-                          onClick={onUngroupSelection}
-                          disabled={!canUngroupSelection}
                         >
-                          <Unlink className="size-3.5" />
-                          Ungroup
-                        </Button>
-                      ) : null}
-                      <DropdownMenu
-                        open={openMenu === 'align'}
-                        onOpenChange={(open) => handleMenuOpenChange('align', open)}
-                      >
-                        <DropdownMenuTrigger asChild>
-                          <IconButton
-                            className="h-8 w-8"
-                            disabled={alignDisabled}
-                            label="Align"
-                            size="md"
-                            variant="outline"
-                          >
-                            <AlignMenuIcon />
-                          </IconButton>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="w-auto p-2">
-                          <div className="flex items-center gap-1">
-                            {alignOptions.map((item) => (
-                              <DropdownMenuItem
-                                key={item.action}
-                                className="h-8 w-8 justify-center rounded border p-0 text-muted-foreground"
-                                title={item.title}
-                                onSelect={(event) => event.preventDefault()}
-                                onClick={() => onAlign(item.action)}
-                              >
-                                <AlignCanvasActionIcon action={item.action} />
-                              </DropdownMenuItem>
-                            ))}
-                          </div>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <IconButton
-                        className="h-8 w-8"
-                        label="Flip Horizontal"
-                        onClick={() => onFlipSelection('horizontal')}
-                        size="md"
-                        variant="outline"
-                      >
-                        <FlipHorizontal2 className="size-4" />
-                      </IconButton>
-                      <IconButton
-                        className="h-8 w-8"
-                        label="Flip Vertical"
-                        onClick={() => onFlipSelection('vertical')}
-                        size="md"
-                        variant="outline"
-                      >
-                        <FlipVertical2 className="size-4" />
-                      </IconButton>
-                      <IconButton
-                        className="h-8 w-8"
-                        label="Rotate 90 Degrees"
-                        onClick={onRotateSelection}
-                        size="md"
-                        variant="outline"
-                      >
-                        <RotateCw className="size-4" />
-                      </IconButton>
+                          <FlipVertical2 className="size-4" />
+                        </IconButton>
+                        <IconButton
+                          className="h-8 w-8"
+                          label="Rotate 90 Degrees"
+                          onClick={onRotateSelection}
+                          size="md"
+                          variant="outline"
+                        >
+                          <RotateCw className="size-4" />
+                        </IconButton>
+                      </div>
                     </div>
                   )}
 
