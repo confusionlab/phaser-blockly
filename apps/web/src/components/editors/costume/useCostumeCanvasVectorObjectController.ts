@@ -685,7 +685,7 @@ export function useCostumeCanvasVectorObjectController({
   ]);
 
   const renderObjectMarqueePreviewOutlines = useCallback((ctx: CanvasRenderingContext2D, fabricCanvas: FabricCanvas) => {
-    const previewTargets = getVectorSelectionMarqueePreviewTargets(fabricCanvas as Parameters<typeof getVectorSelectionMarqueePreviewTargets>[0]);
+    const previewTargets = getVectorSelectionMarqueePreviewTargets(fabricCanvas);
     if (previewTargets.length === 0) {
       return;
     }
@@ -717,15 +717,11 @@ export function useCostumeCanvasVectorObjectController({
   ]);
 
   const renderObjectSelectionMarquee = useCallback((ctx: CanvasRenderingContext2D, fabricCanvas: FabricCanvas) => {
-    if (isVectorSelectionMarqueeVisibleOnFabricTopLayer(
-      fabricCanvas as Parameters<typeof isVectorSelectionMarqueeVisibleOnFabricTopLayer>[0],
-    )) {
+    if (isVectorSelectionMarqueeVisibleOnFabricTopLayer(fabricCanvas)) {
       return;
     }
 
-    const marqueeBounds = getVectorSelectionMarqueeBounds(
-      fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
-    );
+    const marqueeBounds = getVectorSelectionMarqueeBounds(fabricCanvas);
     if (!marqueeBounds) {
       return;
     }
@@ -770,9 +766,7 @@ export function useCostumeCanvasVectorObjectController({
     const target = vectorPointEditingTargetRef.current as any;
     if (!fabricCanvas || !ctx) return;
     clearOverlayContext(ctx);
-    const hasObjectMarqueeSelection = !!getVectorSelectionMarqueeBounds(
-      fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
-    );
+    const hasObjectMarqueeSelection = !!getVectorSelectionMarqueeBounds(fabricCanvas);
     if (editorModeRef.current === 'bitmap') {
       renderActiveObjectTransformOverlay(ctx, fabricCanvas);
       renderHoveredObjectOutline(ctx, fabricCanvas);

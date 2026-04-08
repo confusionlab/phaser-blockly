@@ -1615,9 +1615,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
           return;
         }
 
-        if (getVectorSelectionMarqueeBounds(
-          fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
-        )) {
+        if (getVectorSelectionMarqueeBounds(fabricCanvas)) {
           setHoveredVectorTarget(null);
           fabricCanvas.requestRenderAll();
           return;
@@ -1758,9 +1756,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         activeToolRef.current === 'select' &&
         !vectorPointEditingTargetRef.current
       ) {
-        if (getVectorSelectionMarqueeBounds(
-          fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
-        )) {
+        if (getVectorSelectionMarqueeBounds(fabricCanvas)) {
           setHoveredVectorTarget(null);
           fabricCanvas.requestRenderAll();
           return;

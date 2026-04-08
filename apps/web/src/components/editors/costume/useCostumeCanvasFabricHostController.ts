@@ -711,9 +711,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       if (
         mode === 'vector' &&
         tool === 'select' &&
-        getVectorSelectionMarqueeBounds(
-          fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
-        )
+        getVectorSelectionMarqueeBounds(fabricCanvas)
       ) {
         setHoveredVectorTarget(null);
         fabricCanvas.requestRenderAll();
@@ -1030,9 +1028,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         !shapeDraftRef.current &&
         opt.e
       ) {
-        if (getVectorSelectionMarqueeBounds(
-          fabricCanvas as Parameters<typeof getVectorSelectionMarqueeBounds>[0],
-        )) {
+        if (getVectorSelectionMarqueeBounds(fabricCanvas)) {
           setHoveredVectorTarget(null);
           fabricCanvas.requestRenderAll();
           return;

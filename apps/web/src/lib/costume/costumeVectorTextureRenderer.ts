@@ -25,18 +25,45 @@ import { getCanvas2dContext } from '@/utils/canvas2d';
 import { COSTUME_CANVAS_SIZE } from './costumeDocument';
 
 const MAX_VECTOR_STROKE_BRUSH_RENDER_CACHE_ENTRIES = 256;
+const MAX_VECTOR_FILL_TEXTURE_TILE_CACHE_ENTRIES = 256;
 const MAX_VECTOR_STROKE_WIGGLE_NORMAL_MULTIPLIER = 0.9;
 
 const vectorStrokeBrushRenderCache = new Map<string, VectorStrokeBrushRenderStyle>();
+const vectorFillTextureTileCache = new Map<string, HTMLCanvasElement>();
 const vectorTextureCache = new Map<string, HTMLImageElement | null>();
 const vectorTexturePending = new Set<string>();
 const vectorTextureReadyListeners = new Map<string, Set<() => void>>();
+const scratchCanvasCache = new Map<string, HTMLCanvasElement>();
+const canvasImageSourceIdentityCache = new WeakMap<object, number>();
 
-function createScratchCanvas(width: number, height: number) {
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(width));
-  canvas.height = Math.max(1, Math.round(height));
+let nextCanvasImageSourceIdentity = 1;
+
+function getReusableScratchCanvas(
+  cacheKey: string,
+  width: number,
+  height: number,
+) {
+  const nextWidth = Math.max(1, Math.round(width));
+  const nextHeight = Math.max(1, Math.round(height));
+  const canvas = scratchCanvasCache.get(cacheKey) ?? document.createElement('canvas');
+  if (!scratchCanvasCache.has(cacheKey)) {
+    scratchCanvasCache.set(cacheKey, canvas);
+  }
+  if (canvas.width !== nextWidth) {
+    canvas.width = nextWidth;
+  }
+  if (canvas.height !== nextHeight) {
+    canvas.height = nextHeight;
+  }
   return canvas;
+}
+
+function clearScratchCanvas(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
 function getAffineColumnScale(x: number, y: number) {
@@ -93,6 +120,24 @@ function rememberVectorStrokeBrushRenderStyle(
   }
   vectorStrokeBrushRenderCache.set(cacheKey, renderStyle);
   return renderStyle;
+}
+
+function rememberVectorFillTextureTile(
+  cacheKey: string,
+  tile: HTMLCanvasElement,
+): HTMLCanvasElement {
+  if (vectorFillTextureTileCache.has(cacheKey)) {
+    vectorFillTextureTileCache.delete(cacheKey);
+  }
+  vectorFillTextureTileCache.set(cacheKey, tile);
+  while (vectorFillTextureTileCache.size > MAX_VECTOR_FILL_TEXTURE_TILE_CACHE_ENTRIES) {
+    const oldestKey = vectorFillTextureTileCache.keys().next().value;
+    if (typeof oldestKey !== 'string') {
+      break;
+    }
+    vectorFillTextureTileCache.delete(oldestKey);
+  }
+  return tile;
 }
 
 function notifyVectorTextureReadyListeners(texturePath: string) {
@@ -157,6 +202,41 @@ function resolveVectorFillTextureSource(
     return null;
   }
   return resolveSharedTextureSource(texturePath, onTextureSourceReady);
+}
+
+function getCanvasImageSourceIdentity(source: CanvasImageSource | null | undefined): string {
+  if (!source || typeof source !== 'object') {
+    return 'procedural';
+  }
+  const cachedIdentity = canvasImageSourceIdentityCache.get(source);
+  if (typeof cachedIdentity === 'number') {
+    return `image:${cachedIdentity}`;
+  }
+  const nextIdentity = nextCanvasImageSourceIdentity++;
+  canvasImageSourceIdentityCache.set(source, nextIdentity);
+  return `image:${nextIdentity}`;
+}
+
+function resolveVectorFillTextureTile(
+  textureId: VectorFillTextureId,
+  fillColor: string,
+  onTextureSourceReady?: (() => void) | null,
+): HTMLCanvasElement | null {
+  const textureSource = resolveVectorFillTextureSource(textureId, onTextureSourceReady);
+  const cacheKey = [
+    textureId,
+    fillColor,
+    getCanvasImageSourceIdentity(textureSource),
+  ].join('|');
+  const cached = vectorFillTextureTileCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const tile = createVectorFillTextureTile(textureId, fillColor, textureSource);
+  if (!tile) {
+    return null;
+  }
+  return rememberVectorFillTextureTile(cacheKey, tile);
 }
 
 function resolveVectorStrokeBrushRenderStyle(
@@ -1012,12 +1092,17 @@ function drawVectorStrokeBrushTextureMaskPath(
     return false;
   }
 
-  const maskCanvas = createScratchCanvas(options.canvasWidth, options.canvasHeight);
+  const maskCanvas = getReusableScratchCanvas(
+    'vector-stroke-texture-mask',
+    options.canvasWidth,
+    options.canvasHeight,
+  );
   const maskCtx = getCanvas2dContext(maskCanvas);
   if (!maskCtx) {
     return false;
   }
 
+  clearScratchCanvas(maskCtx, maskCanvas);
   maskCtx.save();
   if (options.contextTransform) {
     applyContextTransform(maskCtx, options.contextTransform);
@@ -1083,12 +1168,17 @@ function drawVectorFillTextureMaskPass(
   }
 
   const objectTransform = obj.calcTransformMatrix();
-  const maskCanvas = createScratchCanvas(options.canvasWidth, options.canvasHeight);
+  const maskCanvas = getReusableScratchCanvas(
+    'vector-fill-texture-mask',
+    options.canvasWidth,
+    options.canvasHeight,
+  );
   const maskCtx = getCanvas2dContext(maskCanvas);
   if (!maskCtx) {
     return false;
   }
 
+  clearScratchCanvas(maskCtx, maskCanvas);
   maskCtx.save();
   if (options.contextTransform) {
     applyContextTransform(maskCtx, options.contextTransform);
@@ -1533,10 +1623,10 @@ function renderVectorTextureDecorationsForObject(
   const fillTextureId = getVectorObjectFillTextureId(obj);
   const fillColor = getVectorObjectFillColor(obj);
   if (vectorObjectSupportsFill(obj) && fillTextureId !== DEFAULT_VECTOR_FILL_TEXTURE_ID && fillColor) {
-    const textureTile = createVectorFillTextureTile(
+    const textureTile = resolveVectorFillTextureTile(
       fillTextureId,
       fillColor,
-      resolveVectorFillTextureSource(fillTextureId, options.onTextureSourceReady),
+      options.onTextureSourceReady,
     );
     if (textureTile) {
       const fillOpacity = getVectorObjectFillOpacity(obj) ?? 1;
@@ -1685,18 +1775,15 @@ export function renderVectorTextureOverlayForObjects(
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   }
 
-  const overlayCanvas = document.createElement('canvas');
-  overlayCanvas.width = Math.max(1, Math.round(canvasWidth));
-  overlayCanvas.height = Math.max(1, Math.round(canvasHeight));
-  const overlayCtx = getCanvas2dContext(overlayCanvas, 'readback');
+  const overlayCanvas = getReusableScratchCanvas('vector-overlay-root', canvasWidth, canvasHeight);
+  const overlayCtx = getCanvas2dContext(overlayCanvas);
   if (!overlayCtx) {
     return;
   }
+  clearScratchCanvas(overlayCtx, overlayCanvas);
 
-  const objectOverlayCanvas = document.createElement('canvas');
-  objectOverlayCanvas.width = overlayCanvas.width;
-  objectOverlayCanvas.height = overlayCanvas.height;
-  const objectOverlayCtx = getCanvas2dContext(objectOverlayCanvas, 'readback');
+  const objectOverlayCanvas = getReusableScratchCanvas('vector-overlay-object', canvasWidth, canvasHeight);
+  const objectOverlayCtx = getCanvas2dContext(objectOverlayCanvas);
   if (!objectOverlayCtx) {
     return;
   }
@@ -1750,13 +1837,12 @@ export function renderComposedVectorSceneForObjects(
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   }
 
-  const decorationCanvas = document.createElement('canvas');
-  decorationCanvas.width = Math.max(1, Math.round(canvasWidth));
-  decorationCanvas.height = Math.max(1, Math.round(canvasHeight));
-  const decorationCtx = getCanvas2dContext(decorationCanvas, 'readback');
+  const decorationCanvas = getReusableScratchCanvas('vector-scene-decoration', canvasWidth, canvasHeight);
+  const decorationCtx = getCanvas2dContext(decorationCanvas);
   if (!decorationCtx) {
     return;
   }
+  clearScratchCanvas(decorationCtx, decorationCanvas);
 
   for (const obj of objects) {
     renderComposedVectorSceneNode(ctx, decorationCtx, decorationCanvas, obj, options);
@@ -1864,7 +1950,7 @@ export async function renderVectorLayerDocumentToCanvas(
     const snapshotCanvas = document.createElement('canvas');
     snapshotCanvas.width = canvasSize;
     snapshotCanvas.height = canvasSize;
-    const snapshotCtx = getCanvas2dContext(snapshotCanvas, 'readback');
+    const snapshotCtx = getCanvas2dContext(snapshotCanvas);
     if (!snapshotCtx) {
       return null;
     }

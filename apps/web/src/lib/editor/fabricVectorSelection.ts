@@ -34,16 +34,80 @@ type FabricSelectionMarqueeState = {
   deltaY: number;
 };
 
-type FabricCanvasSelectionPreviewLike = Pick<FabricCanvas, 'getObjects'> & {
-  _groupSelector?: FabricSelectionMarqueeState | null;
-  collectObjects?: (
-    bounds: FabricSelectionMarqueeBounds,
-    options?: { includeIntersecting?: boolean },
-  ) => FabricObjectLike[];
-  selection?: boolean;
-  selectionFullyContained?: boolean;
-  upperCanvasEl?: HTMLCanvasElement | null;
-};
+type FabricCanvasSelectionPreviewHost = Pick<FabricCanvas, 'getObjects'>;
+
+function getFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function getSelectionMarqueeState(
+  fabricCanvas: FabricCanvasSelectionPreviewHost | null | undefined,
+): FabricSelectionMarqueeState | null {
+  if (!fabricCanvas) {
+    return null;
+  }
+
+  const groupSelector = Reflect.get(fabricCanvas as object, '_groupSelector');
+  if (!groupSelector || typeof groupSelector !== 'object') {
+    return null;
+  }
+
+  const x = getFiniteNumber(Reflect.get(groupSelector, 'x'));
+  const y = getFiniteNumber(Reflect.get(groupSelector, 'y'));
+  const deltaX = getFiniteNumber(Reflect.get(groupSelector, 'deltaX'));
+  const deltaY = getFiniteNumber(Reflect.get(groupSelector, 'deltaY'));
+  if (x === null || y === null || deltaX === null || deltaY === null) {
+    return null;
+  }
+
+  return { x, y, deltaX, deltaY };
+}
+
+function isSelectionEnabled(fabricCanvas: FabricCanvasSelectionPreviewHost | null | undefined): boolean {
+  if (!fabricCanvas) {
+    return false;
+  }
+  return Reflect.get(fabricCanvas as object, 'selection') === true;
+}
+
+function getUpperCanvasElement(
+  fabricCanvas: FabricCanvasSelectionPreviewHost | null | undefined,
+): HTMLCanvasElement | null {
+  const upperCanvas = fabricCanvas
+    ? Reflect.get(fabricCanvas as object, 'upperCanvasEl')
+    : null;
+  return upperCanvas instanceof HTMLCanvasElement ? upperCanvas : null;
+}
+
+function isSelectionFullyContained(
+  fabricCanvas: FabricCanvasSelectionPreviewHost | null | undefined,
+): boolean {
+  if (!fabricCanvas) {
+    return false;
+  }
+  return Reflect.get(fabricCanvas as object, 'selectionFullyContained') === true;
+}
+
+function collectSelectionPreviewObjects(
+  fabricCanvas: FabricCanvasSelectionPreviewHost | null | undefined,
+  bounds: FabricSelectionMarqueeBounds,
+): FabricObjectLike[] {
+  if (!fabricCanvas) {
+    return [];
+  }
+
+  const collectObjects = Reflect.get(fabricCanvas as object, 'collectObjects');
+  if (typeof collectObjects !== 'function') {
+    return [];
+  }
+
+  const previewTargets = collectObjects.call(fabricCanvas, bounds, {
+    includeIntersecting: !isSelectionFullyContained(fabricCanvas),
+  });
+  return Array.isArray(previewTargets)
+    ? previewTargets.filter(Boolean) as FabricObjectLike[]
+    : [];
+}
 
 export interface VectorGroupingAvailability {
   canGroup: boolean;
@@ -362,16 +426,17 @@ export function resolveVectorHoverTarget(
 }
 
 export function getVectorSelectionMarqueeBounds(
-  fabricCanvas: FabricCanvasSelectionPreviewLike | null | undefined,
+  fabricCanvas: FabricCanvasSelectionPreviewHost | null | undefined,
 ): FabricSelectionMarqueeBounds | null {
-  if (!fabricCanvas?.selection || !fabricCanvas._groupSelector) {
+  if (!isSelectionEnabled(fabricCanvas)) {
     return null;
   }
 
-  const { x, y, deltaX, deltaY } = fabricCanvas._groupSelector;
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+  const marqueeState = getSelectionMarqueeState(fabricCanvas);
+  if (!marqueeState) {
     return null;
   }
+  const { x, y, deltaX, deltaY } = marqueeState;
 
   const left = deltaX >= 0 ? x : x + deltaX;
   const top = deltaY >= 0 ? y : y + deltaY;
@@ -390,10 +455,10 @@ export function getVectorSelectionMarqueeBounds(
 }
 
 export function isVectorSelectionMarqueeVisibleOnFabricTopLayer(
-  fabricCanvas: Pick<FabricCanvasSelectionPreviewLike, 'upperCanvasEl'> | null | undefined,
+  fabricCanvas: FabricCanvasSelectionPreviewHost | null | undefined,
 ): boolean {
-  const upperCanvas = fabricCanvas?.upperCanvasEl;
-  if (!(upperCanvas instanceof HTMLCanvasElement)) {
+  const upperCanvas = getUpperCanvasElement(fabricCanvas);
+  if (!upperCanvas) {
     return false;
   }
 
@@ -410,14 +475,12 @@ export function isVectorSelectionMarqueeVisibleOnFabricTopLayer(
 }
 
 export function getVectorSelectionMarqueePreviewTargets(
-  fabricCanvas: FabricCanvasSelectionPreviewLike | null | undefined,
+  fabricCanvas: FabricCanvasSelectionPreviewHost | null | undefined,
 ): FabricObjectLike[] {
   const marqueeBounds = getVectorSelectionMarqueeBounds(fabricCanvas);
-  if (!fabricCanvas || !marqueeBounds || typeof fabricCanvas.collectObjects !== 'function') {
+  if (!marqueeBounds) {
     return [];
   }
 
-  return fabricCanvas.collectObjects(marqueeBounds, {
-    includeIntersecting: !fabricCanvas.selectionFullyContained,
-  });
+  return collectSelectionPreviewObjects(fabricCanvas, marqueeBounds);
 }
