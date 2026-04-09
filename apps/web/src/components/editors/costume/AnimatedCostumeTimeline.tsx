@@ -528,49 +528,6 @@ export function AnimatedCostumeTimeline({
     <>
       <div className="border-t border-border/70 bg-background/95">
         <div className="flex flex-wrap items-center gap-3 border-b border-border/60 px-3 py-2 text-xs">
-          <div className="relative flex justify-center group/track-add">
-            {canAddTrack ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <IconButton
-                    className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-surface-interactive hover:text-foreground"
-                    label="Add track"
-                    size="sm"
-                  >
-                    <Plus className="size-3.5" />
-                  </IconButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="bottom" align="start" sideOffset={8} className="min-w-36 rounded-xl">
-                  <DropdownMenuItem onClick={onAddVectorTrack}>
-                    <Shapes className="size-4" />
-                    Vector
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={onAddBitmapTrack}>
-                    <Image className="size-4" />
-                    Pixel
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <>
-                <IconButton
-                  disabled
-                  className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/track-add:bg-surface-interactive"
-                  label="Add track"
-                  size="sm"
-                  title={maxTrackTooltip}
-                >
-                  <Plus className="size-3.5" />
-                </IconButton>
-                <div
-                  role="tooltip"
-                  className="pointer-events-none absolute left-[calc(100%+0.75rem)] top-1/2 min-w-max -translate-y-1/2 rounded-xl border border-border/70 bg-surface-floating px-3 py-2 text-xs text-foreground opacity-0 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)] transition-opacity group-hover/track-add:opacity-100"
-                >
-                  {maxTrackTooltip}
-                </div>
-              </>
-            )}
-          </div>
           <label className="flex items-center gap-2">
             <span className="text-muted-foreground">Frames</span>
             <input
@@ -607,23 +564,76 @@ export function AnimatedCostumeTimeline({
 
         <div className="overflow-auto px-3 py-3">
           <div className="min-w-max">
-            <div className="mb-2 flex items-center gap-1" style={{ paddingLeft: TIMELINE_TRACK_HEADER_WIDTH + 12 }}>
-              {Array.from({ length: clip.totalFrames }, (_, frameIndex) => (
-                <button
-                  key={`frame-header-${frameIndex}`}
-                  type="button"
-                  onClick={() => onFrameSelect(frameIndex)}
-                  className={cn(
-                    'flex h-8 items-center justify-center rounded text-[11px]',
-                    frameIndex === currentFrameIndex
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted/60 text-muted-foreground hover:bg-accent',
+            <div className="mb-2 flex items-center gap-3">
+              <div className="relative flex items-center" style={{ width: TIMELINE_TRACK_HEADER_WIDTH }} >
+                <div className="relative flex justify-center group/track-add">
+                  {canAddTrack ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <IconButton
+                          className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-surface-interactive hover:text-foreground"
+                          label="Add track"
+                          size="sm"
+                        >
+                          <Plus className="size-3.5" />
+                        </IconButton>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent side="bottom" align="start" sideOffset={8} className="min-w-36 rounded-xl">
+                        <DropdownMenuItem onClick={onAddVectorTrack}>
+                          <Shapes className="size-4" />
+                          Vector
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={onAddBitmapTrack}>
+                          <Image className="size-4" />
+                          Pixel
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <>
+                      <IconButton
+                        disabled
+                        className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/track-add:bg-surface-interactive"
+                        label="Add track"
+                        size="sm"
+                        title={maxTrackTooltip}
+                      >
+                        <Plus className="size-3.5" />
+                      </IconButton>
+                      <div
+                        role="tooltip"
+                        className="pointer-events-none absolute left-[calc(100%+0.75rem)] top-1/2 min-w-max -translate-y-1/2 rounded-xl border border-border/70 bg-surface-floating px-3 py-2 text-xs text-foreground opacity-0 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)] transition-opacity group-hover/track-add:opacity-100"
+                      >
+                        {maxTrackTooltip}
+                      </div>
+                    </>
                   )}
-                  style={{ width: TIMELINE_FRAME_WIDTH }}
-                >
-                  {frameIndex + 1}
-                </button>
-              ))}
+                </div>
+              </div>
+
+              <div
+                className="relative h-8"
+                style={{ width: clip.totalFrames * TIMELINE_FRAME_WIDTH }}
+              >
+                <div className="absolute inset-0 flex">
+                  {Array.from({ length: clip.totalFrames }, (_, frameIndex) => (
+                    <button
+                      key={`frame-header-${frameIndex}`}
+                      type="button"
+                      onClick={() => onFrameSelect(frameIndex)}
+                      className={cn(
+                        'flex h-full items-center justify-center border border-border/50 text-[11px]',
+                        frameIndex === currentFrameIndex
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted/60 text-muted-foreground hover:bg-accent',
+                      )}
+                      style={{ width: TIMELINE_FRAME_WIDTH }}
+                    >
+                      {frameIndex + 1}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div className="flex flex-col gap-2">
