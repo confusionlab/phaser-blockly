@@ -633,6 +633,24 @@ export function AnimatedCostumeTimeline({
           <div className="relative min-w-max">
             <div
               aria-hidden="true"
+              className="pointer-events-none absolute top-0 bottom-0 z-[5]"
+              style={{
+                left: TIMELINE_TRACK_HEADER_WIDTH + TIMELINE_SECTION_GAP,
+                width: clip.totalFrames * TIMELINE_FRAME_WIDTH,
+              }}
+            >
+              {Array.from({ length: Math.max(0, clip.totalFrames - 1) }, (_, separatorIndex) => (
+                <div
+                  key={`frame-separator-${separatorIndex}`}
+                  className="absolute top-0 bottom-0 w-px bg-border/45"
+                  style={{
+                    left: ((separatorIndex + 1) * TIMELINE_FRAME_WIDTH) - 0.5,
+                  }}
+                />
+              ))}
+            </div>
+            <div
+              aria-hidden="true"
               className="pointer-events-none absolute top-0 bottom-0 z-10 rounded-sm border-x border-primary/35 bg-primary/10"
               style={{
                 left: TIMELINE_TRACK_HEADER_WIDTH + TIMELINE_SECTION_GAP + (currentFrameIndex * TIMELINE_FRAME_WIDTH),
@@ -726,7 +744,7 @@ export function AnimatedCostumeTimeline({
                     key={`frame-header-${frameIndex}`}
                     type="button"
                     onClick={() => onFrameSelect(frameIndex)}
-                    className="flex h-full items-center justify-center border border-border/50 bg-muted/60 text-[11px] text-muted-foreground hover:bg-accent"
+                    className="flex h-full items-center justify-center bg-transparent text-[11px] text-muted-foreground transition-colors hover:text-foreground"
                     style={{ width: TIMELINE_FRAME_WIDTH }}
                   >
                     {frameIndex + 1}
@@ -877,7 +895,7 @@ export function AnimatedCostumeTimeline({
                                 onSelectTrack(track.id);
                                 onFrameSelect(frameIndex);
                               }}
-                              className="h-full border border-border/50 bg-background/60 transition-colors hover:bg-accent/70"
+                              className="h-full bg-transparent"
                               style={{ width: TIMELINE_FRAME_WIDTH }}
                             />
                           ))}
