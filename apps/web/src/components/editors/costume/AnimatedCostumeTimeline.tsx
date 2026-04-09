@@ -57,6 +57,10 @@ type CelInteractionState = {
   previewDurationFrames: number;
 };
 
+type FrameHeaderScrubState = {
+  active: boolean;
+};
+
 interface AnimatedCostumeTimelineProps {
   clip: AnimatedCostumeClip;
   currentFrameIndex: number;
@@ -178,8 +182,10 @@ export function AnimatedCostumeTimeline({
   const [celContextMenu, setCelContextMenu] = useState<CelContextMenuState | null>(null);
   const [celContextMenuPosition, setCelContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [celInteraction, setCelInteraction] = useState<CelInteractionState | null>(null);
+  const [frameHeaderScrub, setFrameHeaderScrub] = useState<FrameHeaderScrubState | null>(null);
   const trackContextMenuRef = useRef<HTMLDivElement | null>(null);
   const celContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const frameHeaderStripRef = useRef<HTMLDivElement | null>(null);
 
   const trackContextMenuTrack = useMemo(() => (
     trackContextMenu ? clip.tracks.find((track) => track.id === trackContextMenu.trackId) ?? null : null
@@ -354,6 +360,43 @@ export function AnimatedCostumeTimeline({
     };
   }, [celInteraction, onUpdateCelSpan]);
 
+  useEffect(() => {
+    if (!frameHeaderScrub?.active) {
+      return;
+    }
+
+    const selectFrameFromClientX = (clientX: number) => {
+      const strip = frameHeaderStripRef.current;
+      if (!strip) {
+        return;
+      }
+
+      const rect = strip.getBoundingClientRect();
+      const relativeX = clientX - rect.left;
+      const frameIndex = clampFrame(
+        Math.floor(relativeX / TIMELINE_FRAME_WIDTH),
+        0,
+        Math.max(clip.totalFrames - 1, 0),
+      );
+      onFrameSelect(frameIndex);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      selectFrameFromClientX(event.clientX);
+    };
+
+    const handleMouseUp = () => {
+      setFrameHeaderScrub(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp, { once: true });
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [clip.totalFrames, frameHeaderScrub, onFrameSelect]);
+
   const closeTrackContextMenu = () => {
     setTrackContextMenu(null);
   };
@@ -525,6 +568,24 @@ export function AnimatedCostumeTimeline({
     });
   };
 
+  const beginFrameHeaderScrub = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const strip = frameHeaderStripRef.current;
+    if (!strip) {
+      return;
+    }
+
+    event.preventDefault();
+    const rect = strip.getBoundingClientRect();
+    const relativeX = event.clientX - rect.left;
+    const frameIndex = clampFrame(
+      Math.floor(relativeX / TIMELINE_FRAME_WIDTH),
+      0,
+      Math.max(clip.totalFrames - 1, 0),
+    );
+    onFrameSelect(frameIndex);
+    setFrameHeaderScrub({ active: true });
+  };
+
   return (
     <>
       <div className="border-t border-border/70 bg-background/95">
@@ -623,6 +684,8 @@ export function AnimatedCostumeTimeline({
               <div
                 className="relative h-8"
                 style={{ width: clip.totalFrames * TIMELINE_FRAME_WIDTH }}
+                ref={frameHeaderStripRef}
+                onMouseDown={beginFrameHeaderScrub}
               >
                 <div className="absolute inset-0 flex">
                   {Array.from({ length: clip.totalFrames }, (_, frameIndex) => (
