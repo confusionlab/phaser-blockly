@@ -735,7 +735,7 @@ export function AnimatedCostumeTimeline({
                 </div>
               </div>
 
-              <div className="ml-1 flex h-8 w-7 shrink-0 flex-col">
+              <div className="flex h-8 w-7 shrink-0 flex-col">
                 <button
                   type="button"
                   onClick={() => onChangeTotalFrames(clip.totalFrames + 1)}
