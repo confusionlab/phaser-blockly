@@ -471,9 +471,7 @@ export function CostumeEditor() {
   const [showSessionLoadingOverlay, setShowSessionLoadingOverlay] = useState(false);
   const vectorStyleRef = useRef(vectorStyle);
   const vectorStyleMixedStateRef = useRef(vectorStyleMixedState);
-  const editorMode: CostumeEditorMode = activeLayer
-    ? getActiveCostumeLayerKind(editorCostume?.document ?? null)
-    : canvasEditorMode;
+  const editorMode: CostumeEditorMode = activeLayer?.kind ?? canvasEditorMode;
 
   vectorStyleRef.current = vectorStyle;
   vectorStyleMixedStateRef.current = vectorStyleMixedState;
@@ -1036,6 +1034,9 @@ export function CostumeEditor() {
           cloneCostumeDocument(nextEditorDocument),
         );
         loadedSessionRef.current = session;
+        const resolvedMode = canvasRef.current?.getEditorMode() ?? getActiveCostumeLayerKind(nextEditorDocument);
+        setCanvasEditorMode(resolvedMode);
+        setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       }
 
       if (options.skipRuntimePreviewRefresh !== true) {

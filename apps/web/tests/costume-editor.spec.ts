@@ -2751,6 +2751,59 @@ test.describe('Costume editor tools', () => {
     expect(invalidSnapshot).toBeUndefined();
   });
 
+  test('animated track selection switches the toolbar and properties to the active track kind', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.evaluate(async () => {
+      const { useProjectStore } = await import('/src/store/projectStore.ts');
+      const { convertStaticCostumeToAnimated, createAnimatedCostumeTrack } = await import('/src/lib/costume/costumeDocument.ts');
+
+      const store = useProjectStore.getState();
+      const project = store.project;
+      const scene = project?.scenes?.[0];
+      const object = scene?.objects?.[0];
+      const costume = object?.costumes?.[object.currentCostumeIndex ?? 0];
+      if (!scene?.id || !object?.id || !costume || costume.kind !== 'static') {
+        throw new Error('Expected a selected object with a static costume.');
+      }
+
+      const animatedCostume = convertStaticCostumeToAnimated(costume, { totalFrames: 4 });
+      const vectorTrack = createAnimatedCostumeTrack('vector', {
+        name: 'Layer 2',
+        totalFrames: 4,
+      });
+      vectorTrack.cels[0].startFrame = 2;
+      vectorTrack.cels[0].durationFrames = 2;
+      animatedCostume.clip.tracks.push(vectorTrack);
+
+      store.updateObject(scene.id, object.id, {
+        costumes: [animatedCostume],
+        currentCostumeIndex: 0,
+      });
+    });
+
+    const brushButton = page.getByTestId('costume-toolbar-tools').getByRole('button', { name: /^brush$/i });
+    const penButton = page.getByTestId('costume-toolbar-tools').getByRole('button', { name: /^pen$/i });
+    const eraserButton = page.getByTestId('costume-toolbar-tools').getByRole('button', { name: /^eraser$/i });
+    const propertiesBar = page.getByTestId('costume-toolbar-properties');
+    const bitmapBrushKindButton = propertiesBar.getByRole('button', { name: /^hard$/i });
+    const vectorTrackButton = page.getByRole('button', { name: /^layer 2 vector$/i });
+
+    await expect(vectorTrackButton).toBeVisible({ timeout: 10000 });
+    await brushButton.click();
+    await expect(eraserButton).toBeVisible();
+    await expect(penButton).toHaveCount(0);
+    await expect(bitmapBrushKindButton).toBeVisible();
+
+    await vectorTrackButton.click();
+
+    await expect(penButton).toBeVisible();
+    await expect(eraserButton).toHaveCount(0);
+    await expect(bitmapBrushKindButton).toHaveCount(0);
+  });
+
   test('adding bitmap and vector layers each undo and redo in a single history step', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');

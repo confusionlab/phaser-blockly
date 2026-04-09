@@ -44,6 +44,7 @@ export const COSTUME_CANVAS_SIZE = 1024;
 export const MAX_COSTUME_LAYERS = 8;
 export const DEFAULT_ANIMATED_COSTUME_TOTAL_FRAMES = 16;
 export const DEFAULT_ANIMATED_COSTUME_FPS = 8;
+export const MAX_ANIMATED_COSTUME_FPS = 24;
 export const DEFAULT_ANIMATED_COSTUME_PLAYBACK: AnimatedCostumePlayback = 'loop';
 const DEFAULT_BLEND_MODE: CostumeLayerBlendMode = 'normal';
 export const EMPTY_COSTUME_VECTOR_FABRIC_JSON = '{"version":"7.0.0","objects":[]}';
@@ -392,7 +393,7 @@ function sanitizeAnimatedFps(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return DEFAULT_ANIMATED_COSTUME_FPS;
   }
-  return Math.max(1, Math.floor(value));
+  return Math.min(MAX_ANIMATED_COSTUME_FPS, Math.max(1, Math.floor(value)));
 }
 
 function sanitizeAnimatedPlayback(value: unknown): AnimatedCostumePlayback {

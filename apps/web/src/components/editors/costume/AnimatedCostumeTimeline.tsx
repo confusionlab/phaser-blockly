@@ -17,9 +17,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Copy, Eye, EyeOff, Image, Lock, LockOpen, Plus, Shapes, Trash2 } from '@/components/ui/icons';
+import { Copy, Eye, EyeOff, Image, Lock, LockOpen, Minus, Plus, Shapes, Trash2 } from '@/components/ui/icons';
 import { EDITOR_POPOVER_Z_INDEX } from '@/components/editors/shared/editorChromeZIndices';
-import { MAX_COSTUME_LAYERS } from '@/lib/costume/costumeDocument';
+import { MAX_ANIMATED_COSTUME_FPS, MAX_COSTUME_LAYERS } from '@/lib/costume/costumeDocument';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
 import type { AnimatedCostumeCel, AnimatedCostumeClip } from '@/types';
@@ -200,6 +200,21 @@ export function AnimatedCostumeTimeline({
       ? celContextMenuTrack.cels.find((cel) => cel.id === celContextMenu.celId) ?? null
       : null
   ), [celContextMenu, celContextMenuTrack]);
+  const canRemoveTrailingFrame = useMemo(() => {
+    if (clip.totalFrames <= 1) {
+      return false;
+    }
+
+    const lastFrameIndex = clip.totalFrames - 1;
+    const lastFrameIsOccupied = clip.tracks.some((track) => track.cels.some((cel) => (
+      lastFrameIndex >= cel.startFrame &&
+      lastFrameIndex < cel.startFrame + cel.durationFrames
+    )));
+    return !lastFrameIsOccupied;
+  }, [clip.totalFrames, clip.tracks]);
+  const removeTrailingFrameTooltip = clip.totalFrames <= 1
+    ? 'At least one frame is required'
+    : 'Clear the last frame before removing it';
 
   useEffect(() => {
     if (editingTrackId && !clip.tracks.some((track) => track.id === editingTrackId)) {
@@ -589,41 +604,6 @@ export function AnimatedCostumeTimeline({
   return (
     <>
       <div className="border-t border-border/70 bg-background/95">
-        <div className="flex flex-wrap items-center gap-3 border-b border-border/60 px-3 py-2 text-xs">
-          <label className="flex items-center gap-2">
-            <span className="text-muted-foreground">Frames</span>
-            <input
-              type="number"
-              min={1}
-              value={clip.totalFrames}
-              onChange={(event) => onChangeTotalFrames(Number(event.target.value))}
-              className="h-7 w-16 rounded border border-input bg-background px-2 text-xs"
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            <span className="text-muted-foreground">FPS</span>
-            <input
-              type="number"
-              min={1}
-              value={clip.fps}
-              onChange={(event) => onChangeFps(Number(event.target.value))}
-              className="h-7 w-16 rounded border border-input bg-background px-2 text-xs"
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            <span className="text-muted-foreground">Playback</span>
-            <select
-              value={clip.playback}
-              onChange={(event) => onChangePlayback(event.target.value as AnimatedCostumeClip['playback'])}
-              className="h-7 rounded border border-input bg-background px-2 text-xs"
-            >
-              <option value="play-once">Play Once</option>
-              <option value="loop">Loop</option>
-              <option value="ping-pong">Ping-Pong</option>
-            </select>
-          </label>
-        </div>
-
         <div className="overflow-auto px-3 py-3">
           <div className="relative min-w-max">
             <div
@@ -635,49 +615,77 @@ export function AnimatedCostumeTimeline({
               }}
             />
             <div className="mb-2 flex items-center gap-3">
-              <div className="relative flex items-center" style={{ width: TIMELINE_TRACK_HEADER_WIDTH }} >
-                <div className="relative flex justify-center group/track-add">
-                  {canAddTrack ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
+              <div className="relative" style={{ width: TIMELINE_TRACK_HEADER_WIDTH }} >
+                <div className="flex h-8 items-center justify-between gap-2">
+                  <div className="relative flex items-center group/track-add">
+                    {canAddTrack ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <IconButton
+                            className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-surface-interactive hover:text-foreground"
+                            label="Add track"
+                            size="sm"
+                          >
+                            <Plus className="size-3.5" />
+                          </IconButton>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent side="bottom" align="start" sideOffset={8} className="min-w-36 rounded-xl">
+                          <DropdownMenuItem onClick={onAddVectorTrack}>
+                            <Shapes className="size-4" />
+                            Vector
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={onAddBitmapTrack}>
+                            <Image className="size-4" />
+                            Pixel
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : (
+                      <>
                         <IconButton
-                          className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-surface-interactive hover:text-foreground"
+                          disabled
+                          className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/track-add:bg-surface-interactive"
                           label="Add track"
                           size="sm"
+                          title={maxTrackTooltip}
                         >
                           <Plus className="size-3.5" />
                         </IconButton>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent side="bottom" align="start" sideOffset={8} className="min-w-36 rounded-xl">
-                        <DropdownMenuItem onClick={onAddVectorTrack}>
-                          <Shapes className="size-4" />
-                          Vector
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={onAddBitmapTrack}>
-                          <Image className="size-4" />
-                          Pixel
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : (
-                    <>
-                      <IconButton
-                        disabled
-                        className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/track-add:bg-surface-interactive"
-                        label="Add track"
-                        size="sm"
-                        title={maxTrackTooltip}
-                      >
-                        <Plus className="size-3.5" />
-                      </IconButton>
-                      <div
-                        role="tooltip"
-                        className="pointer-events-none absolute left-[calc(100%+0.75rem)] top-1/2 min-w-max -translate-y-1/2 rounded-xl border border-border/70 bg-surface-floating px-3 py-2 text-xs text-foreground opacity-0 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)] transition-opacity group-hover/track-add:opacity-100"
-                      >
-                        {maxTrackTooltip}
-                      </div>
-                    </>
-                  )}
+                        <div
+                          role="tooltip"
+                          className="pointer-events-none absolute left-[calc(100%+0.75rem)] top-1/2 min-w-max -translate-y-1/2 rounded-xl border border-border/70 bg-surface-floating px-3 py-2 text-xs text-foreground opacity-0 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)] transition-opacity group-hover/track-add:opacity-100"
+                        >
+                          {maxTrackTooltip}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground">FPS</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={MAX_ANIMATED_COSTUME_FPS}
+                        inputMode="numeric"
+                        value={clip.fps}
+                        onChange={(event) => onChangeFps(Number(event.target.value))}
+                        className="h-7 w-11 rounded border border-input bg-background px-1.5 text-center text-xs tabular-nums"
+                      />
+                    </label>
+
+                    <select
+                      value={clip.playback}
+                      onChange={(event) => onChangePlayback(event.target.value as AnimatedCostumeClip['playback'])}
+                      className="h-7 rounded border border-input bg-background px-2 text-xs"
+                      aria-label="Playback mode"
+                    >
+                      <option value="play-once">Play Once</option>
+                      <option value="loop">Loop</option>
+                      <option value="ping-pong">Ping-Pong</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -700,6 +708,31 @@ export function AnimatedCostumeTimeline({
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="ml-1 flex h-8 w-7 shrink-0 flex-col">
+                <button
+                  type="button"
+                  onClick={() => onChangeTotalFrames(clip.totalFrames + 1)}
+                  className="flex h-1/2 items-center justify-center rounded-t-md border border-border/50 bg-muted/60 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  aria-label="Add frame"
+                >
+                  <Plus className="size-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (canRemoveTrailingFrame) {
+                      onChangeTotalFrames(clip.totalFrames - 1);
+                    }
+                  }}
+                  disabled={!canRemoveTrailingFrame}
+                  className="relative -mt-px flex h-1/2 items-center justify-center rounded-b-md border border-border/50 bg-muted/60 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-muted/60 disabled:hover:text-muted-foreground"
+                  aria-label="Remove frame"
+                  title={!canRemoveTrailingFrame ? removeTrailingFrameTooltip : 'Remove last frame'}
+                >
+                  <Minus className="size-3" />
+                </button>
               </div>
             </div>
 
