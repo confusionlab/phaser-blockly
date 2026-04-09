@@ -1536,61 +1536,6 @@ export function CostumeEditor() {
     });
   }, [applyOperationToCurrentObject, currentObjectTarget]);
 
-  const handleReplaceCurrentCostume = useCallback((nextCostume: Costume) => {
-    if (!currentCostume) {
-      return;
-    }
-
-    const nextCostumes = costumes.map((costume) => costume.id === currentCostume.id ? nextCostume : costume);
-    const nextCostumeIndex = Math.max(0, nextCostumes.findIndex((costume) => costume.id === nextCostume.id));
-
-    if (selectedComponentId) {
-      updateComponent(selectedComponentId, {
-        costumes: nextCostumes,
-        currentCostumeIndex: nextCostumeIndex,
-      });
-    } else if (selectedSceneId && selectedObjectId) {
-      updateObject(selectedSceneId, selectedObjectId, {
-        costumes: nextCostumes,
-        currentCostumeIndex: nextCostumeIndex,
-      });
-    }
-
-    replaceSelectedCostumeIds([nextCostume.id], { anchorId: nextCostume.id });
-  }, [
-    costumes,
-    currentCostume,
-    replaceSelectedCostumeIds,
-    selectedComponentId,
-    selectedObjectId,
-    selectedSceneId,
-    updateComponent,
-    updateObject,
-  ]);
-
-  const handleToggleAnimatedMode = useCallback((enabled: boolean) => {
-    if (!currentCostume) {
-      return;
-    }
-
-    if (enabled) {
-      if (isAnimatedCostume(currentCostume)) {
-        return;
-      }
-      const nextCostume = convertStaticCostumeToAnimated(currentCostume);
-      handleReplaceCurrentCostume(nextCostume);
-      return;
-    }
-
-    if (!isAnimatedCostume(currentCostume)) {
-      return;
-    }
-
-    const nextCostume = convertAnimatedCostumeToStatic(currentCostume, clampedAnimatedFrameIndex);
-    handleReplaceCurrentCostume(nextCostume);
-    setAnimatedFrameIndex(currentSession, 0);
-  }, [clampedAnimatedFrameIndex, currentCostume, currentSession, handleReplaceCurrentCostume, setAnimatedFrameIndex]);
-
   const handleAnimatedFrameSelect = useCallback((frameIndex: number) => {
     setAnimatedFrameIndex(currentSession, frameIndex);
     currentCostumeIdRef.current = null;
@@ -1671,6 +1616,61 @@ export function CostumeEditor() {
     selectedSceneId,
     updateComponent,
     updateObject,
+  ]);
+
+  const handleConvertCostumeType = useCallback((costumeId: string, nextKind: 'static' | 'animated') => {
+    const sourceCostume = editorCostume?.id === costumeId
+      ? editorCostume
+      : (costumes.find((costume) => costume.id === costumeId) ?? null);
+    if (!sourceCostume) {
+      return;
+    }
+
+    if (nextKind === 'animated') {
+      if (isAnimatedCostume(sourceCostume)) {
+        return;
+      }
+
+      const nextCostume = convertStaticCostumeToAnimated(sourceCostume);
+      const nextCostumes = costumes.map((costume) => costume.id === costumeId ? nextCostume : costume);
+      const nextSelectedCostumeIds = selectedCostumeIds.includes(costumeId)
+        ? selectedCostumeIds.map((id) => id === costumeId ? nextCostume.id : id)
+        : selectedCostumeIds;
+      handleReplaceCostumes(
+        nextCostumes,
+        activeCostumeId === costumeId ? nextCostume.id : activeCostumeId,
+        nextSelectedCostumeIds,
+      );
+      return;
+    }
+
+    if (!isAnimatedCostume(sourceCostume)) {
+      return;
+    }
+
+    const frameIndex = editorCostume?.id === costumeId ? clampedAnimatedFrameIndex : 0;
+    const nextCostume = convertAnimatedCostumeToStatic(sourceCostume, frameIndex);
+    const nextCostumes = costumes.map((costume) => costume.id === costumeId ? nextCostume : costume);
+    const nextSelectedCostumeIds = selectedCostumeIds.includes(costumeId)
+      ? selectedCostumeIds.map((id) => id === costumeId ? nextCostume.id : id)
+      : selectedCostumeIds;
+    handleReplaceCostumes(
+      nextCostumes,
+      activeCostumeId === costumeId ? nextCostume.id : activeCostumeId,
+      nextSelectedCostumeIds,
+    );
+    if (editorCostume?.id === costumeId) {
+      setAnimatedFrameIndex(currentSession, 0);
+    }
+  }, [
+    activeCostumeId,
+    clampedAnimatedFrameIndex,
+    costumes,
+    currentSession,
+    editorCostume,
+    handleReplaceCostumes,
+    selectedCostumeIds,
+    setAnimatedFrameIndex,
   ]);
 
   const handleSelectLayer = useCallback((layerId: string) => {
@@ -2167,42 +2167,10 @@ export function CostumeEditor() {
         onReplaceCostumes={handleReplaceCostumes}
         onPrepareCostumeDrag={prepareCostumeDragSelection}
         onReorderCostumes={handleReorderCostumes}
+        onConvertCostumeType={handleConvertCostumeType}
       />
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {editorCostume ? (
-          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2 text-xs">
-            <span className="text-muted-foreground">Costume Type</span>
-            <button
-              type="button"
-              onClick={() => handleToggleAnimatedMode(false)}
-              className={`rounded px-2 py-1 ${
-                !isAnimatedCostume(editorCostume)
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-foreground'
-              }`}
-            >
-              Static
-            </button>
-            <button
-              type="button"
-              onClick={() => handleToggleAnimatedMode(true)}
-              className={`rounded px-2 py-1 ${
-                isAnimatedCostume(editorCostume)
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-foreground'
-              }`}
-            >
-              Animated
-            </button>
-            {isAnimatedCostume(editorCostume) ? (
-              <span className="text-muted-foreground">
-                Frame {clampedAnimatedFrameIndex + 1} of {editorCostume.clip.totalFrames}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-
         {activeLayer && activeLayer.visible && (!editorCostume || !isAnimatedCostume(editorCostume)) ? (
           <CostumeToolbar
             editorMode={editorMode}

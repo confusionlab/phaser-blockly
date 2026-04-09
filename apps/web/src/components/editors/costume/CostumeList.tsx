@@ -12,6 +12,12 @@ import { api } from '@convex-generated/api';
 import { Card } from '@/components/ui/card';
 import { IconButton } from '@/components/ui/icon-button';
 import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Plus, Upload, Loader2, Library, Copy, CopyPlus, Trash2, Clipboard, Scissors } from '@/components/ui/icons';
 import { processImage } from '@/utils/imageProcessor';
 import { calculateVisibleBounds } from '@/utils/imageBounds';
@@ -28,6 +34,7 @@ import {
   createStaticCostumeFromDocument,
   createBlankCostumeDocument,
   createBitmapCostumeDocument,
+  convertStaticCostumeToAnimated,
   isAnimatedCostume,
 } from '@/lib/costume/costumeDocument';
 import {
@@ -63,6 +70,7 @@ interface CostumeListProps {
   onReplaceCostumes: (nextCostumes: Costume[], nextActiveCostumeId: string | null, nextSelectedCostumeIds: string[]) => void;
   onPrepareCostumeDrag: (costumeId: string) => string[];
   onReorderCostumes: (costumeIds: string[], targetIndex: number) => void;
+  onConvertCostumeType: (costumeId: string, nextKind: 'static' | 'animated') => void;
 }
 
 const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costume: Costume }) {
@@ -227,6 +235,7 @@ export const CostumeList = memo(({
   onReplaceCostumes,
   onPrepareCostumeDrag,
   onReorderCostumes,
+  onConvertCostumeType,
 }: CostumeListProps) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -309,20 +318,20 @@ export const CostumeList = memo(({
     onReorder: onReorderCostumes,
   });
 
-  const handleAddBlank = () => {
+  const handleAddBlank = (kind: 'static' | 'animated') => {
     // Create a blank 1024x1024 transparent canvas as initial costume
     const canvas = document.createElement('canvas');
     canvas.width = 1024;
     canvas.height = 1024;
     // Canvas is transparent by default, no need to fill
 
-    const newCostume: Costume = createStaticCostumeFromDocument({
+    const staticCostume = createStaticCostumeFromDocument({
       id: crypto.randomUUID(),
       name: `costume${costumes.length + 1}`,
       assetId: canvas.toDataURL('image/png'),
       document: createBlankCostumeDocument(),
     });
-    onAddCostume(newCostume);
+    onAddCostume(kind === 'animated' ? convertStaticCostumeToAnimated(staticCostume) : staticCostume);
   };
 
   const handleUploadClick = () => {
@@ -521,14 +530,25 @@ export const CostumeList = memo(({
       <AssetSidebar
         actions={
           <>
-            <IconButton
-              label="New blank costume"
-              onClick={handleAddBlank}
-              disabled={isProcessing}
-              size="xs"
-            >
-              <Plus className="size-3.5" />
-            </IconButton>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <IconButton
+                  label="New blank costume"
+                  disabled={isProcessing}
+                  size="xs"
+                >
+                  <Plus className="size-3.5" />
+                </IconButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="bottom" align="start" sideOffset={8} className="min-w-36 rounded-xl">
+                <DropdownMenuItem onClick={() => handleAddBlank('static')}>
+                  Static
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleAddBlank('animated')}>
+                  Animated
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <IconButton
               label="Import image"
               onClick={handleUploadClick}
@@ -660,6 +680,20 @@ export const CostumeList = memo(({
             >
               Duplicate
             </MenuItemButton>
+            {contextMenuCostume ? (
+              <MenuItemButton
+                icon={<CopyPlus className="size-4" />}
+                onClick={() => {
+                  onConvertCostumeType(
+                    contextMenuCostume.id,
+                    isAnimatedCostume(contextMenuCostume) ? 'static' : 'animated',
+                  );
+                  handleCloseContextMenu();
+                }}
+              >
+                {isAnimatedCostume(contextMenuCostume) ? 'Switch to Static' : 'Switch to Animated'}
+              </MenuItemButton>
+            ) : null}
             <MenuSeparator />
             <MenuItemButton
               icon={contextMenuCostume && savingToLibrary === contextMenuCostumeIndex ? (

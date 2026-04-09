@@ -28,6 +28,7 @@ const MAX_CONTEXT_MENU_MARGIN = 12;
 const TIMELINE_FRAME_WIDTH = 32;
 const TIMELINE_TRACK_HEADER_WIDTH = 260;
 const TIMELINE_SECTION_GAP = 12;
+const TIMELINE_CELL_HORIZONTAL_INSET = 1;
 
 type TrackContextMenuState = {
   trackId: string;
@@ -186,6 +187,8 @@ export function AnimatedCostumeTimeline({
   const trackContextMenuRef = useRef<HTMLDivElement | null>(null);
   const celContextMenuRef = useRef<HTMLDivElement | null>(null);
   const frameHeaderStripRef = useRef<HTMLDivElement | null>(null);
+  const timelineScrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const previousTotalFramesRef = useRef(clip.totalFrames);
 
   const trackContextMenuTrack = useMemo(() => (
     trackContextMenu ? clip.tracks.find((track) => track.id === trackContextMenu.trackId) ?? null : null
@@ -412,6 +415,28 @@ export function AnimatedCostumeTimeline({
     };
   }, [clip.totalFrames, frameHeaderScrub, onFrameSelect]);
 
+  useEffect(() => {
+    const previousTotalFrames = previousTotalFramesRef.current;
+    previousTotalFramesRef.current = clip.totalFrames;
+
+    if (clip.totalFrames <= previousTotalFrames) {
+      return;
+    }
+
+    const scrollContainer = timelineScrollContainerRef.current;
+    if (!scrollContainer) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      scrollContainer.scrollLeft = scrollContainer.scrollWidth;
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [clip.totalFrames]);
+
   const closeTrackContextMenu = () => {
     setTrackContextMenu(null);
   };
@@ -604,7 +629,7 @@ export function AnimatedCostumeTimeline({
   return (
     <>
       <div className="border-t border-border/70 bg-background/95">
-        <div className="overflow-auto px-3 py-3">
+        <div ref={timelineScrollContainerRef} className="overflow-auto px-3 py-3">
           <div className="relative min-w-max">
             <div
               aria-hidden="true"
@@ -869,18 +894,25 @@ export function AnimatedCostumeTimeline({
                             <div
                               key={`${cel.id}:${celIndex}`}
                               className={cn(
-                                'absolute inset-y-1 rounded-md border shadow-sm transition-[background-color,border-color,box-shadow]',
+                                'group/cel absolute inset-y-1 rounded-md border shadow-sm transition-[background-color,border-color,box-shadow]',
                                 'border-emerald-500/70 bg-emerald-100/90 hover:bg-emerald-100',
                                 celInteraction?.celId === cel.id && 'z-20 shadow-md',
                               )}
                               style={{
-                                left: displayedCel.startFrame * TIMELINE_FRAME_WIDTH,
-                                width: displayedCel.durationFrames * TIMELINE_FRAME_WIDTH,
+                                left: (displayedCel.startFrame * TIMELINE_FRAME_WIDTH) + TIMELINE_CELL_HORIZONTAL_INSET,
+                                width: Math.max(
+                                  0,
+                                  (displayedCel.durationFrames * TIMELINE_FRAME_WIDTH) - (TIMELINE_CELL_HORIZONTAL_INSET * 2),
+                                ),
                               }}
                               onContextMenu={(event) => handleCelContextMenu(event, track.id, cel.id)}
                             >
                               <div
-                                className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-md bg-emerald-500/20 hover:bg-emerald-500/35"
+                                className={cn(
+                                  'absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-md bg-emerald-500/20 transition-opacity hover:bg-emerald-500/35',
+                                  'opacity-0 group-hover/cel:opacity-100',
+                                  celInteraction?.celId === cel.id && 'opacity-100',
+                                )}
                                 onMouseDown={(event) => beginCelInteraction(
                                   event,
                                   track.id,
@@ -891,7 +923,11 @@ export function AnimatedCostumeTimeline({
                                 )}
                               />
                               <div
-                                className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-md bg-emerald-500/20 hover:bg-emerald-500/35"
+                                className={cn(
+                                  'absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-md bg-emerald-500/20 transition-opacity hover:bg-emerald-500/35',
+                                  'opacity-0 group-hover/cel:opacity-100',
+                                  celInteraction?.celId === cel.id && 'opacity-100',
+                                )}
                                 onMouseDown={(event) => beginCelInteraction(
                                   event,
                                   track.id,
