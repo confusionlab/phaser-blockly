@@ -27,6 +27,7 @@ import type { AnimatedCostumeCel, AnimatedCostumeClip } from '@/types';
 const MAX_CONTEXT_MENU_MARGIN = 12;
 const TIMELINE_FRAME_WIDTH = 32;
 const TIMELINE_TRACK_HEADER_WIDTH = 260;
+const TIMELINE_SECTION_GAP = 12;
 
 type TrackContextMenuState = {
   trackId: string;
@@ -563,7 +564,15 @@ export function AnimatedCostumeTimeline({
         </div>
 
         <div className="overflow-auto px-3 py-3">
-          <div className="min-w-max">
+          <div className="relative min-w-max">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute top-0 bottom-0 z-10 rounded-sm border-x border-primary/35 bg-primary/10"
+              style={{
+                left: TIMELINE_TRACK_HEADER_WIDTH + TIMELINE_SECTION_GAP + (currentFrameIndex * TIMELINE_FRAME_WIDTH),
+                width: TIMELINE_FRAME_WIDTH,
+              }}
+            />
             <div className="mb-2 flex items-center gap-3">
               <div className="relative flex items-center" style={{ width: TIMELINE_TRACK_HEADER_WIDTH }} >
                 <div className="relative flex justify-center group/track-add">
@@ -617,19 +626,14 @@ export function AnimatedCostumeTimeline({
               >
                 <div className="absolute inset-0 flex">
                   {Array.from({ length: clip.totalFrames }, (_, frameIndex) => (
-                    <button
-                      key={`frame-header-${frameIndex}`}
-                      type="button"
-                      onClick={() => onFrameSelect(frameIndex)}
-                      className={cn(
-                        'flex h-full items-center justify-center border border-border/50 text-[11px]',
-                        frameIndex === currentFrameIndex
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted/60 text-muted-foreground hover:bg-accent',
-                      )}
-                      style={{ width: TIMELINE_FRAME_WIDTH }}
-                    >
-                      {frameIndex + 1}
+                  <button
+                    key={`frame-header-${frameIndex}`}
+                    type="button"
+                    onClick={() => onFrameSelect(frameIndex)}
+                    className="flex h-full items-center justify-center border border-border/50 bg-muted/60 text-[11px] text-muted-foreground hover:bg-accent"
+                    style={{ width: TIMELINE_FRAME_WIDTH }}
+                  >
+                    {frameIndex + 1}
                     </button>
                   ))}
                 </div>
@@ -752,10 +756,7 @@ export function AnimatedCostumeTimeline({
                                 onSelectTrack(track.id);
                                 onFrameSelect(frameIndex);
                               }}
-                              className={cn(
-                                'h-full border border-border/50 bg-background/60 transition-colors hover:bg-accent/70',
-                                frameIndex === currentFrameIndex && 'bg-primary/10 ring-1 ring-inset ring-primary/70',
-                              )}
+                              className="h-full border border-border/50 bg-background/60 transition-colors hover:bg-accent/70"
                               style={{ width: TIMELINE_FRAME_WIDTH }}
                             />
                           ))}
@@ -767,17 +768,13 @@ export function AnimatedCostumeTimeline({
                             ? track.cels[celIndex - 1].startFrame + track.cels[celIndex - 1].durationFrames
                             : 0;
                           const nextStartFrame = track.cels[celIndex + 1]?.startFrame ?? clip.totalFrames;
-                          const spansCurrentFrame = currentFrameIndex >= displayedCel.startFrame
-                            && currentFrameIndex < displayedCel.startFrame + displayedCel.durationFrames;
 
                           return (
                             <div
                               key={`${cel.id}:${celIndex}`}
                               className={cn(
                                 'absolute inset-y-1 rounded-md border shadow-sm transition-[background-color,border-color,box-shadow]',
-                                spansCurrentFrame
-                                  ? 'border-primary bg-primary/20 shadow-[0_0_0_1px_rgba(59,130,246,0.18)]'
-                                  : 'border-emerald-500/70 bg-emerald-100/90 hover:bg-emerald-100',
+                                'border-emerald-500/70 bg-emerald-100/90 hover:bg-emerald-100',
                                 celInteraction?.celId === cel.id && 'z-20 shadow-md',
                               )}
                               style={{
