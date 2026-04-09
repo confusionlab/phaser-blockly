@@ -6,6 +6,7 @@ import {
 } from '@/db/database';
 import {
   cloneCostumeDocument,
+  createStaticCostumeFromDocument,
   ensureCostumeDocument,
   getActiveCostumeLayer,
   isBitmapCostumeLayer,
@@ -103,13 +104,13 @@ export async function hydrateCostumeLibraryItemForInsertion(
         ...baseObject,
         id: 'template-object',
         name: item.name,
-        costumes: [{
+        costumes: [createStaticCostumeFromDocument({
           id: 'template-costume',
           name: item.name,
           assetId: '',
           bounds: item.bounds,
           document: cloneCostumeDocument(item.document),
-        }],
+        })],
         currentCostumeIndex: 0,
         sounds: [],
       }],

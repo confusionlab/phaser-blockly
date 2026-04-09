@@ -10,6 +10,7 @@ import {
 } from '@/store/universalHistory';
 import { CostumeList } from './costume/CostumeList';
 import { CostumeLayerPanel } from './costume/CostumeLayerPanel';
+import { AnimatedCostumeTimeline } from './costume/AnimatedCostumeTimeline';
 import {
   CostumeCanvas,
   DEFAULT_COSTUME_PREVIEW_SCALE,
@@ -62,20 +63,38 @@ import { DEFAULT_BITMAP_FILL_TEXTURE_ID } from '@/lib/background/bitmapFillCore'
 import { DEFAULT_VECTOR_STROKE_BRUSH_ID, DEFAULT_VECTOR_STROKE_WIGGLE } from '@/lib/vector/vectorStrokeBrushCore';
 import { DEFAULT_VECTOR_FILL_TEXTURE_ID } from '@/lib/vector/vectorFillTextureCore';
 import {
+  cloneAnimatedCostumeClip,
   cloneCostumeDocument,
+  convertAnimatedCostumeToStatic,
+  convertStaticCostumeToAnimated,
+  createAnimatedCostumeTrack,
   createBitmapLayer,
   createVectorLayer,
+  deleteAnimatedCostumeTrackCel,
   duplicateCostumeLayer,
+  duplicateAnimatedCostumeTrack,
   getActiveCostumeLayer,
   getActiveCostumeLayerKind,
+  getAnimatedCostumeTrackById,
   getCostumeLayerById,
   getCostumeLayerIndex,
   insertCostumeLayerAfterActive,
+  insertAnimatedCostumeTrackAfterActive,
+  isAnimatedCostume,
   isVectorCostumeLayer,
+  materializeAnimatedEditorFrame,
+  materializeAnimatedFrame,
   reorderCostumeLayer,
+  reorderAnimatedCostumeTrack,
   removeCostumeLayer,
+  removeAnimatedCostumeTrack,
+  setAnimatedCostumeActiveTrack,
+  setAnimatedCostumeClipFrameCount,
   setActiveCostumeLayer,
   setCostumeLayerVisibility,
+  updateAnimatedCostumeClipPlayback,
+  updateAnimatedCostumeTrack,
+  updateAnimatedCostumeTrackCelDuration,
   updateCostumeLayer,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
@@ -84,6 +103,7 @@ import {
   cloneCostumeAssetFrame,
 } from '@/lib/costume/costumeAssetFrame';
 import {
+  renderAnimatedCostumePosterPreview,
   renderCostumeDocument,
 } from '@/lib/costume/costumeDocumentRender';
 import {
@@ -110,11 +130,26 @@ function clonePersistedState(
   }
 
   return {
+    kind: state.kind,
     assetId: state.assetId,
     bounds: state.bounds ? { ...state.bounds } : undefined,
     assetFrame: cloneCostumeAssetFrame(state.assetFrame),
     document: cloneCostumeDocument(state.document),
+    clip: state.clip ? cloneAnimatedCostumeClip(state.clip) : undefined,
   };
+}
+
+function areAnimatedClipsEqual(
+  a: CostumeEditorPersistedState['clip'],
+  b: CostumeEditorPersistedState['clip'],
+): boolean {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function arePersistedStatesEqual(
@@ -129,10 +164,12 @@ function arePersistedStatesEqual(
   }
 
   return (
+    a.kind === b.kind &&
     a.assetId === b.assetId &&
     areCostumeBoundsEqual(a.bounds, b.bounds) &&
     areCostumeAssetFramesEqual(a.assetFrame, b.assetFrame) &&
-    areCostumeDocumentsEqual(a.document, b.document)
+    areCostumeDocumentsEqual(a.document, b.document) &&
+    areAnimatedClipsEqual(a.clip, b.clip)
   );
 }
 
@@ -251,11 +288,13 @@ export function CostumeEditor() {
   const workingPersistedStateRef = useRef<CostumeEditorPersistedState | null>(null);
   const documentMutationChainRef = useRef<Promise<void>>(Promise.resolve());
   const flattenedPreviewRefreshIdRef = useRef(0);
+  const animatedFrameIndexBySessionKeyRef = useRef<Map<string, number>>(new Map());
   const scheduleFlattenedPreviewRefreshRef = useRef((
     _session: CostumeEditorSession,
-    _document: CostumeEditorPersistedState['document'],
+    _state: CostumeEditorPersistedState,
   ) => {});
   const [workingPersistedState, setWorkingPersistedStateState] = useState<CostumeEditorPersistedState | null>(null);
+  const [animatedFrameIndex, setAnimatedFrameIndexState] = useState(0);
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
@@ -302,12 +341,42 @@ export function CostumeEditor() {
       bounds: currentWorkingPersistedState.bounds,
       assetFrame: cloneCostumeAssetFrame(currentWorkingPersistedState.assetFrame),
       document: currentWorkingPersistedState.document,
+      ...(currentWorkingPersistedState.kind === 'animated' && currentWorkingPersistedState.clip
+        ? {
+            kind: 'animated' as const,
+            clip: cloneAnimatedCostumeClip(currentWorkingPersistedState.clip),
+          }
+        : {
+            kind: 'static' as const,
+          }),
     };
   }, [currentCostume, currentWorkingPersistedState]);
   currentCostumeRef.current = editorCostume;
-  const activeLayer = editorCostume ? getActiveCostumeLayer(editorCostume.document) : null;
-  const currentCostumeLoadKey = editorCostume
-    ? `${editorCostume.id}:${editorCostume.document.activeLayerId}`
+  const setAnimatedFrameIndex = useCallback((session: CostumeEditorSession | null, nextFrameIndex: number) => {
+    const nextSessionKey = session?.key ?? null;
+    const boundedFrameIndex = Math.max(0, Math.floor(nextFrameIndex));
+    if (nextSessionKey) {
+      animatedFrameIndexBySessionKeyRef.current.set(nextSessionKey, boundedFrameIndex);
+    }
+    setAnimatedFrameIndexState(boundedFrameIndex);
+  }, []);
+  const clampedAnimatedFrameIndex = useMemo(() => {
+    if (!editorCostume || !isAnimatedCostume(editorCostume)) {
+      return 0;
+    }
+    return Math.max(0, Math.min(animatedFrameIndex, editorCostume.clip.totalFrames - 1));
+  }, [animatedFrameIndex, editorCostume]);
+  const editorDocument = useMemo(() => {
+    if (!editorCostume) {
+      return null;
+    }
+    return isAnimatedCostume(editorCostume)
+      ? materializeAnimatedEditorFrame(editorCostume.clip, clampedAnimatedFrameIndex)
+      : editorCostume.document;
+  }, [clampedAnimatedFrameIndex, editorCostume]);
+  const activeLayer = editorDocument ? getActiveCostumeLayer(editorDocument) : null;
+  const currentCostumeLoadKey = editorCostume && editorDocument
+    ? `${editorCostume.id}:${clampedAnimatedFrameIndex}:${editorDocument.activeLayerId}`
     : null;
   const currentObjectTarget = useMemo(
     () => createCostumeObjectTarget(selectedSceneId, selectedObjectId, selectedComponentId),
@@ -333,8 +402,8 @@ export function CostumeEditor() {
     },
   });
   currentSessionRef.current = currentSession;
-  const initialEditorMode: CostumeEditorMode = editorCostume
-    ? getInitialCostumeEditorMode(editorCostume)
+  const initialEditorMode: CostumeEditorMode = editorDocument
+    ? getInitialCostumeEditorMode({ ...editorCostume!, document: editorDocument })
     : 'bitmap';
 
   const [canvasEditorMode, setCanvasEditorMode] = useState<CostumeEditorMode>(initialEditorMode);
@@ -410,6 +479,18 @@ export function CostumeEditor() {
   vectorStyleMixedStateRef.current = vectorStyleMixedState;
 
   useEffect(() => {
+    if (!currentSession || !editorCostume || !isAnimatedCostume(editorCostume)) {
+      setAnimatedFrameIndexState(0);
+      return;
+    }
+
+    const storedFrameIndex = animatedFrameIndexBySessionKeyRef.current.get(currentSession.key) ?? 0;
+    const boundedFrameIndex = Math.max(0, Math.min(storedFrameIndex, editorCostume.clip.totalFrames - 1));
+    setAnimatedFrameIndexState(boundedFrameIndex);
+    animatedFrameIndexBySessionKeyRef.current.set(currentSession.key, boundedFrameIndex);
+  }, [currentSession, editorCostume]);
+
+  useEffect(() => {
     setCanvasEditorMode((prev) => {
       if (prev === initialEditorMode) return prev;
       return currentCostumeIdRef.current === null ? initialEditorMode : prev;
@@ -452,10 +533,12 @@ export function CostumeEditor() {
     }
 
     return {
+      kind: costume.kind,
       assetId: costume.assetId,
       bounds: costume.bounds ? { ...costume.bounds } : undefined,
       assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
       document: cloneCostumeDocument(costume.document),
+      clip: isAnimatedCostume(costume) ? cloneAnimatedCostumeClip(costume.clip) : undefined,
     };
   }, []);
   const storePersistedState = useMemo(() => {
@@ -475,6 +558,7 @@ export function CostumeEditor() {
       workingState: baseState ?? workingPersistedStateRef.current,
       costume: currentCostumeRef.current ?? null,
       liveCanvasState,
+      animatedFrameIndex: animatedFrameIndexBySessionKeyRef.current.get(currentSessionRef.current?.key ?? '') ?? 0,
     });
   }, [createPersistedStateFromCostume]);
 
@@ -571,7 +655,7 @@ export function CostumeEditor() {
     }
     setWorkingPersistedState(session, persistedState);
     canvasRef.current.markPersisted(session.key);
-    scheduleFlattenedPreviewRefreshRef.current(session, persistedState.document);
+    scheduleFlattenedPreviewRefreshRef.current(session, persistedState);
     return true;
   }, [getCanvasPersistedStateForSession, setWorkingPersistedState, updateCostumeFromEditor]);
 
@@ -608,17 +692,17 @@ export function CostumeEditor() {
     }
 
     if (options.refreshRuntimePreview === true) {
-      scheduleFlattenedPreviewRefreshRef.current(session, state.document);
+      scheduleFlattenedPreviewRefreshRef.current(session, state);
     }
     return true;
   }, [getWorkingPersistedState, setWorkingPersistedState, updateCostumeFromEditor]);
 
   const scheduleFlattenedPreviewRefresh = useCallback((
     session: CostumeEditorSession,
-    document: CostumeEditorPersistedState['document'],
+    state: CostumeEditorPersistedState,
   ) => {
     const requestId = ++flattenedPreviewRefreshIdRef.current;
-    const nextDocument = cloneCostumeDocument(document);
+    const nextState = clonePersistedState(state);
 
     if (flattenedPreviewRefreshTimeoutRef.current) {
       clearTimeout(flattenedPreviewRefreshTimeoutRef.current);
@@ -627,7 +711,15 @@ export function CostumeEditor() {
     flattenedPreviewRefreshTimeoutRef.current = setTimeout(() => {
       flattenedPreviewRefreshTimeoutRef.current = null;
 
-      void renderCostumeDocument(nextDocument).then((rendered) => {
+      if (!nextState) {
+        return;
+      }
+
+      const renderPromise = nextState.kind === 'animated' && nextState.clip
+        ? renderAnimatedCostumePosterPreview(nextState.clip)
+        : renderCostumeDocument(nextState.document);
+
+      void renderPromise.then((rendered) => {
         if (flattenedPreviewRefreshIdRef.current !== requestId) {
           return;
         }
@@ -638,15 +730,27 @@ export function CostumeEditor() {
         }
 
         const resolvedTarget = resolveCostumeEditorTarget(project, session);
-        if (!resolvedTarget || !areCostumeDocumentsEqual(resolvedTarget.costume.document, nextDocument)) {
+        if (!resolvedTarget) {
+          return;
+        }
+        const isMatchingSource = nextState.kind === 'animated'
+          ? (isAnimatedCostume(resolvedTarget.costume)
+            && nextState.clip
+            && JSON.stringify(resolvedTarget.costume.clip) === JSON.stringify(nextState.clip))
+          : areCostumeDocumentsEqual(resolvedTarget.costume.document, nextState.document);
+        if (!isMatchingSource) {
           return;
         }
 
         const refreshedState: CostumeEditorPersistedState = {
+          kind: nextState.kind,
           assetId: rendered.dataUrl,
           bounds: rendered.bounds ?? undefined,
           assetFrame: cloneCostumeAssetFrame(rendered.assetFrame),
-          document: nextDocument,
+          document: nextState.kind === 'animated' && nextState.clip
+            ? materializeAnimatedFrame(nextState.clip, 0)
+            : nextState.document,
+          clip: nextState.clip ? cloneAnimatedCostumeClip(nextState.clip) : undefined,
         };
 
         const didApply = updateCostumeFromEditor(session, refreshedState, {
@@ -660,7 +764,9 @@ export function CostumeEditor() {
         if (
           currentSessionRef.current?.key === session.key &&
           workingState?.document &&
-          areCostumeDocumentsEqual(workingState.document, nextDocument)
+          ((nextState.kind === 'animated' && workingState.kind === 'animated' && nextState.clip && workingState.clip
+            && JSON.stringify(workingState.clip) === JSON.stringify(nextState.clip))
+            || (nextState.kind !== 'animated' && areCostumeDocumentsEqual(workingState.document, nextState.document)))
         ) {
           setWorkingPersistedState(session, refreshedState);
         }
@@ -719,7 +825,9 @@ export function CostumeEditor() {
     }
 
     cancelFlattenedPreviewRefresh();
-    const rendered = await renderCostumeDocument(baseState.document);
+    const rendered = baseState.kind === 'animated' && baseState.clip
+      ? await renderAnimatedCostumePosterPreview(baseState.clip)
+      : await renderCostumeDocument(baseState.document);
 
     const currentSession = currentSessionRef.current;
     if (!currentSession || currentSession.key !== latestSession.key) {
@@ -727,10 +835,14 @@ export function CostumeEditor() {
     }
 
     const runtimeReadyState: CostumeEditorPersistedState = {
+      kind: baseState.kind,
       assetId: rendered.dataUrl,
       bounds: rendered.bounds ?? undefined,
       assetFrame: cloneCostumeAssetFrame(rendered.assetFrame),
-      document: cloneCostumeDocument(baseState.document),
+      document: baseState.kind === 'animated' && baseState.clip
+        ? materializeAnimatedFrame(baseState.clip, 0)
+        : cloneCostumeDocument(baseState.document),
+      clip: baseState.clip ? cloneAnimatedCostumeClip(baseState.clip) : undefined,
     };
 
     updateCostumeFromEditor(currentSession, runtimeReadyState, {
@@ -771,8 +883,14 @@ export function CostumeEditor() {
         return false;
       }
 
-      currentCostumeIdRef.current = `${session.costumeId}:${state.document.activeLayerId}`;
-      await canvas.loadDocument(session.key, cloneCostumeDocument(state.document));
+      const editorDocumentForState = state.kind === 'animated' && state.clip
+        ? materializeAnimatedEditorFrame(
+            state.clip,
+            animatedFrameIndexBySessionKeyRef.current.get(session.key) ?? 0,
+          )
+        : state.document;
+      currentCostumeIdRef.current = `${session.costumeId}:${animatedFrameIndexBySessionKeyRef.current.get(session.key) ?? 0}:${editorDocumentForState.activeLayerId}`;
+      await canvas.loadDocument(session.key, cloneCostumeDocument(editorDocumentForState));
 
       const latestSession = currentSessionRef.current;
       if (!latestSession || latestSession.key !== session.key) {
@@ -803,10 +921,12 @@ export function CostumeEditor() {
       }
 
       const resolvedNextState: CostumeEditorPersistedState = {
+        kind: baseState.kind,
         assetId: baseState.assetId,
         bounds: baseState.bounds ? { ...baseState.bounds } : undefined,
         assetFrame: cloneCostumeAssetFrame(baseState.assetFrame),
         document: nextDocument,
+        clip: baseState.clip ? cloneAnimatedCostumeClip(baseState.clip) : undefined,
       };
 
       const latestSession = currentSessionRef.current;
@@ -840,7 +960,7 @@ export function CostumeEditor() {
       }
 
       if (options.skipRuntimePreviewRefresh !== true) {
-        scheduleFlattenedPreviewRefresh(latestSession, nextDocument);
+        scheduleFlattenedPreviewRefresh(latestSession, resolvedNextState);
       }
 
       return true;
@@ -850,6 +970,85 @@ export function CostumeEditor() {
     documentMutationChainRef.current = queuedCommit.then(() => undefined, () => undefined);
     return queuedCommit;
   }, [applyDocumentHistoryState, scheduleFlattenedPreviewRefresh]);
+
+  const commitAnimatedClipMutation = useCallback((
+    mutate: (
+      state: CostumeEditorPersistedState,
+      frameIndex: number,
+    ) => Promise<CostumeEditorPersistedState['clip'] | null> | CostumeEditorPersistedState['clip'] | null,
+    options: {
+      forceReload?: boolean;
+      recordHistory?: boolean;
+      skipRuntimePreviewRefresh?: boolean;
+      history?: { source: string; allowMerge?: boolean; mergeWindowMs?: number };
+    } = {},
+  ) => {
+    const queuedSessionKey = currentSessionRef.current?.key ?? null;
+    if (!queuedSessionKey) {
+      return Promise.resolve(false);
+    }
+
+    const runCommit = async () => {
+      const session = currentSessionRef.current;
+      if (!session || session.key !== queuedSessionKey) {
+        return false;
+      }
+
+      const baseState = getWorkingPersistedState();
+      if (!baseState || baseState.kind !== 'animated' || !baseState.clip) {
+        return false;
+      }
+
+      const frameIndex = animatedFrameIndexBySessionKeyRef.current.get(session.key) ?? 0;
+      const nextClip = await mutate(baseState, frameIndex);
+      if (!nextClip) {
+        return false;
+      }
+
+      const resolvedNextState: CostumeEditorPersistedState = {
+        kind: 'animated',
+        assetId: baseState.assetId,
+        bounds: baseState.bounds ? { ...baseState.bounds } : undefined,
+        assetFrame: cloneCostumeAssetFrame(baseState.assetFrame),
+        document: materializeAnimatedFrame(nextClip, 0),
+        clip: cloneAnimatedCostumeClip(nextClip),
+      };
+
+      const didApply = applyDocumentHistoryState(session, resolvedNextState, {
+        recordHistory: options.recordHistory,
+        forceReload: false,
+        history: options.recordHistory === false
+          ? undefined
+          : (options.history ?? {
+            source: 'costume:clip-change',
+            allowMerge: false,
+          }),
+      });
+      if (!didApply) {
+        return false;
+      }
+
+      if (options.forceReload !== false) {
+        const nextEditorDocument = materializeAnimatedEditorFrame(nextClip, frameIndex);
+        currentCostumeIdRef.current = `${session.costumeId}:${frameIndex}:${nextEditorDocument.activeLayerId}`;
+        await canvasRef.current?.loadDocument(
+          session.key,
+          cloneCostumeDocument(nextEditorDocument),
+        );
+        loadedSessionRef.current = session;
+      }
+
+      if (options.skipRuntimePreviewRefresh !== true) {
+        scheduleFlattenedPreviewRefresh(session, resolvedNextState);
+      }
+
+      return true;
+    };
+
+    const queuedCommit = documentMutationChainRef.current.then(runCommit, runCommit);
+    documentMutationChainRef.current = queuedCommit.then(() => undefined, () => undefined);
+    return queuedCommit;
+  }, [applyDocumentHistoryState, getWorkingPersistedState, scheduleFlattenedPreviewRefresh]);
 
   const performHistoryStep = useCallback((direction: 'undo' | 'redo') => {
     const runStep = async () => {
@@ -1119,7 +1318,12 @@ export function CostumeEditor() {
     const shouldReloadFromStoreDocument =
       !!currentWorkingPersistedState &&
       !!storePersistedState &&
-      !areCostumeDocumentsEqual(currentWorkingPersistedState.document, storePersistedState.document);
+      (
+        currentWorkingPersistedState.kind !== storePersistedState.kind ||
+        (currentWorkingPersistedState.kind === 'animated'
+          ? !areAnimatedClipsEqual(currentWorkingPersistedState.clip, storePersistedState.clip)
+          : !areCostumeDocumentsEqual(currentWorkingPersistedState.document, storePersistedState.document))
+      );
     const shouldSyncWorkingStateFromStore =
       !shouldReloadFromStoreDocument &&
       !!currentWorkingPersistedState &&
@@ -1134,11 +1338,16 @@ export function CostumeEditor() {
     const nextPersistedState = shouldReloadFromStoreDocument
       ? storePersistedState
       : (currentWorkingPersistedState ?? storePersistedState);
-    const nextCostumeLoadKey = nextPersistedState
-      ? `${currentSession.costumeId}:${nextPersistedState.document.activeLayerId}`
+    const nextEditorDocument = nextPersistedState
+      ? (nextPersistedState.kind === 'animated' && nextPersistedState.clip
+          ? materializeAnimatedEditorFrame(nextPersistedState.clip, clampedAnimatedFrameIndex)
+          : nextPersistedState.document)
+      : null;
+    const nextCostumeLoadKey = nextPersistedState && nextEditorDocument
+      ? `${currentSession.costumeId}:${clampedAnimatedFrameIndex}:${nextEditorDocument.activeLayerId}`
       : currentCostumeLoadKey;
 
-    if (!nextPersistedState) {
+    if (!nextPersistedState || !nextEditorDocument) {
       return;
     }
 
@@ -1151,11 +1360,11 @@ export function CostumeEditor() {
       const requestId = ++loadRequestIdRef.current;
       beginSessionLoad(true);
 
-      const nextMode = getActiveCostumeLayerKind(nextPersistedState.document);
+      const nextMode = getActiveCostumeLayerKind(nextEditorDocument);
       setCanvasEditorMode(nextMode);
       setActiveTool((prev) => ensureToolForMode(nextMode, prev));
 
-      canvasRef.current.loadDocument(currentSession.key, cloneCostumeDocument(nextPersistedState.document)).finally(() => {
+      canvasRef.current.loadDocument(currentSession.key, cloneCostumeDocument(nextEditorDocument)).finally(() => {
         if (loadRequestIdRef.current !== requestId) return;
         loadedSessionRef.current = currentSession;
         setWorkingPersistedState(currentSession, nextPersistedState);
@@ -1167,6 +1376,7 @@ export function CostumeEditor() {
     }
   }, [
     beginSessionLoad,
+    clampedAnimatedFrameIndex,
     currentCostumeLoadKey,
     currentSession,
     currentWorkingPersistedState,
@@ -1226,7 +1436,7 @@ export function CostumeEditor() {
     });
     if (didPersist) {
       canvasRef.current?.markPersisted(loadedSession.key, liveCanvasState);
-      scheduleFlattenedPreviewRefreshRef.current(loadedSession, persistedState.document);
+      scheduleFlattenedPreviewRefreshRef.current(loadedSession, persistedState);
     }
   }, [
     applyDocumentHistoryState,
@@ -1275,7 +1485,7 @@ export function CostumeEditor() {
     }
 
     canvasRef.current?.markPersisted(loadedSession.key, pending.liveCanvasState);
-    scheduleFlattenedPreviewRefreshRef.current(loadedSession, persistedState.document);
+    scheduleFlattenedPreviewRefreshRef.current(loadedSession, persistedState);
   }, [
     applyDocumentHistoryState,
     getWorkingPersistedState,
@@ -1325,6 +1535,95 @@ export function CostumeEditor() {
     });
   }, [applyOperationToCurrentObject, currentObjectTarget]);
 
+  const handleReplaceCurrentCostume = useCallback((nextCostume: Costume) => {
+    if (!currentCostume) {
+      return;
+    }
+
+    const nextCostumes = costumes.map((costume) => costume.id === currentCostume.id ? nextCostume : costume);
+    const nextCostumeIndex = Math.max(0, nextCostumes.findIndex((costume) => costume.id === nextCostume.id));
+
+    if (selectedComponentId) {
+      updateComponent(selectedComponentId, {
+        costumes: nextCostumes,
+        currentCostumeIndex: nextCostumeIndex,
+      });
+    } else if (selectedSceneId && selectedObjectId) {
+      updateObject(selectedSceneId, selectedObjectId, {
+        costumes: nextCostumes,
+        currentCostumeIndex: nextCostumeIndex,
+      });
+    }
+
+    replaceSelectedCostumeIds([nextCostume.id], { anchorId: nextCostume.id });
+  }, [
+    costumes,
+    currentCostume,
+    replaceSelectedCostumeIds,
+    selectedComponentId,
+    selectedObjectId,
+    selectedSceneId,
+    updateComponent,
+    updateObject,
+  ]);
+
+  const handleToggleAnimatedMode = useCallback((enabled: boolean) => {
+    if (!currentCostume) {
+      return;
+    }
+
+    if (enabled) {
+      if (isAnimatedCostume(currentCostume)) {
+        return;
+      }
+      const nextCostume = convertStaticCostumeToAnimated(currentCostume);
+      handleReplaceCurrentCostume(nextCostume);
+      return;
+    }
+
+    if (!isAnimatedCostume(currentCostume)) {
+      return;
+    }
+
+    const nextCostume = convertAnimatedCostumeToStatic(currentCostume, clampedAnimatedFrameIndex);
+    handleReplaceCurrentCostume(nextCostume);
+    setAnimatedFrameIndex(currentSession, 0);
+  }, [clampedAnimatedFrameIndex, currentCostume, currentSession, handleReplaceCurrentCostume, setAnimatedFrameIndex]);
+
+  const handleAnimatedFrameSelect = useCallback((frameIndex: number) => {
+    setAnimatedFrameIndex(currentSession, frameIndex);
+    currentCostumeIdRef.current = null;
+  }, [currentSession, setAnimatedFrameIndex]);
+
+  const handleAnimatedFrameCountChange = useCallback((totalFrames: number) => {
+    void commitAnimatedClipMutation((working, frameIndex) => {
+      const nextClip = setAnimatedCostumeClipFrameCount(working.clip!, totalFrames);
+      const nextFrameIndex = Math.max(0, Math.min(frameIndex, nextClip.totalFrames - 1));
+      setAnimatedFrameIndex(currentSessionRef.current, nextFrameIndex);
+      return nextClip;
+    });
+  }, [commitAnimatedClipMutation, setAnimatedFrameIndex]);
+
+  const handleAnimatedFpsChange = useCallback((fps: number) => {
+    void commitAnimatedClipMutation((working) => updateAnimatedCostumeClipPlayback(working.clip!, { fps }), {
+      forceReload: false,
+    });
+  }, [commitAnimatedClipMutation]);
+
+  const handleAnimatedPlaybackChange = useCallback((playback: 'play-once' | 'loop' | 'ping-pong') => {
+    void commitAnimatedClipMutation((working) => updateAnimatedCostumeClipPlayback(working.clip!, { playback }), {
+      forceReload: false,
+    });
+  }, [commitAnimatedClipMutation]);
+
+  const handleAnimatedTrackCelDurationChange = useCallback((trackId: string, celId: string, durationFrames: number) => {
+    void commitAnimatedClipMutation((working) => updateAnimatedCostumeTrackCelDuration(working.clip!, trackId, celId, durationFrames));
+  }, [commitAnimatedClipMutation]);
+
+  const handleAnimatedTrackCelDelete = useCallback((trackId: string, celId: string) => {
+    void commitAnimatedClipMutation((working) => deleteAnimatedCostumeTrackCel(working.clip!, trackId, celId));
+  }, [commitAnimatedClipMutation]);
+
   const handleReplaceCostumes = useCallback((
     nextCostumes: Costume[],
     nextActiveCostumeId: string | null,
@@ -1367,6 +1666,14 @@ export function CostumeEditor() {
       return;
     }
 
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      void commitAnimatedClipMutation((working) => setAnimatedCostumeActiveTrack(working.clip!, layerId), {
+        forceReload: true,
+        skipRuntimePreviewRefresh: true,
+      });
+      return;
+    }
+
     void commitDocumentMutation((working) => {
       if (working.document.activeLayerId === layerId) {
         return null;
@@ -1375,10 +1682,21 @@ export function CostumeEditor() {
     }, {
       skipRuntimePreviewRefresh: true,
     });
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleAddVectorLayer = useCallback(() => {
     if (isLoadingRef.current) {
+      return;
+    }
+
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      void commitAnimatedClipMutation((working) => insertAnimatedCostumeTrackAfterActive(
+        working.clip!,
+        createAnimatedCostumeTrack('vector', {
+          name: `Layer ${working.clip!.tracks.length + 1}`,
+          totalFrames: working.clip!.totalFrames,
+        }),
+      ));
       return;
     }
 
@@ -1386,10 +1704,21 @@ export function CostumeEditor() {
       working.document,
       createVectorLayer({ name: `Layer ${working.document.layers.length + 1}` }),
     ));
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleAddBitmapLayer = useCallback(() => {
     if (isLoadingRef.current) {
+      return;
+    }
+
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      void commitAnimatedClipMutation((working) => insertAnimatedCostumeTrackAfterActive(
+        working.clip!,
+        createAnimatedCostumeTrack('bitmap', {
+          name: `Layer ${working.clip!.tracks.length + 1}`,
+          totalFrames: working.clip!.totalFrames,
+        }),
+      ));
       return;
     }
 
@@ -1397,23 +1726,47 @@ export function CostumeEditor() {
       working.document,
       createBitmapLayer({ name: `Layer ${working.document.layers.length + 1}` }),
     ));
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleDuplicateLayer = useCallback((layerId: string) => {
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      void commitAnimatedClipMutation((working) => duplicateAnimatedCostumeTrack(working.clip!, layerId));
+      return;
+    }
     void commitDocumentMutation((working) => duplicateCostumeLayer(working.document, layerId));
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleDeleteLayer = useCallback((layerId: string) => {
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      void commitAnimatedClipMutation((working) => removeAnimatedCostumeTrack(working.clip!, layerId));
+      return;
+    }
     void commitDocumentMutation((working) => removeCostumeLayer(working.document, layerId));
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleReorderLayer = useCallback((layerId: string, targetIndex: number) => {
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      void commitAnimatedClipMutation((working) => reorderAnimatedCostumeTrack(working.clip!, layerId, targetIndex));
+      return;
+    }
     void commitDocumentMutation((working) => reorderCostumeLayer(working.document, layerId, targetIndex), {
       forceReload: false,
     });
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleToggleLayerVisibility = useCallback((layerId: string) => {
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      const currentTrack = getAnimatedCostumeTrackById(editorCostume.clip, layerId);
+      const nextVisible = currentTrack ? !currentTrack.visible : null;
+      void commitAnimatedClipMutation((working) => {
+        if (nextVisible === null) {
+          return null;
+        }
+        return updateAnimatedCostumeTrack(working.clip!, layerId, { visible: nextVisible });
+      });
+      return;
+    }
+
     const currentDocument = currentCostumeRef.current?.document;
     const currentLayer = currentDocument ? getCostumeLayerById(currentDocument, layerId) : null;
     const nextVisible = currentLayer ? !currentLayer.visible : null;
@@ -1426,9 +1779,22 @@ export function CostumeEditor() {
       }
       return setCostumeLayerVisibility(working.document, layerId, resolvedVisible);
     });
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleToggleLayerLocked = useCallback((layerId: string) => {
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      const currentTrack = getAnimatedCostumeTrackById(editorCostume.clip, layerId);
+      void commitAnimatedClipMutation((working) => {
+        if (!currentTrack) {
+          return null;
+        }
+        return updateAnimatedCostumeTrack(working.clip!, layerId, { locked: !currentTrack.locked });
+      }, {
+        skipRuntimePreviewRefresh: true,
+      });
+      return;
+    }
+
     void commitDocumentMutation((working) => {
       const layer = getCostumeLayerById(working.document, layerId);
       if (!layer) {
@@ -1440,21 +1806,35 @@ export function CostumeEditor() {
     }, {
       skipRuntimePreviewRefresh: true,
     });
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleRenameLayer = useCallback((layerId: string, name: string) => {
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      void commitAnimatedClipMutation((working) => updateAnimatedCostumeTrack(working.clip!, layerId, { name }), {
+        skipRuntimePreviewRefresh: true,
+      });
+      return;
+    }
+
     void commitDocumentMutation((working) => updateCostumeLayer(working.document, layerId, { name }), {
       skipRuntimePreviewRefresh: true,
     });
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleLayerOpacityChange = useCallback((layerId: string, opacity: number) => {
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      void commitAnimatedClipMutation((working) => updateAnimatedCostumeTrack(working.clip!, layerId, { opacity }));
+      return;
+    }
     void commitDocumentMutation((working) => updateCostumeLayer(working.document, layerId, { opacity }), {
       forceReload: false,
     });
-  }, [commitDocumentMutation]);
+  }, [commitAnimatedClipMutation, commitDocumentMutation, editorCostume]);
 
   const handleRasterizeLayer = useCallback((layerId: string) => {
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      return;
+    }
     void commitDocumentMutation(async (working) => {
       const layer = getCostumeLayerById(working.document, layerId);
       if (!isVectorCostumeLayer(layer)) {
@@ -1476,9 +1856,12 @@ export function CostumeEditor() {
       nextDocument.layers[layerIndex] = rasterizedLayer;
       return nextDocument;
     });
-  }, [commitDocumentMutation]);
+  }, [commitDocumentMutation, editorCostume]);
 
   const handleMergeLayerDown = useCallback((layerId: string) => {
+    if (editorCostume && isAnimatedCostume(editorCostume)) {
+      return;
+    }
     void commitDocumentMutation(async (working) => {
       const upperIndex = getCostumeLayerIndex(working.document, layerId);
       if (upperIndex <= 0) {
@@ -1505,7 +1888,7 @@ export function CostumeEditor() {
       nextDocument.layers = nextDocument.layers.map((layer, index) => index === lowerIndex ? mergedLayer : layer);
       return nextDocument;
     });
-  }, [commitDocumentMutation]);
+  }, [commitDocumentMutation, editorCostume]);
 
   const handleCanvasModeChange = useCallback((mode: CostumeEditorMode) => {
     setCanvasEditorMode(mode);
@@ -1775,6 +2158,39 @@ export function CostumeEditor() {
       />
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {editorCostume ? (
+          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2 text-xs">
+            <span className="text-muted-foreground">Costume Type</span>
+            <button
+              type="button"
+              onClick={() => handleToggleAnimatedMode(false)}
+              className={`rounded px-2 py-1 ${
+                !isAnimatedCostume(editorCostume)
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-foreground'
+              }`}
+            >
+              Static
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleAnimatedMode(true)}
+              className={`rounded px-2 py-1 ${
+                isAnimatedCostume(editorCostume)
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-foreground'
+              }`}
+            >
+              Animated
+            </button>
+            {isAnimatedCostume(editorCostume) ? (
+              <span className="text-muted-foreground">
+                Frame {clampedAnimatedFrameIndex + 1} of {editorCostume.clip.totalFrames}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
         {activeLayer && activeLayer.visible ? (
           <CostumeToolbar
             editorMode={editorMode}
@@ -1820,7 +2236,7 @@ export function CostumeEditor() {
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <CostumeCanvas
             ref={canvasRef}
-            costumeDocument={editorCostume?.document ?? null}
+            costumeDocument={editorDocument}
             initialEditorMode={initialEditorMode}
             isVisible={activeObjectTab === 'costumes'}
             activeTool={activeTool}
@@ -1855,9 +2271,9 @@ export function CostumeEditor() {
             onVectorGroupingStateChange={handleVectorGroupingStateChange}
             onViewScaleChange={setCanvasPreviewScale}
           />
-          {editorCostume ? (
+          {editorCostume && !isAnimatedCostume(editorCostume) ? (
             <CostumeLayerPanel
-              document={editorCostume.document}
+              document={editorDocument ?? editorCostume.document}
               activeLayer={activeLayer}
               onSelectLayer={handleSelectLayer}
               onAddBitmapLayer={handleAddBitmapLayer}
@@ -1874,6 +2290,29 @@ export function CostumeEditor() {
             />
           ) : null}
         </div>
+
+        {editorCostume && isAnimatedCostume(editorCostume) ? (
+          <AnimatedCostumeTimeline
+            clip={editorCostume.clip}
+            currentFrameIndex={clampedAnimatedFrameIndex}
+            onFrameSelect={handleAnimatedFrameSelect}
+            onChangeTotalFrames={handleAnimatedFrameCountChange}
+            onChangeFps={handleAnimatedFpsChange}
+            onChangePlayback={handleAnimatedPlaybackChange}
+            onSelectTrack={handleSelectLayer}
+            onAddBitmapTrack={handleAddBitmapLayer}
+            onAddVectorTrack={handleAddVectorLayer}
+            onDuplicateTrack={handleDuplicateLayer}
+            onDeleteTrack={handleDeleteLayer}
+            onReorderTrack={handleReorderLayer}
+            onToggleVisibility={handleToggleLayerVisibility}
+            onToggleLocked={handleToggleLayerLocked}
+            onRenameTrack={handleRenameLayer}
+            onOpacityChange={handleLayerOpacityChange}
+            onChangeCelDuration={handleAnimatedTrackCelDurationChange}
+            onDeleteCel={handleAnimatedTrackCelDelete}
+          />
+        ) : null}
       </div>
 
       {isSessionLoading && (

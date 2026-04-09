@@ -5,11 +5,19 @@ import {
 } from '@/lib/background/backgroundDocument';
 import { normalizeChunkDataMap } from '@/lib/background/chunkStore';
 import {
+  cloneAnimatedCostumeClip,
   cloneCostumeDocument,
   ensureCostumeDocument,
   isBitmapCostumeLayer,
+  sanitizeCostume,
 } from '@/lib/costume/costumeDocument';
 import type {
+  AnimatedCostume,
+  AnimatedCostumeBitmapCel,
+  AnimatedCostumeBitmapTrack,
+  AnimatedCostumeClip,
+  AnimatedCostumeVectorCel,
+  AnimatedCostumeVectorTrack,
   BackgroundConfig,
   BackgroundDocument,
   ComponentDefinition,
@@ -21,6 +29,7 @@ import type {
   GameObject,
   Project,
   Scene,
+  StaticCostume,
 } from '@/types';
 
 export type RuntimeProjectData = Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
@@ -39,9 +48,42 @@ export type PersistedCostumeDocument = Omit<CostumeDocument, 'layers'> & {
   layers: PersistedCostumeLayer[];
 };
 
-export type PersistedCostume = Omit<Costume, 'assetId' | 'bounds' | 'assetFrame' | 'document'> & {
+export type PersistedAnimatedCostumeBitmapCel = Omit<AnimatedCostumeBitmapCel, 'bitmap'> & {
+  bitmap: PersistedCostumeBitmapContentRef;
+};
+
+export type PersistedAnimatedCostumeVectorCel = AnimatedCostumeVectorCel;
+
+export type PersistedAnimatedCostumeCel =
+  | PersistedAnimatedCostumeBitmapCel
+  | PersistedAnimatedCostumeVectorCel;
+
+export type PersistedAnimatedCostumeBitmapTrack = Omit<AnimatedCostumeBitmapTrack, 'cels'> & {
+  cels: PersistedAnimatedCostumeBitmapCel[];
+};
+
+export type PersistedAnimatedCostumeVectorTrack = Omit<AnimatedCostumeVectorTrack, 'cels'> & {
+  cels: PersistedAnimatedCostumeVectorCel[];
+};
+
+export type PersistedAnimatedCostumeTrack =
+  | PersistedAnimatedCostumeBitmapTrack
+  | PersistedAnimatedCostumeVectorTrack;
+
+export type PersistedAnimatedCostumeClip = Omit<AnimatedCostumeClip, 'tracks'> & {
+  tracks: PersistedAnimatedCostumeTrack[];
+};
+
+export type PersistedStaticCostume = Omit<StaticCostume, 'assetId' | 'bounds' | 'assetFrame' | 'document'> & {
   document: PersistedCostumeDocument;
 };
+
+export type PersistedAnimatedCostume = Omit<AnimatedCostume, 'assetId' | 'bounds' | 'assetFrame' | 'document' | 'clip'> & {
+  document: PersistedCostumeDocument;
+  clip: PersistedAnimatedCostumeClip;
+};
+
+export type PersistedCostume = PersistedStaticCostume | PersistedAnimatedCostume;
 
 export type PersistedBackgroundConfig = Omit<BackgroundConfig, 'chunks'> & {
   document?: BackgroundDocument;
@@ -112,6 +154,36 @@ function canonicalizePersistedCostumeDocument(costume: LegacyCostumePersistenceS
   return document;
 }
 
+function canonicalizePersistedAnimatedClip(
+  clip: PersistedAnimatedCostumeClip | AnimatedCostumeClip,
+): PersistedAnimatedCostumeClip {
+  const nextClip = cloneValue(clip);
+  return {
+    ...nextClip,
+    tracks: Array.isArray(nextClip.tracks)
+      ? nextClip.tracks.map((track) => {
+          if (track.kind === 'bitmap') {
+            return {
+              ...track,
+              cels: track.cels.map((cel) => ({
+                ...cel,
+                bitmap: {
+                  assetId: cel.bitmap.assetId,
+                  assetFrame: cel.bitmap.assetFrame ? { ...cel.bitmap.assetFrame } : undefined,
+                },
+              })),
+            } satisfies PersistedAnimatedCostumeBitmapTrack;
+          }
+
+          return {
+            ...track,
+            cels: track.cels.map((cel) => ({ ...cel, vector: { ...cel.vector } })),
+          } satisfies PersistedAnimatedCostumeVectorTrack;
+        })
+      : [],
+  };
+}
+
 function canonicalizePersistedCostume(costume: PersistedCostume | Costume): PersistedCostume {
   const nextCostume = cloneValue(costume) as LegacyCostumePersistenceShape;
   const {
@@ -123,10 +195,22 @@ function canonicalizePersistedCostume(costume: PersistedCostume | Costume): Pers
     ...rest
   } = nextCostume;
 
+  if (nextCostume.kind === 'animated') {
+    return {
+      ...rest,
+      kind: 'animated',
+      document: canonicalizePersistedCostumeDocument(nextCostume),
+      clip: canonicalizePersistedAnimatedClip(
+        cloneAnimatedCostumeClip((costume as AnimatedCostume).clip),
+      ),
+    } satisfies PersistedAnimatedCostume;
+  }
+
   return {
     ...rest,
+    kind: 'static',
     document: canonicalizePersistedCostumeDocument(nextCostume),
-  } as PersistedCostume;
+  } satisfies PersistedStaticCostume;
 }
 
 function canonicalizePersistedBackground(
@@ -191,11 +275,11 @@ export function canonicalizePersistedComponentDefinition(
 
 function inflatePersistedCostume(costume: PersistedCostume): Costume {
   const nextCostume = cloneValue(costume);
-  return {
+  return sanitizeCostume({
     ...nextCostume,
     assetId: '',
     document: cloneCostumeDocument(ensureCostumeDocument(nextCostume)),
-  };
+  }) as Costume;
 }
 
 function inflatePersistedGameObject(gameObject: PersistedGameObject): GameObject {

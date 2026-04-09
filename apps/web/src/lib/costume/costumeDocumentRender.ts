@@ -1,7 +1,21 @@
-import type { CostumeAssetFrame, CostumeBounds, CostumeDocument, CostumeLayer } from '@/types';
+import type {
+  AnimatedCostumeCel,
+  AnimatedCostumeClip,
+  Costume,
+  CostumeAssetFrame,
+  CostumeBounds,
+  CostumeDocument,
+  CostumeLayer,
+} from '@/types';
 import { getCanvas2dContext } from '@/utils/canvas2d';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
-import { COSTUME_CANVAS_SIZE, isBitmapCostumeLayer, isVectorCostumeLayer } from './costumeDocument';
+import {
+  COSTUME_CANVAS_SIZE,
+  isAnimatedCostume,
+  isBitmapCostumeLayer,
+  isVectorCostumeLayer,
+  materializeAnimatedFrame,
+} from './costumeDocument';
 import { renderBitmapAssetToSurfaceCanvas } from './costumeBitmapSurface';
 import {
   cloneCostumeAssetFrame,
@@ -22,11 +36,15 @@ const MAX_CACHED_COSTUME_LAYER_CANVASES = 128;
 const MAX_CACHED_COSTUME_LAYER_PREVIEW_SOURCES = 128;
 const MAX_CACHED_COSTUME_LAYER_THUMBNAILS = 256;
 const MAX_CACHED_COSTUME_DOCUMENT_PREVIEWS = 128;
+const MAX_CACHED_ANIMATED_COSTUME_FRAME_PREVIEWS = 512;
+const MAX_CACHED_ANIMATED_COSTUME_POSTER_PREVIEWS = 128;
 const layerCanvasCache = new Map<string, Promise<HTMLCanvasElement>>();
 const layerPreviewSourceCache = new Map<string, Promise<string | null>>();
 const layerThumbnailCache = new Map<string, Promise<string | null>>();
 const documentPreviewCache = new Map<string, Promise<CostumeDocumentPreview>>();
 const documentPreviewValueCache = new Map<string, CostumeDocumentPreview>();
+const animatedCostumeFramePreviewCache = new Map<string, Promise<CostumeDocumentPreview>>();
+const animatedCostumePosterPreviewCache = new Map<string, Promise<CostumeDocumentPreview>>();
 
 interface CostumeDocumentPreview {
   assetFrame?: CostumeAssetFrame | null;
@@ -127,6 +145,34 @@ export function getCostumeDocumentPreviewSignature(document: CostumeDocument): s
   return document.layers
     .map((layer) => getCostumeLayerPreviewSignature(layer))
     .join('||');
+}
+
+function getAnimatedCostumeCelPreviewSignature(cel: AnimatedCostumeCel): string {
+  if (cel.kind === 'bitmap') {
+    return `bitmap:${cel.bitmap.assetId ?? ''}:${getCostumeAssetFrameSignature(cel.bitmap.assetFrame)}:${cel.startFrame}:${cel.durationFrames}`;
+  }
+
+  return `vector:${hashString(cel.vector.fabricJson)}:${cel.startFrame}:${cel.durationFrames}`;
+}
+
+export function getAnimatedCostumeClipPreviewSignature(clip: AnimatedCostumeClip): string {
+  return [
+    `frames:${clip.totalFrames}`,
+    ...clip.tracks.map((track) => [
+      track.id,
+      track.kind,
+      track.visible ? 'visible' : 'hidden',
+      `opacity:${track.opacity}`,
+      ...track.cels.map((cel) => getAnimatedCostumeCelPreviewSignature(cel)),
+    ].join('|')),
+  ].join('||');
+}
+
+export function getAnimatedCostumeFramePreviewSignature(
+  clip: AnimatedCostumeClip,
+  frameIndex: number,
+): string {
+  return `${getAnimatedCostumeClipPreviewSignature(clip)}::frame:${Math.max(0, Math.floor(frameIndex))}`;
 }
 
 export function getCachedCostumeDocumentPreview(
@@ -494,4 +540,124 @@ export async function renderCostumeDocumentPreview(document: CostumeDocument): P
     pending,
     MAX_CACHED_COSTUME_DOCUMENT_PREVIEWS,
   );
+}
+
+export async function renderAnimatedCostumeFramePreview(
+  clip: AnimatedCostumeClip,
+  frameIndex: number,
+): Promise<{
+  assetFrame?: CostumeAssetFrame | null;
+  dataUrl: string;
+  bounds: CostumeBounds | null;
+}> {
+  const signature = getAnimatedCostumeFramePreviewSignature(clip, frameIndex);
+  const cached = animatedCostumeFramePreviewCache.get(signature);
+  if (cached) {
+    return await cached;
+  }
+
+  const pending = (async () => {
+    return await renderCostumeDocumentPreview(materializeAnimatedFrame(clip, frameIndex));
+  })().catch((error) => {
+    animatedCostumeFramePreviewCache.delete(signature);
+    throw error;
+  });
+
+  return await rememberCachedValue(
+    animatedCostumeFramePreviewCache,
+    signature,
+    pending,
+    MAX_CACHED_ANIMATED_COSTUME_FRAME_PREVIEWS,
+  );
+}
+
+export async function renderAnimatedCostumePosterPreview(
+  clip: AnimatedCostumeClip,
+): Promise<{
+  assetFrame?: CostumeAssetFrame | null;
+  dataUrl: string;
+  bounds: CostumeBounds | null;
+}> {
+  const signature = `${getAnimatedCostumeClipPreviewSignature(clip)}::poster`;
+  const cached = animatedCostumePosterPreviewCache.get(signature);
+  if (cached) {
+    return await cached;
+  }
+
+  const pending = (async (): Promise<CostumeDocumentPreview> => {
+    const posterDocument = materializeAnimatedFrame(clip, 0);
+    const posterCanvas = await renderCostumeLayerStackToCanvas(posterDocument.layers);
+    let unionBounds: CostumeBounds | null = null;
+
+    for (let frameIndex = 0; frameIndex < clip.totalFrames; frameIndex += 1) {
+      const renderedFrame = await renderAnimatedCostumeFramePreview(clip, frameIndex);
+      const frameBounds = renderedFrame.bounds;
+      if (!frameBounds) {
+        continue;
+      }
+      if (!unionBounds) {
+        unionBounds = { ...frameBounds };
+        continue;
+      }
+
+      const minX = Math.min(unionBounds.x, frameBounds.x);
+      const minY = Math.min(unionBounds.y, frameBounds.y);
+      const maxX = Math.max(unionBounds.x + unionBounds.width, frameBounds.x + frameBounds.width);
+      const maxY = Math.max(unionBounds.y + unionBounds.height, frameBounds.y + frameBounds.height);
+      unionBounds = {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+      };
+    }
+
+    return {
+      assetFrame: {
+        x: 0,
+        y: 0,
+        width: COSTUME_CANVAS_SIZE,
+        height: COSTUME_CANVAS_SIZE,
+        sourceWidth: COSTUME_CANVAS_SIZE,
+        sourceHeight: COSTUME_CANVAS_SIZE,
+      },
+      dataUrl: posterCanvas.toDataURL('image/png'),
+      bounds: unionBounds ?? calculateBoundsFromCanvas(posterCanvas),
+    };
+  })().catch((error) => {
+    animatedCostumePosterPreviewCache.delete(signature);
+    throw error;
+  });
+
+  return await rememberCachedValue(
+    animatedCostumePosterPreviewCache,
+    signature,
+    pending,
+    MAX_CACHED_ANIMATED_COSTUME_POSTER_PREVIEWS,
+  );
+}
+
+export async function renderCostumePreview(
+  costume: Costume,
+  options: { frameIndex?: number } = {},
+): Promise<{
+  assetFrame?: CostumeAssetFrame | null;
+  dataUrl: string;
+  bounds: CostumeBounds | null;
+}> {
+  if (!isAnimatedCostume(costume)) {
+    return await renderCostumeDocumentPreview(costume.document);
+  }
+
+  if (typeof options.frameIndex === 'number') {
+    return await renderAnimatedCostumeFramePreview(costume.clip, options.frameIndex);
+  }
+
+  return await renderAnimatedCostumePosterPreview(costume.clip);
+}
+
+export async function prewarmAnimatedCostumeFramePreviews(clip: AnimatedCostumeClip): Promise<void> {
+  for (let frameIndex = 0; frameIndex < clip.totalFrames; frameIndex += 1) {
+    await renderAnimatedCostumeFramePreview(clip, frameIndex);
+  }
 }

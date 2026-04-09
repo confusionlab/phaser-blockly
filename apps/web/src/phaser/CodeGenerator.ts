@@ -372,7 +372,15 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['looks_switch_costume'] = function(block) {
     const costume = javascriptGenerator.valueToCode(block, 'COSTUME', Order.ATOMIC) || '1';
-    return `sprite.switchCostume(${costume});\n`;
+    const waitUntilComplete = block.getFieldValue('WAIT_UNTIL_COMPLETE') === 'TRUE';
+    return waitUntilComplete
+      ? `await sprite.switchCostumeAndWait(${costume});\n`
+      : `sprite.switchCostume(${costume});\n`;
+  };
+
+  javascriptGenerator.forBlock['looks_costume_literal'] = function(block) {
+    const costumeId = block.getFieldValue('COSTUME') || '';
+    return [asJsString(costumeId), Order.ATOMIC];
   };
 
   javascriptGenerator.forBlock['looks_costume_number'] = function() {

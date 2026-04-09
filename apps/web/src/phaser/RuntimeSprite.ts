@@ -4,6 +4,12 @@ import {
   getCostumeVisibleCenterOffset,
 } from '@/lib/costume/costumeAssetFrame';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
+import { getAnimatedCostumeFrameDurationMs, getAnimatedCostumePlaybackSequence } from '@/lib/costume/costumeAnimation';
+import {
+  getAnimatedCostumeFramePreviewSignature,
+  prewarmAnimatedCostumeFramePreviews,
+  renderAnimatedCostumeFramePreview,
+} from '@/lib/costume/costumeDocumentRender';
 import { appendRuntimeLog } from './RuntimeEngine';
 import { setBodyGravityY } from './gravity';
 import {
@@ -11,7 +17,8 @@ import {
   getScaleSign,
   toggleScaleDirection,
 } from './scaleMath';
-import type { Costume, ColliderConfig, PhysicsConfig } from '../types';
+import type { Costume, CostumeAssetFrame, CostumeBounds, ColliderConfig, PhysicsConfig } from '../types';
+import { isAnimatedCostume } from '@/lib/costume/costumeDocument';
 import type { RuntimeEngine } from './RuntimeEngine';
 
 const SPEECH_BUBBLE_MAX_TEXT_WIDTH = 220;
@@ -23,6 +30,14 @@ const SPEECH_BUBBLE_FADE_DURATION_MS = 300;
 const SPEECH_WORD_REVEAL_STAGGER_MS = 110;
 const SPEECH_WORD_REVEAL_DURATION_MS = 180;
 const SPEECH_AUTO_STOP_HOLD_SECONDS = 1.3;
+const FULL_COSTUME_ASSET_FRAME = {
+  x: 0,
+  y: 0,
+  width: 1024,
+  height: 1024,
+  sourceWidth: 1024,
+  sourceHeight: 1024,
+} as const;
 const SPEECH_BUBBLE_TEXT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   fontFamily: '"Trebuchet MS", "Verdana", sans-serif',
   fontSize: '20px',
@@ -35,6 +50,15 @@ function debugLog(type: 'info' | 'event' | 'action' | 'error', message: string) 
     emitToConsole: true,
     consolePrefix: 'Sprite',
   });
+}
+
+function hashTextureInput(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 /**
@@ -62,6 +86,12 @@ export class RuntimeSprite {
   private _costumes: Costume[] = [];
   private _currentCostumeIndex: number = 0;
   private _costumeImage: Phaser.GameObjects.Image | null = null;
+  private _displayedFrameIndex: number = 0;
+  private _animationSequenceIndex: number = 0;
+  private _animationAccumulatedMs: number = 0;
+  private _animationCompleted: boolean = false;
+  private _costumeDisplayVersion: number = 0;
+  private _animationCompletionResolvers: Array<() => void> = [];
 
   // Click handler for pixel-perfect detection
   private _clickHandler: (() => void) | null = null;
@@ -76,6 +106,7 @@ export class RuntimeSprite {
   private _lastMotionSample: { x: number; y: number } | null = null;
   private _activeTranslationTweens: number = 0;
   private _motionSampleHandler: (() => void) | null = null;
+  private _animationUpdateHandler: ((time: number, delta: number) => void) | null = null;
 
   // Ground collision tracking (set by RuntimeEngine)
   private _isTouchingGround: boolean = false;
@@ -100,6 +131,10 @@ export class RuntimeSprite {
         this._lastMotionSample = { x: this.container.x, y: this.container.y };
       };
       this.scene.events.on(Phaser.Scenes.Events.POST_UPDATE, this._motionSampleHandler);
+      this._animationUpdateHandler = (_time: number, delta: number) => {
+        this._advanceAnimatedCostumePlayback(delta);
+      };
+      this.scene.events.on(Phaser.Scenes.Events.UPDATE, this._animationUpdateHandler);
     }
   }
 
@@ -477,7 +512,12 @@ export class RuntimeSprite {
   setCostumes(costumes: Costume[], currentIndex: number = 0): void {
     this._costumes = costumes;
     this._currentCostumeIndex = currentIndex;
+    this._resetAnimatedCostumePlayback();
     this._updateCostumeDisplay();
+    const currentCostume = this.getCurrentCostume();
+    if (currentCostume && isAnimatedCostume(currentCostume)) {
+      void prewarmAnimatedCostumeFramePreviews(currentCostume.clip).catch(() => {});
+    }
   }
 
   getCostumes(): Costume[] {
@@ -492,11 +532,100 @@ export class RuntimeSprite {
     return this._costumes[this._currentCostumeIndex] ?? null;
   }
 
+  private _getCurrentAnimationFrameIndex(): number {
+    const costume = this.getCurrentCostume();
+    if (!costume || !isAnimatedCostume(costume)) {
+      return 0;
+    }
+
+    const sequence = getAnimatedCostumePlaybackSequence(costume.clip.totalFrames, costume.clip.playback);
+    return sequence[this._animationSequenceIndex]?.frameIndex ?? 0;
+  }
+
+  private _resetAnimatedCostumePlayback(): void {
+    this._displayedFrameIndex = 0;
+    this._animationSequenceIndex = 0;
+    this._animationAccumulatedMs = 0;
+    this._animationCompleted = false;
+    this._resolveAnimationWaiters(true);
+  }
+
+  private _resolveAnimationWaiters(immediate: boolean = false): void {
+    if (!immediate && !this._animationCompleted) {
+      return;
+    }
+    const resolvers = [...this._animationCompletionResolvers];
+    this._animationCompletionResolvers = [];
+    for (const resolve of resolvers) {
+      resolve();
+    }
+  }
+
+  private _advanceAnimatedCostumePlayback(deltaMs: number): void {
+    if (this._stopped) {
+      return;
+    }
+
+    const costume = this.getCurrentCostume();
+    if (!costume || !isAnimatedCostume(costume)) {
+      return;
+    }
+
+    const clip = costume.clip;
+    const frameDurationMs = getAnimatedCostumeFrameDurationMs(clip);
+    if (frameDurationMs <= 0) {
+      return;
+    }
+
+    if (clip.playback === 'play-once' && this._animationCompleted) {
+      return;
+    }
+
+    this._animationAccumulatedMs += Math.max(0, deltaMs);
+    const sequence = getAnimatedCostumePlaybackSequence(clip.totalFrames, clip.playback);
+    if (sequence.length <= 1) {
+      return;
+    }
+
+    let didAdvanceFrame = false;
+    while (this._animationAccumulatedMs >= frameDurationMs) {
+      this._animationAccumulatedMs -= frameDurationMs;
+      if (clip.playback === 'play-once' && this._animationSequenceIndex >= sequence.length - 1) {
+        this._animationCompleted = true;
+        this._resolveAnimationWaiters();
+        break;
+      }
+
+      this._animationSequenceIndex = (this._animationSequenceIndex + 1) % sequence.length;
+      didAdvanceFrame = true;
+    }
+
+    if (didAdvanceFrame) {
+      const nextFrameIndex = this._getCurrentAnimationFrameIndex();
+      if (nextFrameIndex !== this._displayedFrameIndex) {
+        this._displayedFrameIndex = nextFrameIndex;
+        this._updateCostumeDisplay();
+      }
+    }
+  }
+
+  private _getSharedTextureKeyForCurrentFrame(assetId: string, frameSignature?: string): string {
+    const costume = this.getCurrentCostume();
+    const costumeId = costume?.id ?? 'unknown';
+    const input = frameSignature ? `${costumeId}:${frameSignature}` : `${costumeId}:${assetId}`;
+    return `runtime_costume_${hashTextureInput(input)}`;
+  }
+
   // For cloning - copy internal state
   copyStateFrom(other: RuntimeSprite): void {
     // Copy costumes
     if (other._costumes.length > 0) {
       this.setCostumes([...other._costumes], other._currentCostumeIndex);
+      this._animationSequenceIndex = other._animationSequenceIndex;
+      this._displayedFrameIndex = other._displayedFrameIndex;
+      this._animationAccumulatedMs = other._animationAccumulatedMs;
+      this._animationCompleted = other._animationCompleted;
+      this._updateCostumeDisplay();
     }
 
     // Copy direction and size
@@ -522,75 +651,104 @@ export class RuntimeSprite {
     const costume = this._costumes[this._currentCostumeIndex];
     if (!costume) return;
 
-    // Remove old costume image if it exists
-    if (this._costumeImage) {
-      this._costumeImage.destroy();
-      this._costumeImage = null;
-    }
-
-    // Remove any existing sprite image created by PhaserCanvas
-    const existingSprite = this.container.getByName('sprite');
-    if (existingSprite) {
-      existingSprite.destroy();
-    }
-
     // Remove the default graphics (colored rectangle)
     const graphics = this.container.getAt(0);
     if (graphics instanceof Phaser.GameObjects.Graphics) {
       graphics.setVisible(false);
     }
 
-    // Load and display the costume image
-    const textureKey = `costume_${this.id}_${costume.id}`;
+    const displayVersion = ++this._costumeDisplayVersion;
+    const applyResolvedPreview = (
+      textureKey: string,
+      preview: {
+        assetFrame?: CostumeAssetFrame | null;
+        bounds: CostumeBounds | null;
+      },
+    ) => {
+      if (!this.container.active || !this.container.scene || displayVersion !== this._costumeDisplayVersion) {
+        return;
+      }
 
-    // Check if texture already exists
-    if (!this.scene.textures.exists(textureKey)) {
-      void loadImageSource(costume.assetId).then((img) => {
-        if (this.scene && this.scene.textures) {
-          // Check again inside callback to handle race conditions
-          if (!this.scene.textures.exists(textureKey)) {
+      let costumeImage = this._costumeImage;
+      const existingSprite = this.container.getByName('sprite');
+      if (existingSprite && existingSprite !== costumeImage) {
+        existingSprite.destroy();
+      }
+
+      if (!costumeImage) {
+        costumeImage = this.scene.add.image(0, 0, textureKey);
+        costumeImage.setName('sprite');
+        costumeImage.setOrigin(0.5, 0.5);
+        this._costumeImage = costumeImage;
+        this.container.addAt(costumeImage, 0);
+      } else {
+        costumeImage.setTexture(textureKey);
+      }
+
+      const layoutBounds = costume.bounds ?? preview.bounds ?? null;
+      const layoutAssetFrame = preview.assetFrame ?? costume.assetFrame ?? FULL_COSTUME_ASSET_FRAME;
+      const assetOffset = getCostumeAssetCenterOffset(layoutAssetFrame);
+      costumeImage.setPosition(assetOffset.x, assetOffset.y);
+
+      if (layoutBounds && layoutBounds.width > 0 && layoutBounds.height > 0) {
+        this.container.setSize(layoutBounds.width, layoutBounds.height);
+      } else {
+        const width = costumeImage.displayWidth || costumeImage.width || 64;
+        const height = costumeImage.displayHeight || costumeImage.height || 64;
+        this.container.setSize(width, height);
+      }
+
+      if (this._clickHandler) {
+        this._setupPixelPerfectClick();
+      }
+
+      this.updatePhysicsBodySize();
+    };
+
+    if (isAnimatedCostume(costume)) {
+      const frameIndex = this._getCurrentAnimationFrameIndex();
+      const frameSignature = getAnimatedCostumeFramePreviewSignature(costume.clip, frameIndex);
+      void renderAnimatedCostumeFramePreview(costume.clip, frameIndex).then((preview) => {
+        const textureKey = this._getSharedTextureKeyForCurrentFrame(preview.dataUrl, frameSignature);
+        const commit = () => applyResolvedPreview(textureKey, preview);
+        if (this.scene.textures.exists(textureKey)) {
+          commit();
+          return;
+        }
+
+        void loadImageSource(preview.dataUrl).then((img) => {
+          if (!this.scene?.textures?.exists(textureKey)) {
             this.scene.textures.addImage(textureKey, img);
           }
-          this._createCostumeImage(textureKey);
-        }
+          commit();
+        }).catch((error) => {
+          debugLog('error', `${this.name}: Failed to load animated costume frame (${String(error)})`);
+        });
       }).catch((error) => {
-        debugLog('error', `${this.name}: Failed to load costume asset (${String(error)})`);
+        debugLog('error', `${this.name}: Failed to render animated costume frame (${String(error)})`);
       });
-    } else {
-      this._createCostumeImage(textureKey);
-    }
-  }
-
-  private _createCostumeImage(textureKey: string): void {
-    if (this._costumeImage) {
-      this._costumeImage.destroy();
+      return;
     }
 
-    this._costumeImage = this.scene.add.image(0, 0, textureKey);
-    this._costumeImage.setOrigin(0.5, 0.5);
-    const costume = this._costumes[this._currentCostumeIndex];
-    const assetOffset = getCostumeAssetCenterOffset(costume?.assetFrame);
-    this._costumeImage.setPosition(assetOffset.x, assetOffset.y);
+    const textureKey = this._getSharedTextureKeyForCurrentFrame(costume.assetId);
+    const commit = () => applyResolvedPreview(textureKey, {
+      assetFrame: costume.assetFrame ?? null,
+      bounds: costume.bounds ?? null,
+    });
 
-    this.container.addAt(this._costumeImage, 0);
-
-    // Update container size to match costume (used for fallback collision detection)
-    if (costume?.bounds && costume.bounds.width > 0 && costume.bounds.height > 0) {
-      this.container.setSize(costume.bounds.width, costume.bounds.height);
-    } else {
-      // Fallback to image dimensions
-      const w = this._costumeImage.displayWidth || this._costumeImage.width || 64;
-      const h = this._costumeImage.displayHeight || this._costumeImage.height || 64;
-      this.container.setSize(w, h);
+    if (this.scene.textures.exists(textureKey)) {
+      commit();
+      return;
     }
 
-    // Re-setup click handler with pixel-perfect detection if one was registered
-    if (this._clickHandler) {
-      this._setupPixelPerfectClick();
-    }
-
-    // Update physics body size to match the new costume
-    this.updatePhysicsBodySize();
+    void loadImageSource(costume.assetId).then((img) => {
+      if (!this.scene?.textures?.exists(textureKey)) {
+        this.scene.textures.addImage(textureKey, img);
+      }
+      commit();
+    }).catch((error) => {
+      debugLog('error', `${this.name}: Failed to load costume asset (${String(error)})`);
+    });
   }
 
   /**
@@ -661,6 +819,7 @@ export class RuntimeSprite {
     if (this._costumes.length === 0) return;
 
     this._currentCostumeIndex = (this._currentCostumeIndex + 1) % this._costumes.length;
+    this._resetAnimatedCostumePlayback();
     this._updateCostumeDisplay();
     debugLog('action', `${this.name}.nextCostume() -> ${this._currentCostumeIndex + 1}`);
   }
@@ -670,6 +829,7 @@ export class RuntimeSprite {
     if (this._costumes.length === 0) return;
 
     this._currentCostumeIndex = (this._currentCostumeIndex - 1 + this._costumes.length) % this._costumes.length;
+    this._resetAnimatedCostumePlayback();
     this._updateCostumeDisplay();
     debugLog('action', `${this.name}.previousCostume() -> ${this._currentCostumeIndex + 1}`);
   }
@@ -684,14 +844,34 @@ export class RuntimeSprite {
       // 1-based index
       index = Math.max(0, Math.min(this._costumes.length - 1, costumeRef - 1));
     } else {
-      // By name
-      index = this._costumes.findIndex(c => c.name === costumeRef);
+      // Prefer id, then fall back to name for compatibility with older Blockly output.
+      index = this._costumes.findIndex((c) => c.id === costumeRef);
+      if (index === -1) {
+        index = this._costumes.findIndex((c) => c.name === costumeRef);
+      }
       if (index === -1) index = this._currentCostumeIndex;
     }
 
     this._currentCostumeIndex = index;
+    this._resetAnimatedCostumePlayback();
     this._updateCostumeDisplay();
     debugLog('action', `${this.name}.switchCostume(${costumeRef}) -> ${this._currentCostumeIndex + 1}`);
+  }
+
+  async switchCostumeAndWait(costumeRef: number | string): Promise<void> {
+    this.switchCostume(costumeRef);
+    const costume = this.getCurrentCostume();
+    if (!costume || !isAnimatedCostume(costume) || costume.clip.playback !== 'play-once') {
+      return;
+    }
+
+    if (this._animationCompleted) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      this._animationCompletionResolvers.push(resolve);
+    });
   }
 
   getCostumeNumber(): number {
@@ -1099,6 +1279,11 @@ export class RuntimeSprite {
       this.scene.events?.off(Phaser.Scenes.Events.POST_UPDATE, this._motionSampleHandler);
       this._motionSampleHandler = null;
     }
+    if (this._animationUpdateHandler) {
+      this.scene.events?.off(Phaser.Scenes.Events.UPDATE, this._animationUpdateHandler);
+      this._animationUpdateHandler = null;
+    }
+    this._resolveAnimationWaiters(true);
 
     // Remove Matter.js body from world before destroying container
     // This prevents the "body.destroy is not a function" error

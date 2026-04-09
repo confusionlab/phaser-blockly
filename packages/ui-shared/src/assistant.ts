@@ -56,6 +56,10 @@ export interface AssistantColliderConfig {
 export interface AssistantCostumeSummary {
   id: string;
   name: string;
+  kind?: 'static' | 'animated';
+  frameCount?: number;
+  fps?: number;
+  playback?: 'play-once' | 'loop' | 'ping-pong';
 }
 
 export interface AssistantSoundSummary {

@@ -25,14 +25,18 @@ import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
 import {
   cloneCostume,
   cloneCostumeDocument,
+  createStaticCostumeFromDocument,
   createBlankCostumeDocument,
   createBitmapCostumeDocument,
+  isAnimatedCostume,
 } from '@/lib/costume/costumeDocument';
 import {
+  getAnimatedCostumeClipPreviewSignature,
   getCachedCostumeDocumentPreview,
   getCostumeDocumentPreviewSignature,
-  renderCostumeDocumentPreview,
+  renderCostumePreview,
 } from '@/lib/costume/costumeDocumentRender';
+import { getCostumePreviewFrameIndex } from '@/lib/costume/costumeAnimation';
 import { prepareCostumeLibraryCreatePayload } from '@/lib/costumeLibrary/costumeLibraryAssets';
 import { ensureLibraryAssetRefsInCloud } from '@/lib/templateLibrary/libraryAssetRefs';
 import { useModal } from '@/components/ui/modal-provider';
@@ -63,13 +67,18 @@ interface CostumeListProps {
 
 const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costume: Costume }) {
   const previewSignature = useMemo(
-    () => getCostumeDocumentPreviewSignature(costume.document),
-    [costume.document],
+    () => isAnimatedCostume(costume)
+      ? getAnimatedCostumeClipPreviewSignature(costume.clip)
+      : getCostumeDocumentPreviewSignature(costume.document),
+    [costume],
   );
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const [previewContainerSize, setPreviewContainerSize] = useState(0);
+  const [previewClockMs, setPreviewClockMs] = useState(() => performance.now());
   const [preview, setPreview] = useState<{ assetFrame?: CostumeAssetFrame | null; assetId: string; bounds?: CostumeBounds }>(() => {
-    const cachedPreview = getCachedCostumeDocumentPreview(costume.document);
+    const cachedPreview = !isAnimatedCostume(costume)
+      ? getCachedCostumeDocumentPreview(costume.document)
+      : null;
     if (cachedPreview) {
       return {
         assetFrame: cachedPreview.assetFrame,
@@ -84,10 +93,30 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
       bounds: costume.bounds,
     };
   });
+  const previewFrameIndex = useMemo(
+    () => getCostumePreviewFrameIndex(costume, previewClockMs),
+    [costume, previewClockMs],
+  );
+
+  useEffect(() => {
+    if (!isAnimatedCostume(costume)) {
+      return;
+    }
+
+    let frameId = 0;
+    const tick = () => {
+      setPreviewClockMs(performance.now());
+      frameId = window.requestAnimationFrame(tick);
+    };
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [costume]);
 
   useEffect(() => {
     let cancelled = false;
-    const cachedPreview = getCachedCostumeDocumentPreview(costume.document);
+    const cachedPreview = !isAnimatedCostume(costume)
+      ? getCachedCostumeDocumentPreview(costume.document)
+      : null;
     if (cachedPreview) {
       setPreview({
         assetFrame: cachedPreview.assetFrame,
@@ -99,7 +128,9 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
       };
     }
 
-    void renderCostumeDocumentPreview(costume.document).then((rendered) => {
+    void renderCostumePreview(costume, {
+      frameIndex: isAnimatedCostume(costume) ? previewFrameIndex : undefined,
+    }).then((rendered) => {
       if (cancelled) {
         return;
       }
@@ -118,7 +149,7 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
     return () => {
       cancelled = true;
     };
-  }, [previewSignature]);
+  }, [previewFrameIndex, previewSignature, costume]);
 
   useEffect(() => {
     const element = previewContainerRef.current;
@@ -285,12 +316,12 @@ export const CostumeList = memo(({
     canvas.height = 1024;
     // Canvas is transparent by default, no need to fill
 
-    const newCostume: Costume = {
+    const newCostume: Costume = createStaticCostumeFromDocument({
       id: crypto.randomUUID(),
       name: `costume${costumes.length + 1}`,
       assetId: canvas.toDataURL('image/png'),
       document: createBlankCostumeDocument(),
-    };
+    });
     onAddCostume(newCostume);
   };
 
@@ -312,7 +343,7 @@ export const CostumeList = memo(({
           const processedDataUrl = await processImage(file);
           // Calculate bounds for the uploaded image
           const bounds = await calculateVisibleBounds(processedDataUrl);
-          const newCostume: Costume = {
+          const newCostume: Costume = createStaticCostumeFromDocument({
             id: crypto.randomUUID(),
             name: file.name.replace(/\.[^/.]+$/, ''),
             assetId: processedDataUrl,
@@ -321,7 +352,7 @@ export const CostumeList = memo(({
               processedDataUrl,
               file.name.replace(/\.[^/.]+$/, '') || 'Layer 1',
             ),
-          };
+          });
           onAddCostume(newCostume);
         } catch (error) {
           console.error('Failed to process image:', file.name, error);
@@ -340,13 +371,13 @@ export const CostumeList = memo(({
     document: CostumeDocument;
   }) => {
     try {
-      const newCostume: Costume = {
+      const newCostume: Costume = createStaticCostumeFromDocument({
         id: crypto.randomUUID(),
         name: data.name,
         assetId: data.dataUrl,
         bounds: data.bounds,
         document: cloneCostumeDocument(data.document),
-      };
+      });
       onAddCostume(newCostume);
     } catch (error) {
       console.error('Failed to add costume from library:', error);

@@ -665,6 +665,118 @@ function getSoundDropdownOptions(): Array<[string, string]> {
   return sounds.map(sound => [sound.name, sound.id]);
 }
 
+function getCurrentTargetCostumes(): Array<{ id: string; name: string; kind?: string; clip?: { playback?: string } }> {
+  const project = useProjectStore.getState().project;
+  const selectedSceneId = useEditorStore.getState().selectedSceneId;
+  const selectedObjectId = useEditorStore.getState().selectedObjectId;
+  const selectedComponentId = useEditorStore.getState().selectedComponentId;
+
+  if (!project) {
+    return [];
+  }
+
+  if (selectedSceneId && selectedObjectId) {
+    const scene = project.scenes.find((candidate) => candidate.id === selectedSceneId);
+    const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
+    if (!object) {
+      return [];
+    }
+
+    if (object.componentId) {
+      return (project.components || []).find((candidate) => candidate.id === object.componentId)?.costumes || [];
+    }
+
+    return object.costumes || [];
+  }
+
+  if (selectedComponentId) {
+    return (project.components || []).find((candidate) => candidate.id === selectedComponentId)?.costumes || [];
+  }
+
+  return [];
+}
+
+function getCostumeDropdownOptions(): Array<[string, string]> {
+  const costumes = getCurrentTargetCostumes();
+  if (costumes.length === 0) {
+    return [['(no costumes)', '']];
+  }
+
+  const nameCounts = new Map<string, number>();
+  for (const costume of costumes) {
+    nameCounts.set(costume.name, (nameCounts.get(costume.name) || 0) + 1);
+  }
+
+  const seenCounts = new Map<string, number>();
+  return costumes.map((costume) => {
+    const duplicateCount = nameCounts.get(costume.name) || 0;
+    if (duplicateCount <= 1) {
+      return [costume.name, costume.id];
+    }
+    const nextIndex = (seenCounts.get(costume.name) || 0) + 1;
+    seenCounts.set(costume.name, nextIndex);
+    return [`${costume.name} (${nextIndex})`, costume.id];
+  });
+}
+
+function getCostumeById(costumeId: string | null | undefined) {
+  if (!costumeId) {
+    return null;
+  }
+  return getCurrentTargetCostumes().find((costume) => costume.id === costumeId) ?? null;
+}
+
+function readSwitchCostumeWaitPreference(block: Blockly.Block): boolean {
+  return block.data === 'wait-until-complete';
+}
+
+function writeSwitchCostumeWaitPreference(block: Blockly.Block, value: boolean): void {
+  block.data = value ? 'wait-until-complete' : '';
+}
+
+function shouldShowSwitchCostumeWaitInput(block: Blockly.Block): boolean {
+  const inputBlock = block.getInputTargetBlock('COSTUME');
+  if (!inputBlock || inputBlock.type !== 'looks_costume_literal') {
+    return false;
+  }
+
+  const costume = getCostumeById(inputBlock.getFieldValue('COSTUME'));
+  return !!costume && costume.kind === 'animated' && costume.clip?.playback === 'play-once';
+}
+
+function syncSwitchCostumeWaitInput(block: Blockly.Block): void {
+  const inputName = 'WAIT_INPUT';
+  const shouldShow = shouldShowSwitchCostumeWaitInput(block);
+  const existingInput = block.getInput(inputName);
+
+  if (!shouldShow) {
+    if (existingInput) {
+      writeSwitchCostumeWaitPreference(block, block.getFieldValue('WAIT_UNTIL_COMPLETE') === 'TRUE');
+      block.removeInput(inputName, true);
+    }
+    return;
+  }
+
+  if (existingInput) {
+    return;
+  }
+
+  const waitInput = block.appendDummyInput(inputName)
+    .appendField('wait until complete')
+    .appendField(new Blockly.FieldCheckbox(
+      readSwitchCostumeWaitPreference(block) ? 'TRUE' : 'FALSE',
+      (newValue) => {
+        writeSwitchCostumeWaitPreference(block, newValue === 'TRUE');
+        return newValue;
+      },
+    ), 'WAIT_UNTIL_COMPLETE');
+
+  if (block.getInput('COSTUME')) {
+    block.moveInputBefore(inputName, null);
+  }
+  waitInput.setAlign(Blockly.inputs.Align.RIGHT);
+}
+
 function getTouchDirectionOptions(): Array<[string, string]> {
   return [
     ['top', 'TOP'],
@@ -1226,7 +1338,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
             kind: 'block',
             type: 'looks_switch_costume',
             inputs: {
-              COSTUME: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+              COSTUME: { shadow: { type: 'looks_costume_literal' } }
             }
           },
           { kind: 'block', type: 'looks_costume_number' },
@@ -2244,6 +2356,40 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#9966FF');
       this.setTooltip('Switch to costume by name or number');
+      syncSwitchCostumeWaitInput(this);
+    },
+    saveExtraState: function() {
+      return {
+        waitUntilComplete: readSwitchCostumeWaitPreference(this),
+      };
+    },
+    loadExtraState: function(state: { waitUntilComplete?: boolean } | null | undefined) {
+      writeSwitchCostumeWaitPreference(this, !!state?.waitUntilComplete);
+      syncSwitchCostumeWaitInput(this);
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (!event) {
+        return;
+      }
+      if (
+        event.type !== Blockly.Events.BLOCK_CREATE &&
+        event.type !== Blockly.Events.BLOCK_CHANGE &&
+        event.type !== Blockly.Events.BLOCK_MOVE
+      ) {
+        return;
+      }
+      syncSwitchCostumeWaitInput(this);
+    },
+  };
+
+  Blockly.Blocks['looks_costume_literal'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('costume')
+        .appendField(new PreservingFieldDropdown(getCostumeDropdownOptions), 'COSTUME');
+      this.setOutput(true, 'String');
+      this.setColour(BLOCK_COLOURS.looks);
+      this.setTooltip('Costume literal from the current object or component');
     }
   };
 

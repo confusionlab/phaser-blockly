@@ -25,8 +25,10 @@ import {
 import { cloneVariableDefinitions, normalizeVariableDefinition } from '@/lib/variableUtils';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 import {
+  cloneAnimatedCostumeClip,
   cloneCostumeDocument,
   ensureCostumeDocument,
+  isAnimatedCostume,
   isBitmapCostumeLayer,
 } from '@/lib/costume/costumeDocument';
 import {
@@ -64,6 +66,7 @@ import {
 } from '@/lib/projectThumbnail';
 import {
   getCachedCostumeDocumentPreview,
+  renderAnimatedCostumePosterPreview,
   renderCostumeDocumentPreview,
 } from '@/lib/costume/costumeDocumentRender';
 import { resolveBackgroundRuntimeChunkData } from '@/lib/background/backgroundDocumentRender';
@@ -989,6 +992,36 @@ function applyPersistedBitmapAssetRefs(
   return document;
 }
 
+function applyPersistedBitmapAssetRefsToAnimatedClip(
+  clip: ReturnType<typeof cloneAnimatedCostumeClip>,
+  refs: Map<string, { assetId: string; assetFrame?: CostumeAssetFrame }>,
+  options: {
+    includePersistedAssetId?: boolean;
+  } = {},
+): ReturnType<typeof cloneAnimatedCostumeClip> {
+  const includePersistedAssetId = options.includePersistedAssetId !== false;
+  for (const track of clip.tracks) {
+    if (track.kind !== 'bitmap') {
+      continue;
+    }
+    for (const cel of track.cels) {
+      const persistedRef = refs.get(cel.id);
+      if (!persistedRef) {
+        continue;
+      }
+      cel.bitmap.assetId = persistedRef.assetId;
+      cel.bitmap.assetFrame = cloneCostumeAssetFrame(persistedRef.assetFrame);
+      if (includePersistedAssetId) {
+        cel.bitmap.persistedAssetId = persistedRef.assetId;
+      } else {
+        delete (cel.bitmap as { persistedAssetId?: string }).persistedAssetId;
+      }
+    }
+  }
+
+  return clip;
+}
+
 function addPersistedAssetRef(
   refsById: Map<string, PersistedProjectAssetRef>,
   assetId: string,
@@ -1006,6 +1039,10 @@ async function normalizeCostumeAssetsForStorage(
 ): Promise<void> {
   const document = cloneCostumeDocument(ensureCostumeDocument(costume));
   const persistedBitmapLayerRefs = new Map<string, { assetId: string; assetFrame?: CostumeAssetFrame }>();
+  const animatedClip = isAnimatedCostume(costume as any)
+    ? cloneAnimatedCostumeClip((costume as { clip: ReturnType<typeof cloneAnimatedCostumeClip> }).clip)
+    : null;
+  const persistedBitmapCelRefs = new Map<string, { assetId: string; assetFrame?: CostumeAssetFrame }>();
 
   for (const layer of document.layers) {
     if (!isBitmapCostumeLayer(layer) || !isLikelyAssetSource(layer.bitmap.assetId)) {
@@ -1049,9 +1086,63 @@ async function normalizeCostumeAssetsForStorage(
     });
   }
 
+  if (animatedClip) {
+    for (const track of animatedClip.tracks) {
+      if (track.kind !== 'bitmap') {
+        continue;
+      }
+      for (const cel of track.cels) {
+        if (!isLikelyAssetSource(cel.bitmap.assetId)) {
+          continue;
+        }
+        const existingManagedAssetId = getManagedAssetIdForSource(cel.bitmap.assetId);
+        if (existingManagedAssetId) {
+          addPersistedAssetRef(refsById, existingManagedAssetId, 'image');
+          persistedBitmapCelRefs.set(cel.id, {
+            assetId: existingManagedAssetId,
+            assetFrame: cloneCostumeAssetFrame(cel.bitmap.assetFrame),
+          });
+          cel.bitmap.persistedAssetId = existingManagedAssetId;
+          continue;
+        }
+
+        if (
+          typeof cel.bitmap.persistedAssetId === 'string' &&
+          await sourceMatchesManagedAssetId(cel.bitmap.assetId, cel.bitmap.persistedAssetId)
+        ) {
+          addPersistedAssetRef(refsById, cel.bitmap.persistedAssetId, 'image');
+          persistedBitmapCelRefs.set(cel.id, {
+            assetId: cel.bitmap.persistedAssetId,
+            assetFrame: cloneCostumeAssetFrame(cel.bitmap.assetFrame),
+          });
+          continue;
+        }
+
+        const optimizedCelAsset = await optimizeCostumeBitmapAssetSource(
+          cel.bitmap.assetId,
+          cel.bitmap.assetFrame,
+        );
+        if (!optimizedCelAsset) {
+          continue;
+        }
+        const record = await ensureAssetRecordFromSource(optimizedCelAsset.dataUrl, 'image');
+        addPersistedAssetRef(refsById, record.id, 'image');
+        persistedBitmapCelRefs.set(cel.id, {
+          assetId: record.id,
+          assetFrame: cloneCostumeAssetFrame(optimizedCelAsset.assetFrame),
+        });
+      }
+    }
+  }
+
   (costume as { document: unknown }).document = applyPersistedBitmapAssetRefs(document, persistedBitmapLayerRefs, {
     includePersistedAssetId: false,
   });
+  if (animatedClip) {
+    (costume as { clip: unknown }).clip = applyPersistedBitmapAssetRefsToAnimatedClip(animatedClip, persistedBitmapCelRefs, {
+      includePersistedAssetId: false,
+    });
+  }
   delete (costume as { assetId?: unknown }).assetId;
   delete (costume as { assetFrame?: unknown }).assetFrame;
   delete (costume as { bounds?: unknown }).bounds;
@@ -1060,7 +1151,7 @@ async function normalizeCostumeAssetsForStorage(
 }
 
 async function hydrateCostumeAssetsFromStorage(
-  costume: { assetId?: unknown; assetFrame?: unknown; bounds?: unknown; document?: unknown },
+  costume: { assetId?: unknown; assetFrame?: unknown; bounds?: unknown; document?: unknown; clip?: unknown },
 ): Promise<void> {
   const legacyFallbackAssetId = typeof costume.assetId === 'string' && costume.assetId.trim().length > 0
     ? costume.assetId
@@ -1080,10 +1171,35 @@ async function hydrateCostumeAssetsFromStorage(
     layer.bitmap.assetId = objectUrl;
   }
 
+  if (isAnimatedCostume(costume as any)) {
+    const clip = cloneAnimatedCostumeClip((costume as { clip: ReturnType<typeof cloneAnimatedCostumeClip> }).clip);
+    for (const track of clip.tracks) {
+      if (track.kind !== 'bitmap') {
+        continue;
+      }
+      for (const cel of track.cels) {
+        if (!isManagedAssetId(cel.bitmap.assetId)) {
+          continue;
+        }
+        const persistedAssetId = cel.bitmap.assetId;
+        const objectUrl = await resolveManagedAssetUrl(persistedAssetId);
+        if (!objectUrl) {
+          continue;
+        }
+        rememberResolvedManagedAsset(persistedAssetId, objectUrl);
+        cel.bitmap.persistedAssetId = persistedAssetId;
+        cel.bitmap.assetId = objectUrl;
+      }
+    }
+    (costume as { clip: unknown }).clip = clip;
+  }
+
   const fallbackBitmapLayer = document.layers.find(isBitmapCostumeLayer);
   const fallbackAssetId = legacyFallbackAssetId ?? fallbackBitmapLayer?.bitmap.assetId ?? null;
 
-  const cachedPreview = getCachedCostumeDocumentPreview(document);
+  const cachedPreview = isAnimatedCostume(costume as any)
+    ? null
+    : getCachedCostumeDocumentPreview(document);
   if (cachedPreview) {
     (costume as { assetId: string }).assetId = cachedPreview.dataUrl;
     if (cachedPreview.assetFrame) {
@@ -1128,17 +1244,52 @@ async function hydrateCostumeAssetsFromStorage(
     }
   }
 
+  if (isAnimatedCostume(costume as any)) {
+    try {
+      const renderedPreview = await renderAnimatedCostumePosterPreview(
+        (costume as { clip: ReturnType<typeof cloneAnimatedCostumeClip> }).clip,
+      );
+      (costume as { assetId: string }).assetId = renderedPreview.dataUrl;
+      if (renderedPreview.assetFrame) {
+        (costume as { assetFrame?: unknown }).assetFrame = cloneCostumeAssetFrame(renderedPreview.assetFrame);
+      } else {
+        delete (costume as { assetFrame?: unknown }).assetFrame;
+      }
+      if (renderedPreview.bounds) {
+        (costume as { bounds?: unknown }).bounds = { ...renderedPreview.bounds };
+      } else {
+        delete (costume as { bounds?: unknown }).bounds;
+      }
+    } catch (error) {
+      console.warn('Failed to derive animated costume poster preview.', error);
+    }
+  }
+
   (costume as { document: unknown }).document = cloneCostumeDocument(document);
 }
 
 function collectCostumePersistedAssetRefs(
-  costume: { document?: unknown },
+  costume: { document?: unknown; clip?: unknown },
   refsById: Map<string, PersistedProjectAssetRef>,
 ): void {
   const document = ensureCostumeDocument(costume);
   for (const layer of document.layers) {
     if (isBitmapCostumeLayer(layer) && layer.bitmap.assetId) {
       addPersistedAssetRef(refsById, layer.bitmap.assetId, 'image');
+    }
+  }
+
+  if (isAnimatedCostume(costume as any)) {
+    const clip = (costume as { clip: ReturnType<typeof cloneAnimatedCostumeClip> }).clip;
+    for (const track of clip.tracks) {
+      if (track.kind !== 'bitmap') {
+        continue;
+      }
+      for (const cel of track.cels) {
+        if (cel.bitmap.assetId) {
+          addPersistedAssetRef(refsById, cel.bitmap.assetId, 'image');
+        }
+      }
     }
   }
 }

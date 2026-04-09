@@ -7,6 +7,7 @@ import {
 } from '@/db/database';
 import {
   cloneCostumeDocument,
+  createStaticCostumeFromDocument,
   ensureCostumeDocument,
   getActiveCostumeLayer,
   isBitmapCostumeLayer,
@@ -359,14 +360,14 @@ export async function hydrateObjectLibraryItemForInsertion(
         }
       }
 
-      return {
+      return createStaticCostumeFromDocument({
         id: crypto.randomUUID(),
         name: costume.name,
         assetId: rendered?.dataUrl ?? fallbackPreviewUrl ?? '',
         assetFrame: rendered?.assetFrame ?? undefined,
         bounds: rendered?.bounds ?? costume.bounds,
         document,
-      } satisfies Costume;
+      }) satisfies Costume;
     }),
   );
 
@@ -404,7 +405,7 @@ export async function hydrateObjectLibraryItemForInsertion(
 }
 
 function cloneCostumesForMigration(costumes: ObjectLibraryStoredCostume[]): Costume[] {
-  return costumes.map((costume) => ({
+  return costumes.map((costume) => createStaticCostumeFromDocument({
     id: costume.id,
     name: costume.name,
     assetId: '',

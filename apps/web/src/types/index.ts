@@ -237,19 +237,89 @@ export interface CostumeDocument {
   layers: CostumeLayer[];
 }
 
+export type AnimatedCostumePlayback = 'play-once' | 'loop' | 'ping-pong';
+
+export interface AnimatedCostumeCelBase {
+  id: string;
+  startFrame: number;
+  durationFrames: number;
+}
+
+export interface AnimatedCostumeBitmapCel extends AnimatedCostumeCelBase {
+  kind: 'bitmap';
+  bitmap: CostumeBitmapContentRef;
+}
+
+export interface AnimatedCostumeVectorCel extends AnimatedCostumeCelBase {
+  kind: 'vector';
+  vector: CostumeVectorDocument;
+}
+
+export type AnimatedCostumeCel =
+  | AnimatedCostumeBitmapCel
+  | AnimatedCostumeVectorCel;
+
+export interface AnimatedCostumeTrackBase {
+  id: string;
+  name: string;
+  visible: boolean;
+  locked: boolean;
+  opacity: number;
+  blendMode: CostumeLayerBlendMode;
+  mask: null;
+  effects: CostumeLayerEffect[];
+}
+
+export interface AnimatedCostumeBitmapTrack extends AnimatedCostumeTrackBase {
+  kind: 'bitmap';
+  width: number;
+  height: number;
+  cels: AnimatedCostumeBitmapCel[];
+}
+
+export interface AnimatedCostumeVectorTrack extends AnimatedCostumeTrackBase {
+  kind: 'vector';
+  cels: AnimatedCostumeVectorCel[];
+}
+
+export type AnimatedCostumeTrack =
+  | AnimatedCostumeBitmapTrack
+  | AnimatedCostumeVectorTrack;
+
+export interface AnimatedCostumeClip {
+  version: 1;
+  totalFrames: number;
+  fps: number;
+  playback: AnimatedCostumePlayback;
+  activeTrackId: string;
+  tracks: AnimatedCostumeTrack[];
+}
+
 /**
  * @deprecated Use CostumeLayerKind for active layer kind instead.
  */
 export type CostumeEditorMode = CostumeLayerKind;
 
-export interface Costume {
+export interface CostumeBase {
   id: string;
   name: string;
   assetId: string; // Derived flattened runtime preview source
   bounds?: CostumeBounds; // Derived visible pixel bounds from the layered document
   assetFrame?: CostumeAssetFrame; // Derived placement metadata for the flattened runtime preview
+}
+
+export interface StaticCostume extends CostumeBase {
+  kind: 'static';
   document: CostumeDocument; // Canonical source of truth for persisted artwork
 }
+
+export interface AnimatedCostume extends CostumeBase {
+  kind: 'animated';
+  document: CostumeDocument; // Derived poster frame document for previews and incremental editor consumers
+  clip: AnimatedCostumeClip; // Canonical source of truth for persisted animation
+}
+
+export type Costume = StaticCostume | AnimatedCostume;
 
 export interface Sound {
   id: string;
@@ -412,6 +482,7 @@ export function createDefaultGameObject(name: string): GameObject {
   const defaultCostume: Costume = {
     id: crypto.randomUUID(),
     name: 'costume1',
+    kind: 'static',
     assetId: generateCircleCostume(color),
     document: {
       version: 1,

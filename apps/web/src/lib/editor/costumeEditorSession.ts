@@ -1,5 +1,6 @@
 import { getEffectiveObjectProps } from '@/types';
 import type {
+  AnimatedCostumeClip,
   ComponentDefinition,
   Costume,
   CostumeAssetFrame,
@@ -10,9 +11,13 @@ import type {
   Project,
 } from '@/types';
 import {
+  applyCanvasStateToAnimatedCostumeClip,
   applyCanvasStateToCostumeDocument,
   cloneCostumeDocument,
+  createAnimatedCostumeClipFromDocument,
   ensureCostumeDocument,
+  cloneAnimatedCostumeClip,
+  isAnimatedCostume,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
 import {
@@ -55,10 +60,12 @@ export type CostumeEditorSession = CostumeEditorTarget & {
 };
 
 export interface CostumeEditorPersistedState {
+  kind: Costume['kind'];
   assetId: string;
   bounds?: CostumeBounds;
   assetFrame?: CostumeAssetFrame;
   document: CostumeDocument;
+  clip?: AnimatedCostumeClip;
 }
 
 export interface CostumeEditorPersistedSession {
@@ -70,6 +77,7 @@ export interface ResolveCostumeEditorPersistedStateOptions {
   workingState?: CostumeEditorPersistedState | null;
   costume?: Costume | null;
   liveCanvasState?: ActiveLayerCanvasState | null;
+  animatedFrameIndex?: number;
 }
 
 export type CostumeEditorOperation =
@@ -195,10 +203,12 @@ function clonePersistedState(
   }
 
   return {
+    kind: state.kind,
     assetId: state.assetId,
     bounds: state.bounds ? { ...state.bounds } : undefined,
     assetFrame: cloneCostumeAssetFrame(state.assetFrame),
     document: cloneCostumeDocument(state.document),
+    clip: state.clip ? cloneAnimatedCostumeClip(state.clip) : undefined,
   };
 }
 
@@ -208,10 +218,12 @@ function createPersistedStateFromCostume(costume: Costume | null | undefined): C
   }
 
   return {
+    kind: costume.kind,
     assetId: costume.assetId,
     bounds: costume.bounds ? { ...costume.bounds } : undefined,
     assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
     document: cloneCostumeDocument(ensureCostumeDocument(costume)),
+    clip: isAnimatedCostume(costume) ? cloneAnimatedCostumeClip(costume.clip) : undefined,
   };
 }
 
@@ -226,6 +238,22 @@ export function resolveCostumeEditorPersistedState(
 
   if (!options.liveCanvasState) {
     return baseState;
+  }
+
+  if (baseState.kind === 'animated' && baseState.clip) {
+    const nextClip = applyCanvasStateToAnimatedCostumeClip(
+      baseState.clip,
+      options.animatedFrameIndex ?? 0,
+      options.liveCanvasState,
+    );
+    if (!nextClip) {
+      return baseState;
+    }
+
+    return {
+      ...baseState,
+      clip: nextClip,
+    };
   }
 
   return {
@@ -245,28 +273,44 @@ export function applyCostumeEditorState(
   }
 
   const costume = costumes[costumeIndex];
+  const nextKind = state.kind ?? costume.kind;
   const nextBounds = state.bounds ?? undefined;
   const nextDocument = state.document
     ? cloneCostumeDocument(state.document)
     : cloneCostumeDocument(ensureCostumeDocument(costume));
+  const nextClip = nextKind === 'animated'
+    ? cloneAnimatedCostumeClip(state.clip ?? (isAnimatedCostume(costume) ? costume.clip : createAnimatedCostumeClipFromDocument(nextDocument)))
+    : undefined;
 
   const noAssetChange = costume.assetId === state.assetId;
   const noBoundsChange = areCostumeBoundsEqual(costume.bounds, nextBounds);
   const noAssetFrameChange = areCostumeAssetFramesEqual(costume.assetFrame, state.assetFrame);
   const noDocumentChange = areCostumeDocumentsEqual(costume.document, nextDocument);
-  if (noAssetChange && noBoundsChange && noAssetFrameChange && noDocumentChange) {
+  const noClipChange = nextKind !== 'animated'
+    ? !isAnimatedCostume(costume)
+    : (isAnimatedCostume(costume) && JSON.stringify(costume.clip) === JSON.stringify(nextClip));
+  if (noAssetChange && noBoundsChange && noAssetFrameChange && noDocumentChange && noClipChange && costume.kind === nextKind) {
     return null;
   }
 
   return costumes.map((entry, index) =>
     index === costumeIndex
-      ? {
-          ...entry,
-          assetId: state.assetId,
-          bounds: nextBounds,
-          assetFrame: cloneCostumeAssetFrame(state.assetFrame),
-          document: nextDocument,
-        }
+      ? (() => {
+          const { clip: _existingClip, ...restEntry } = entry as Costume & { clip?: AnimatedCostumeClip };
+          return {
+            ...restEntry,
+            kind: nextKind,
+            assetId: state.assetId,
+            bounds: nextBounds,
+            assetFrame: cloneCostumeAssetFrame(state.assetFrame),
+            document: nextDocument,
+            ...(nextKind === 'animated'
+              ? {
+                  clip: cloneAnimatedCostumeClip(nextClip!),
+                }
+              : {}),
+          } as Costume;
+        })()
       : entry
   );
 }

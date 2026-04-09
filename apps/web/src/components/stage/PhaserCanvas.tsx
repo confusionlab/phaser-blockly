@@ -28,6 +28,9 @@ import {
 } from '@/lib/background/chunkMath';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import { hasSceneObjectClipboardContents } from '@/lib/editor/objectCommands';
+import { getCostumePreviewFrameIndex } from '@/lib/costume/costumeAnimation';
+import { isAnimatedCostume } from '@/lib/costume/costumeDocument';
+import { renderCostumePreview } from '@/lib/costume/costumeDocumentRender';
 import {
   computeEditorViewportFitResult,
   EDITOR_VIEWPORT_FIT_PADDING_PX,
@@ -153,8 +156,10 @@ type StageGizmoPalette = {
 
 type PendingCostumeVisualTarget = {
   costumeId: string | null;
+  sourceAssetId?: string | null;
   assetId: string | null;
   assetFrame?: CostumeAssetFrame | null;
+  previewFrameIndex?: number | null;
   textureKey: string | null;
 };
 
@@ -1126,6 +1131,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     width: number;
     height: number;
   } | null>(null);
+  const [previewClockMs, setPreviewClockMs] = useState(() => performance.now());
 
   usePreventHorizontalBrowserNavigationGesture({
     surfaceRef: containerRef,
@@ -1161,6 +1167,20 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     setStageEditorViewport,
     clearStageEditorViewports,
   } = useEditorStore();
+
+  useEffect(() => {
+    if (isPlaying) {
+      return;
+    }
+
+    let frameId = 0;
+    const tick = () => {
+      setPreviewClockMs(performance.now());
+      frameId = window.requestAnimationFrame(tick);
+    };
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isPlaying]);
 
   // Use refs for values accessed in Phaser callbacks to avoid stale closures
   const selectedSceneIdRef = useRef(selectedSceneId);
@@ -2572,7 +2592,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         // Create new object
         const cw = phaserScene.data.get('canvasWidth') as number || 800;
         const ch = phaserScene.data.get('canvasHeight') as number || 600;
-        const newContainer = createObjectVisual(phaserScene, obj, true, cw, ch, components); // true = editor mode
+        const newContainer = createObjectVisual(phaserScene, obj, true, cw, ch, components, previewClockMs); // true = editor mode
         container = newContainer;
         const isSelected = selectedIds.has(obj.id);
         newContainer.setData('selected', isSelected);
@@ -2684,16 +2704,24 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         const currentCostumeIndex = effectiveProps.currentCostumeIndex ?? 0;
         const currentCostume = costumes[currentCostumeIndex];
         const storedCostumeId = targetContainer.getData('costumeId');
+        const storedSourceAssetId = targetContainer.getData('costumeSourceAssetId');
         const storedAssetId = targetContainer.getData('assetId');
         const storedAssetFrame = targetContainer.getData('assetFrame') as CostumeAssetFrame | null | undefined;
+        const storedPreviewFrameIndex = (targetContainer.getData('previewFrameIndex') as number | undefined) ?? 0;
         const storedBounds = targetContainer.getData('bounds') as CostumeBounds | null | undefined;
         const pendingVisualTarget = getPendingCostumeVisualTarget(targetContainer);
         const resolvedCostumeId = pendingVisualTarget?.costumeId ?? storedCostumeId;
+        const resolvedSourceAssetId = pendingVisualTarget?.sourceAssetId ?? storedSourceAssetId;
         const resolvedAssetId = pendingVisualTarget?.assetId ?? storedAssetId;
         const resolvedAssetFrame = pendingVisualTarget?.assetFrame ?? storedAssetFrame;
+        const resolvedPreviewFrameIndex = pendingVisualTarget?.previewFrameIndex ?? storedPreviewFrameIndex;
+        const currentPreviewFrameIndex = currentCostume && isAnimatedCostume(currentCostume)
+          ? getCostumePreviewFrameIndex(currentCostume, previewClockMs)
+          : 0;
 
         const hasCurrentCostumeAsset = !!currentCostume?.assetId;
         const hadResolvedCostumeAsset = !!resolvedAssetId;
+        const currentSourceAssetId = currentCostume?.assetId ?? null;
         const currentBounds = currentCostume?.bounds ?? null;
         const currentAssetFrame = currentCostume?.assetFrame ?? null;
 
@@ -2701,12 +2729,13 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         const costumeChanged = hasCurrentCostumeAsset !== hadResolvedCostumeAsset || (
           hasCurrentCostumeAsset && (
             currentCostume.id !== resolvedCostumeId ||
-            currentCostume.assetId !== resolvedAssetId
+            currentSourceAssetId !== resolvedSourceAssetId ||
+            (isAnimatedCostume(currentCostume) && currentPreviewFrameIndex !== resolvedPreviewFrameIndex)
           )
         );
         const costumeLayoutChanged = hasCurrentCostumeAsset && (
           !areCostumeBoundsEqual(currentBounds, storedBounds) ||
-          !areCostumeAssetFramesEqual(currentAssetFrame, resolvedAssetFrame)
+          (!isAnimatedCostume(currentCostume) && !areCostumeAssetFramesEqual(currentAssetFrame, resolvedAssetFrame))
         );
 
         if (costumeChanged || costumeLayoutChanged) {
@@ -2804,7 +2833,15 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
             }
           };
 
-          const commitCostumeSpriteVisual = (costume: Costume, textureKey: string) => {
+          const commitCostumeSpriteVisual = (
+            costume: Costume,
+            sourceAssetIdForCommit: string | null,
+            resolvedAssetIdForCommit: string,
+            resolvedAssetFrameForCommit: CostumeAssetFrame | null | undefined,
+            resolvedPreviewFrameIndexForCommit: number,
+            resolvedBoundsForCommit: CostumeBounds | null | undefined,
+            textureKey: string,
+          ) => {
             if (!targetContainer.active || !targetContainer.scene) {
               return;
             }
@@ -2818,55 +2855,120 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
             const sprite = phaserScene.add.image(0, 0, textureKey);
             replaceCurrentVisual(() => {
               targetContainer.setData('costumeId', costume.id);
-              targetContainer.setData('assetId', costume.assetId);
-              targetContainer.setData('assetFrame', costume.assetFrame ?? null);
+              targetContainer.setData('costumeSourceAssetId', sourceAssetIdForCommit);
+              targetContainer.setData('assetId', resolvedAssetIdForCommit);
+              targetContainer.setData('assetFrame', resolvedAssetFrameForCommit ?? null);
+              targetContainer.setData('previewFrameIndex', resolvedPreviewFrameIndexForCommit);
               targetContainer.setData('textureKey', textureKey);
-              targetContainer.setData('bounds', costume.bounds);
-              updateWithSprite(sprite, targetContainer, costume.bounds, costume.assetFrame);
+              targetContainer.setData('bounds', costume.bounds ?? resolvedBoundsForCommit ?? null);
+              updateWithSprite(
+                sprite,
+                targetContainer,
+                costume.bounds ?? resolvedBoundsForCommit ?? null,
+                resolvedAssetFrameForCommit ?? costume.assetFrame,
+              );
             }, textureKey);
           };
 
           if (!hasCurrentCostumeAsset || !currentCostume) {
             replaceCurrentVisual(() => {
               targetContainer.setData('costumeId', null);
+              targetContainer.setData('costumeSourceAssetId', null);
               targetContainer.setData('assetId', null);
               targetContainer.setData('assetFrame', null);
+              targetContainer.setData('previewFrameIndex', 0);
               targetContainer.setData('textureKey', null);
               targetContainer.setData('bounds', null);
               applyPlaceholderVisual();
             }, null);
           } else {
-            const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, currentCostume.assetId);
-            targetContainer.setData('pendingVisualTarget', {
-              costumeId: currentCostume.id,
-              assetId: currentCostume.assetId,
-              assetFrame: currentCostume.assetFrame ?? null,
-              textureKey,
-            } satisfies PendingCostumeVisualTarget);
-            if (phaserScene.textures.exists(textureKey)) {
-              commitCostumeSpriteVisual(currentCostume, textureKey);
-            } else {
-              void loadImageSource(currentCostume.assetId).then((img) => {
-                if (!targetContainer.active || !targetContainer.scene) return;
-                if ((targetContainer.getData('costumeVisualVersion') as number | undefined) !== nextVisualVersion) {
+            const queueVisualUpdate = (
+              sourceAssetIdForCommit: string | null,
+              resolvedAssetIdForCommit: string,
+              resolvedAssetFrameForCommit: CostumeAssetFrame | null | undefined,
+              resolvedBoundsForCommit: CostumeBounds | null | undefined,
+              resolvedPreviewFrameIndexForCommit: number,
+            ) => {
+              const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, resolvedAssetIdForCommit);
+              targetContainer.setData('pendingVisualTarget', {
+                costumeId: currentCostume.id,
+                sourceAssetId: sourceAssetIdForCommit,
+                assetId: resolvedAssetIdForCommit,
+                assetFrame: resolvedAssetFrameForCommit ?? null,
+                previewFrameIndex: resolvedPreviewFrameIndexForCommit,
+                textureKey,
+              } satisfies PendingCostumeVisualTarget);
+
+              const loadAndCommit = () => {
+                if (phaserScene.textures.exists(textureKey)) {
+                  commitCostumeSpriteVisual(
+                    currentCostume,
+                    sourceAssetIdForCommit,
+                    resolvedAssetIdForCommit,
+                    resolvedAssetFrameForCommit,
+                    resolvedPreviewFrameIndexForCommit,
+                    resolvedBoundsForCommit,
+                    textureKey,
+                  );
                   return;
                 }
-                const currentPendingTarget = getPendingCostumeVisualTarget(targetContainer);
-                if (
-                  currentPendingTarget?.costumeId !== currentCostume.id ||
-                  currentPendingTarget?.assetId !== currentCostume.assetId ||
-                  !areCostumeAssetFramesEqual(currentPendingTarget?.assetFrame, currentCostume.assetFrame ?? null) ||
-                  currentPendingTarget?.textureKey !== textureKey
-                ) {
-                  return;
-                }
-                if (!phaserScene.textures.exists(textureKey)) {
-                  phaserScene.textures.addImage(textureKey, img);
-                }
-                commitCostumeSpriteVisual(currentCostume, textureKey);
+
+                void loadImageSource(resolvedAssetIdForCommit).then((img) => {
+                  if (!targetContainer.active || !targetContainer.scene) return;
+                  if ((targetContainer.getData('costumeVisualVersion') as number | undefined) !== nextVisualVersion) {
+                    return;
+                  }
+                  const currentPendingTarget = getPendingCostumeVisualTarget(targetContainer);
+                  if (
+                    currentPendingTarget?.costumeId !== currentCostume.id ||
+                    currentPendingTarget?.sourceAssetId !== sourceAssetIdForCommit ||
+                    currentPendingTarget?.assetId !== resolvedAssetIdForCommit ||
+                    !areCostumeAssetFramesEqual(currentPendingTarget?.assetFrame, resolvedAssetFrameForCommit ?? null) ||
+                    currentPendingTarget?.previewFrameIndex !== resolvedPreviewFrameIndexForCommit ||
+                    currentPendingTarget?.textureKey !== textureKey
+                  ) {
+                    return;
+                  }
+                  if (!phaserScene.textures.exists(textureKey)) {
+                    phaserScene.textures.addImage(textureKey, img);
+                  }
+                  commitCostumeSpriteVisual(
+                    currentCostume,
+                    sourceAssetIdForCommit,
+                    resolvedAssetIdForCommit,
+                    resolvedAssetFrameForCommit,
+                    resolvedPreviewFrameIndexForCommit,
+                    resolvedBoundsForCommit,
+                    textureKey,
+                  );
+                }).catch((error) => {
+                  console.warn('Failed to load costume texture source for stage sprite update.', error);
+                });
+              };
+
+              loadAndCommit();
+            };
+
+            if (isAnimatedCostume(currentCostume)) {
+              void renderCostumePreview(currentCostume, { frameIndex: currentPreviewFrameIndex }).then((preview) => {
+                queueVisualUpdate(
+                  currentSourceAssetId,
+                  preview.dataUrl,
+                  preview.assetFrame,
+                  preview.bounds,
+                  currentPreviewFrameIndex,
+                );
               }).catch((error) => {
-                console.warn('Failed to load costume texture source for stage sprite update.', error);
+                console.warn('Failed to render animated costume preview for stage update.', error);
               });
+            } else {
+              queueVisualUpdate(
+                currentSourceAssetId,
+                currentCostume.assetId,
+                currentCostume.assetFrame ?? null,
+                currentCostume.bounds ?? null,
+                0,
+              );
             }
           }
         }
@@ -2889,7 +2991,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         }
       }
     });
-  }, [selectedScene?.objects, isPlaying, handleObjectDragEnd, project?.components, viewMode]);
+  }, [selectedScene?.objects, isPlaying, handleObjectDragEnd, project?.components, previewClockMs, viewMode]);
 
   // Update background color when it changes (in editor mode only)
   useEffect(() => {
@@ -4523,7 +4625,7 @@ function createEditorScene(
       : (selectedObjectId ? [selectedObjectId] : []),
   );
   orderedSceneObjects.forEach((obj: GameObject, index: number) => {
-    const container = createObjectVisual(scene, obj, true, canvasWidth, canvasHeight, components); // true = editor mode
+      const container = createObjectVisual(scene, obj, true, canvasWidth, canvasHeight, components, 0); // true = editor mode
     container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
     const isSelected = initialSelectedIds.has(obj.id);
     container.setData('selected', isSelected);
@@ -4891,7 +4993,7 @@ function createPlaySceneContent(
     // Get effective properties (resolves component references)
     const effectiveProps = getEffectiveObjectProps(obj, components);
 
-    const container = createObjectVisual(scene, obj, false, canvasWidth, canvasHeight, components);
+    const container = createObjectVisual(scene, obj, false, canvasWidth, canvasHeight, components, 0);
     container.setDepth(objectCount - index);
 
     // Register with runtime
@@ -5129,7 +5231,8 @@ function createObjectVisual(
   isEditorMode: boolean = false,
   canvasWidth: number = 800,
   canvasHeight: number = 600,
-  components: ComponentDefinition[] = []
+  components: ComponentDefinition[] = [],
+  previewClockMs: number = 0,
 ): Phaser.GameObjects.Container {
   // Convert user coordinates to Phaser coordinates
   const phaserPos = userToPhaser(obj.x, obj.y, canvasWidth, canvasHeight);
@@ -5203,36 +5306,75 @@ function createObjectVisual(
   const costumes = effectiveProps.costumes || [];
   const currentCostumeIndex = effectiveProps.currentCostumeIndex ?? 0;
   const currentCostume = costumes[currentCostumeIndex];
+  const currentPreviewFrameIndex = currentCostume && isAnimatedCostume(currentCostume) && isEditorMode
+    ? getCostumePreviewFrameIndex(currentCostume, previewClockMs)
+    : 0;
 
   if (currentCostume && currentCostume.assetId) {
-    const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, currentCostume.assetId);
+    const commitCostumeSpriteVisual = (
+      resolvedAssetId: string,
+      resolvedAssetFrame: CostumeAssetFrame | null | undefined,
+      resolvedBounds: CostumeBounds | null | undefined,
+      resolvedPreviewFrameIndex: number,
+    ) => {
+      const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, resolvedAssetId);
+      container.setData('costumeId', currentCostume.id);
+      container.setData('costumeSourceAssetId', currentCostume.assetId);
+      container.setData('assetId', resolvedAssetId);
+      container.setData('assetFrame', resolvedAssetFrame ?? null);
+      container.setData('previewFrameIndex', resolvedPreviewFrameIndex);
+      container.setData('textureKey', textureKey);
+      container.setData('bounds', currentCostume.bounds ?? resolvedBounds ?? null);
 
-    // Store costume ID, assetId, textureKey, and bounds for change detection
-    container.setData('costumeId', currentCostume.id);
-    container.setData('assetId', currentCostume.assetId);
-    container.setData('assetFrame', currentCostume.assetFrame ?? null);
-    container.setData('textureKey', textureKey);
-    container.setData('bounds', currentCostume.bounds);
+      void loadImageSource(resolvedAssetId).then((img) => {
+        if (!container.active || !container.scene) return;
+        if (!scene.textures.exists(textureKey)) {
+          scene.textures.addImage(textureKey, img);
+        }
 
-    // Load texture from data URL
-    void loadImageSource(currentCostume.assetId).then((img) => {
-      if (!container.active || !container.scene) return;
-      if (scene.textures.exists(textureKey)) return; // Avoid double-add
-      scene.textures.addImage(textureKey, img);
+        const sprite = scene.add.image(0, 0, textureKey);
+        sprite.setName('sprite');
+        container.add(sprite);
+        if (selectionRect) container.sendToBack(selectionRect);
+        if (hitRect) container.bringToTop(hitRect);
+        updateContainerWithBounds(
+          sprite,
+          currentCostume.bounds ?? resolvedBounds ?? null,
+          resolvedAssetFrame ?? currentCostume.assetFrame,
+        );
+      }).catch((error) => {
+        console.warn('Failed to load costume texture source for stage sprite creation.', error);
+      });
+    };
 
-      // Create sprite after texture is loaded
-      const sprite = scene.add.image(0, 0, textureKey);
-      sprite.setName('sprite');
-      container.add(sprite);
-      // Send selection to back, bring hit area to front for input
-      if (selectionRect) container.sendToBack(selectionRect);
-      if (hitRect) container.bringToTop(hitRect);
-      updateContainerWithBounds(sprite, currentCostume.bounds, currentCostume.assetFrame);
-    }).catch((error) => {
-      console.warn('Failed to load costume texture source for stage sprite creation.', error);
-    });
+    if (isAnimatedCostume(currentCostume) && isEditorMode) {
+      void renderCostumePreview(currentCostume, { frameIndex: currentPreviewFrameIndex }).then((preview) => {
+        commitCostumeSpriteVisual(
+          preview.dataUrl,
+          preview.assetFrame,
+          preview.bounds,
+          currentPreviewFrameIndex,
+        );
+      }).catch((error) => {
+        console.warn('Failed to render animated costume preview for stage sprite creation.', error);
+      });
+    } else {
+      commitCostumeSpriteVisual(
+        currentCostume.assetId,
+        currentCostume.assetFrame,
+        currentCostume.bounds ?? null,
+        0,
+      );
+    }
   } else {
     // No costume - create colored rectangle as placeholder
+    container.setData('costumeId', null);
+    container.setData('costumeSourceAssetId', null);
+    container.setData('assetId', null);
+    container.setData('assetFrame', null);
+    container.setData('previewFrameIndex', 0);
+    container.setData('textureKey', null);
+    container.setData('bounds', null);
     const graphics = scene.add.graphics();
     graphics.setName('placeholder');
     const color = getObjectColor(obj.id);

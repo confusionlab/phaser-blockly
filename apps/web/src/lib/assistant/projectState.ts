@@ -231,6 +231,10 @@ function toAssistantObject(object: GameObject): AssistantObject {
     costumes: (normalizedObject.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
+      kind: costume.kind,
+      frameCount: costume.kind === 'animated' ? costume.clip.totalFrames : 1,
+      fps: costume.kind === 'animated' ? costume.clip.fps : undefined,
+      playback: costume.kind === 'animated' ? costume.clip.playback : undefined,
     })),
     currentCostumeIndex: normalizedObject.currentCostumeIndex,
     sounds: (normalizedObject.sounds || []).map((sound) => ({
@@ -255,6 +259,10 @@ function toAssistantComponent(component: ComponentDefinition): AssistantComponen
     costumes: (normalizedComponent.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
+      kind: costume.kind,
+      frameCount: costume.kind === 'animated' ? costume.clip.totalFrames : 1,
+      fps: costume.kind === 'animated' ? costume.clip.fps : undefined,
+      playback: costume.kind === 'animated' ? costume.clip.playback : undefined,
     })),
     currentCostumeIndex: normalizedComponent.currentCostumeIndex,
     physics: normalizedComponent.physics ? { ...normalizedComponent.physics } : null,

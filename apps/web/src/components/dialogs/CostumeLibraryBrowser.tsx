@@ -7,7 +7,7 @@ import { LibraryBrowserDialog } from '@/components/dialogs/LibraryBrowserDialog'
 import { Loader2, Upload } from '@/components/ui/icons';
 import type { CostumeBounds, CostumeDocument } from '@/types';
 import { processImage } from '@/utils/imageProcessor';
-import { createBitmapCostumeDocument } from '@/lib/costume/costumeDocument';
+import { createBitmapCostumeDocument, createStaticCostumeFromDocument } from '@/lib/costume/costumeDocument';
 import {
   hydrateCostumeLibraryItemForInsertion,
   prepareCostumeLibraryCreatePayload,
@@ -63,7 +63,7 @@ export function CostumeLibraryBrowser({
         }
 
         const processedDataUrl = await processImage(file);
-        const prepared = await prepareCostumeLibraryCreatePayload({
+        const prepared = await prepareCostumeLibraryCreatePayload(createStaticCostumeFromDocument({
           id: crypto.randomUUID(),
           name: file.name.replace(/\.[^/.]+$/, ''),
           assetId: processedDataUrl,
@@ -71,7 +71,7 @@ export function CostumeLibraryBrowser({
             processedDataUrl,
             file.name.replace(/\.[^/.]+$/, '') || 'Layer 1',
           ),
-        });
+        }));
 
         await ensureLibraryAssetRefsInCloud(prepared.assetRefs, {
           listMissingAssetIds: async (assetIds) => {
