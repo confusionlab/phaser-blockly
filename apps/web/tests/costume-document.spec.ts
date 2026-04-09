@@ -158,7 +158,7 @@ test.describe('costume document visibility', () => {
     });
   });
 
-  test('editing a bitmap animated cel rewrites that cel from the playhead forward', () => {
+  test('editing a bitmap animated cel rewrites the full cel in place', () => {
     const document = createBitmapCostumeDocument('data:image/png;base64,ORIGINAL');
     const clip = createAnimatedCostumeClipFromDocument(document, { totalFrames: 6 });
 
@@ -169,18 +169,10 @@ test.describe('costume document visibility', () => {
 
     expect(nextClip).not.toBeNull();
     expect(nextClip?.tracks).toHaveLength(1);
-    expect(nextClip?.tracks[0]?.cels).toHaveLength(2);
+    expect(nextClip?.tracks[0]?.cels).toHaveLength(1);
     expect(nextClip?.tracks[0]?.cels[0]).toMatchObject({
       startFrame: 0,
-      durationFrames: 2,
-      kind: 'bitmap',
-      bitmap: {
-        assetId: 'data:image/png;base64,ORIGINAL',
-      },
-    });
-    expect(nextClip?.tracks[0]?.cels[1]).toMatchObject({
-      startFrame: 2,
-      durationFrames: 4,
+      durationFrames: 6,
       kind: 'bitmap',
       bitmap: {
         assetId: 'data:image/png;base64,UPDATED',
@@ -188,7 +180,7 @@ test.describe('costume document visibility', () => {
     });
   });
 
-  test('editing a vector animated cel rewrites that cel from the playhead forward', () => {
+  test('editing a vector animated cel rewrites the full cel in place', () => {
     const document = createBlankCostumeDocument();
     const clip = createAnimatedCostumeClipFromDocument(document, { totalFrames: 6 });
 
@@ -204,16 +196,10 @@ test.describe('costume document visibility', () => {
 
     expect(nextClip).not.toBeNull();
     expect(nextClip?.tracks).toHaveLength(1);
-    expect(nextClip?.tracks[0]?.cels).toHaveLength(2);
+    expect(nextClip?.tracks[0]?.cels).toHaveLength(1);
     expect(nextClip?.tracks[0]?.cels[0]).toMatchObject({
       startFrame: 0,
-      durationFrames: 3,
-      kind: 'vector',
-      vector: createEmptyCostumeVectorDocument(),
-    });
-    expect(nextClip?.tracks[0]?.cels[1]).toMatchObject({
-      startFrame: 3,
-      durationFrames: 3,
+      durationFrames: 6,
       kind: 'vector',
       vector: {
         engine: 'fabric',

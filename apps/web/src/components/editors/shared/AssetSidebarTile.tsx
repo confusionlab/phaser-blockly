@@ -33,6 +33,7 @@ interface AssetSidebarTileProps {
   cardClassName?: string;
   mediaClassName?: string;
   inputClassName?: string;
+  labelPrefix?: ReactNode;
 }
 
 export function AssetSidebarTile({
@@ -56,6 +57,7 @@ export function AssetSidebarTile({
   cardClassName,
   mediaClassName,
   inputClassName,
+  labelPrefix,
 }: AssetSidebarTileProps) {
   const [draftName, setDraftName] = useState(name);
   const [isEditing, setIsEditing] = useState(false);
@@ -135,11 +137,17 @@ export function AssetSidebarTile({
         onPointerDown={(event) => event.stopPropagation()}
         className="mt-1 w-full"
         displayAs="div"
+        displayValue={(
+          <>
+            {labelPrefix ? <span className="inline-flex shrink-0 text-muted-foreground">{labelPrefix}</span> : null}
+            <span className="truncate">{name}</span>
+          </>
+        )}
         textClassName="min-h-4 px-1 text-center text-[10px] leading-none"
         inputClassName={cn('h-4 text-center text-foreground', inputClassName)}
         displayProps={{
           className: cn(
-            'flex min-h-4 items-center justify-center truncate text-foreground',
+            'flex min-h-4 items-center justify-center gap-1 truncate text-foreground',
             active || selected ? 'opacity-100' : 'opacity-80',
           ),
           onDoubleClick: (event) => {

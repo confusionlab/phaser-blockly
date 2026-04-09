@@ -28,7 +28,7 @@ const MAX_CONTEXT_MENU_MARGIN = 12;
 const TIMELINE_FRAME_WIDTH = 32;
 const TIMELINE_TRACK_HEADER_WIDTH = 260;
 const TIMELINE_SECTION_GAP = 12;
-const TIMELINE_CELL_HORIZONTAL_INSET = 1;
+const TIMELINE_CELL_HORIZONTAL_INSET = 2;
 
 type TrackContextMenuState = {
   trackId: string;
@@ -151,6 +151,28 @@ function getDisplayedCelSpan(
   };
 }
 
+function getFrameIndexFromCelPointer(
+  event: ReactMouseEvent<HTMLDivElement>,
+  cel: AnimatedCostumeCel,
+): number {
+  const eventTarget = event.target;
+  const celElement = eventTarget instanceof HTMLElement
+    ? eventTarget.closest<HTMLElement>('[data-animated-cel="true"]')
+    : null;
+  const rect = celElement?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect();
+  if (rect.width <= 0) {
+    return cel.startFrame;
+  }
+
+  const frameWidth = rect.width / Math.max(cel.durationFrames, 1);
+  const frameOffset = clampFrame(
+    Math.floor((event.clientX - rect.left) / Math.max(frameWidth, 1)),
+    0,
+    Math.max(cel.durationFrames - 1, 0),
+  );
+  return cel.startFrame + frameOffset;
+}
+
 export function AnimatedCostumeTimeline({
   clip,
   currentFrameIndex,
@@ -225,6 +247,19 @@ export function AnimatedCostumeTimeline({
       setRenameDraft('');
     }
   }, [clip.tracks, editingTrackId]);
+
+  const autoSelectedCelId = useMemo(() => {
+    const activeTrack = clip.tracks.find((track) => track.id === clip.activeTrackId);
+    if (!activeTrack) {
+      return null;
+    }
+
+    const selectedCel = activeTrack.cels.find((cel) => (
+      currentFrameIndex >= cel.startFrame &&
+      currentFrameIndex < cel.startFrame + cel.durationFrames
+    ));
+    return selectedCel?.id ?? null;
+  }, [clip.activeTrackId, clip.tracks, currentFrameIndex]);
 
   useEffect(() => {
     if (!trackContextMenuTrack || !trackContextMenu) {
@@ -571,7 +606,7 @@ export function AnimatedCostumeTimeline({
     setTrackContextMenu(null);
     setCelContextMenu(null);
     onSelectTrack(trackId);
-    onFrameSelect(cel.startFrame);
+    onFrameSelect(getFrameIndexFromCelPointer(event, cel));
 
     setCelInteraction({
       trackId,
@@ -628,12 +663,12 @@ export function AnimatedCostumeTimeline({
 
   return (
     <>
-      <div className="border-t border-border/70 bg-background/95">
-        <div ref={timelineScrollContainerRef} className="overflow-auto px-3 py-3">
-          <div className="relative min-w-max overflow-visible">
+      <div className="flex h-full min-h-0 flex-col border-t border-border/70 bg-background/95">
+        <div ref={timelineScrollContainerRef} className="min-h-0 flex-1 overflow-auto px-3 py-3">
+          <div className="relative min-h-full min-w-max overflow-visible">
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute top-0 bottom-0 z-[5]"
+              className="pointer-events-none absolute top-0 bottom-0 z-0"
               style={{
                 left: TIMELINE_TRACK_HEADER_WIDTH + TIMELINE_SECTION_GAP,
                 width: clip.totalFrames * TIMELINE_FRAME_WIDTH,
@@ -662,7 +697,7 @@ export function AnimatedCostumeTimeline({
                 width: TIMELINE_FRAME_WIDTH,
               }}
             />
-            <div className="mb-2 flex items-center gap-3">
+            <div className="relative z-10 mb-2 flex items-center gap-3">
               <div className="relative" style={{ width: TIMELINE_TRACK_HEADER_WIDTH }} >
                 <div className="flex h-8 items-center justify-between gap-2">
                   <div className="relative flex items-center group/track-add">
@@ -748,7 +783,9 @@ export function AnimatedCostumeTimeline({
                   <button
                     key={`frame-header-${frameIndex}`}
                     type="button"
-                    onClick={() => onFrameSelect(frameIndex)}
+                    onClick={() => {
+                      onFrameSelect(frameIndex);
+                    }}
                     className="flex h-full items-center justify-center bg-transparent text-[11px] text-muted-foreground transition-colors hover:text-foreground"
                     style={{ width: TIMELINE_FRAME_WIDTH }}
                   >
@@ -784,7 +821,7 @@ export function AnimatedCostumeTimeline({
               </div>
             </div>
 
-            <div className="flex flex-col gap-2">
+            <div className="relative z-10 flex flex-col gap-2">
               {clip.tracks.map((track, trackIndex) => {
                 const isActive = track.id === clip.activeTrackId;
                 const isEditing = editingTrackId === track.id;
@@ -804,7 +841,9 @@ export function AnimatedCostumeTimeline({
                           aria-label={`${track.name} ${track.kind}`}
                           aria-pressed={isActive}
                           draggable={!isEditing}
-                          onClick={() => onSelectTrack(track.id)}
+                          onClick={() => {
+                            onSelectTrack(track.id);
+                          }}
                           onKeyDown={(event) => handleTrackKeyDown(event, track.id)}
                           onContextMenu={(event) => handleTrackContextMenu(event, track.id)}
                           onDragStart={(event) => handleTrackDragStart(event, track.id)}
@@ -908,6 +947,10 @@ export function AnimatedCostumeTimeline({
 
                         {track.cels.map((cel, celIndex) => {
                           const displayedCel = getDisplayedCelSpan(cel, celInteraction?.trackId === track.id ? celInteraction : null);
+                          const isSelectedCel = (
+                            (track.id === clip.activeTrackId && cel.id === autoSelectedCelId) ||
+                            celInteraction?.celId === cel.id
+                          );
                           const previousEndFrame = celIndex > 0
                             ? track.cels[celIndex - 1].startFrame + track.cels[celIndex - 1].durationFrames
                             : 0;
@@ -916,9 +959,12 @@ export function AnimatedCostumeTimeline({
                           return (
                             <div
                               key={`${cel.id}:${celIndex}`}
+                              data-animated-cel="true"
                               className={cn(
-                                'group/cel absolute inset-y-1 rounded-md border shadow-sm transition-[background-color,border-color,box-shadow]',
-                                'border-emerald-500/70 bg-emerald-100/90 hover:bg-emerald-100',
+                                'group/cel absolute inset-y-1 rounded-xl shadow-sm transition-[background-color,box-shadow]',
+                                isSelectedCel
+                                  ? 'bg-primary/14 shadow-[0_10px_24px_-18px_rgba(37,99,235,0.8)]'
+                                  : 'bg-slate-300/88 hover:bg-slate-400/95 dark:bg-slate-700/84 dark:hover:bg-slate-600/96',
                                 celInteraction?.celId === cel.id && 'z-20 shadow-md',
                               )}
                               style={{
@@ -932,7 +978,10 @@ export function AnimatedCostumeTimeline({
                             >
                               <div
                                 className={cn(
-                                  'absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-md bg-emerald-500/20 transition-opacity hover:bg-emerald-500/35',
+                                  'absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-xl transition-[opacity,background-color]',
+                                  isSelectedCel
+                                    ? 'bg-primary/20 hover:bg-primary/30'
+                                    : 'bg-slate-500/18 hover:bg-slate-500/28 dark:bg-slate-400/18 dark:hover:bg-slate-400/30',
                                   'opacity-0 group-hover/cel:opacity-100',
                                   celInteraction?.celId === cel.id && 'opacity-100',
                                 )}
@@ -947,7 +996,10 @@ export function AnimatedCostumeTimeline({
                               />
                               <div
                                 className={cn(
-                                  'absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-md bg-emerald-500/20 transition-opacity hover:bg-emerald-500/35',
+                                  'absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-xl transition-[opacity,background-color]',
+                                  isSelectedCel
+                                    ? 'bg-primary/20 hover:bg-primary/30'
+                                    : 'bg-slate-500/18 hover:bg-slate-500/28 dark:bg-slate-400/18 dark:hover:bg-slate-400/30',
                                   'opacity-0 group-hover/cel:opacity-100',
                                   celInteraction?.celId === cel.id && 'opacity-100',
                                 )}
@@ -961,7 +1013,7 @@ export function AnimatedCostumeTimeline({
                                 )}
                               />
                               <div
-                                className="flex h-full cursor-grab items-center justify-center overflow-hidden rounded-md px-2 active:cursor-grabbing"
+                                className="flex h-full cursor-grab items-center justify-center overflow-hidden rounded-xl px-2 active:cursor-grabbing"
                                 onMouseDown={(event) => beginCelInteraction(
                                   event,
                                   track.id,

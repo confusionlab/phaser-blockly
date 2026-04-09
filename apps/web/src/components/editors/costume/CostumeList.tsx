@@ -56,6 +56,30 @@ import {
   type AssetCardClipboardMode,
 } from '@/lib/editor/assetCardClipboard';
 
+function CostumeKindIcon({
+  kind,
+  className,
+}: {
+  kind: 'static' | 'animated';
+  className?: string;
+}) {
+  if (kind === 'animated') {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+        <circle cx="6" cy="8.75" r="3" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="10" cy="8.75" r="3" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="8" cy="5.25" r="3" stroke="currentColor" strokeWidth="1.5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <circle cx="8" cy="8" r="3.25" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 interface CostumeListProps {
   costumes: Costume[];
   activeCostumeId: string | null;
@@ -542,9 +566,11 @@ export const CostumeList = memo(({
               </DropdownMenuTrigger>
               <DropdownMenuContent side="bottom" align="start" sideOffset={8} className="min-w-36 rounded-xl">
                 <DropdownMenuItem onClick={() => handleAddBlank('static')}>
+                  <CostumeKindIcon kind="static" className="size-4" />
                   Static
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleAddBlank('animated')}>
+                  <CostumeKindIcon kind="animated" className="size-4" />
                   Animated
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -623,6 +649,12 @@ export const CostumeList = memo(({
                     media={
                       <CostumeListPreview costume={costume} />
                     }
+                    labelPrefix={(
+                      <CostumeKindIcon
+                        kind={isAnimatedCostume(costume) ? 'animated' : 'static'}
+                        className="size-3"
+                      />
+                    )}
                   />
                   {dropTarget?.key === costume.id && dropTarget.dropPosition === 'after' ? (
                     <div className="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0 border-t-2 border-primary" />
@@ -682,7 +714,12 @@ export const CostumeList = memo(({
             </MenuItemButton>
             {contextMenuCostume ? (
               <MenuItemButton
-                icon={<CopyPlus className="size-4" />}
+                icon={(
+                  <CostumeKindIcon
+                    kind={isAnimatedCostume(contextMenuCostume) ? 'static' : 'animated'}
+                    className="size-4"
+                  />
+                )}
                 onClick={() => {
                   onConvertCostumeType(
                     contextMenuCostume.id,

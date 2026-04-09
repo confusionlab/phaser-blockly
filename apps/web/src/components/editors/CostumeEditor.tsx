@@ -295,6 +295,8 @@ export function CostumeEditor() {
   ) => {});
   const [workingPersistedState, setWorkingPersistedStateState] = useState<CostumeEditorPersistedState | null>(null);
   const [animatedFrameIndex, setAnimatedFrameIndexState] = useState(0);
+  const [animatedTimelineHeightPercent, setAnimatedTimelineHeightPercent] = useState(34);
+  const [isAnimatedTimelineSplitDragging, setIsAnimatedTimelineSplitDragging] = useState(false);
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
@@ -374,6 +376,7 @@ export function CostumeEditor() {
       ? materializeAnimatedEditorFrame(editorCostume.clip, clampedAnimatedFrameIndex)
       : editorCostume.document;
   }, [clampedAnimatedFrameIndex, editorCostume]);
+  const isAnimatedEditor = !!editorCostume && isAnimatedCostume(editorCostume);
   const activeLayer = editorDocument ? getActiveCostumeLayer(editorDocument) : null;
   const currentCostumeLoadKey = editorCostume && editorDocument
     ? `${editorCostume.id}:${clampedAnimatedFrameIndex}:${editorDocument.activeLayerId}`
@@ -2146,6 +2149,35 @@ export function CostumeEditor() {
     performHistoryStep('redo');
   }, [performHistoryStep]);
 
+  const handleAnimatedTimelineDividerDrag = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const container = event.currentTarget.parentElement;
+    if (!container) {
+      return;
+    }
+
+    const startY = event.clientY;
+    const startHeight = animatedTimelineHeightPercent;
+    const containerHeight = container.clientHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = startY - moveEvent.clientY;
+      const deltaPercent = (deltaY / Math.max(containerHeight, 1)) * 100;
+      const nextHeight = startHeight + deltaPercent;
+      setAnimatedTimelineHeightPercent(Math.max(18, Math.min(62, nextHeight)));
+    };
+
+    const handleMouseUp = () => {
+      setIsAnimatedTimelineSplitDragging(false);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    setIsAnimatedTimelineSplitDragging(true);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [animatedTimelineHeightPercent]);
+
   if (!object && !component) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -2213,7 +2245,10 @@ export function CostumeEditor() {
           />
         ) : null}
 
-        <div className="relative flex min-h-0 min-w-0 flex-1">
+        <div
+          className={`relative flex min-h-0 min-w-0 ${isAnimatedEditor ? 'shrink-0' : 'flex-1'}`}
+          style={isAnimatedEditor ? { height: `${100 - animatedTimelineHeightPercent}%` } : undefined}
+        >
           <CostumeCanvas
             ref={canvasRef}
             costumeDocument={editorDocument}
@@ -2251,7 +2286,7 @@ export function CostumeEditor() {
             onVectorGroupingStateChange={handleVectorGroupingStateChange}
             onViewScaleChange={setCanvasPreviewScale}
           />
-          {activeLayer && activeLayer.visible && editorCostume && isAnimatedCostume(editorCostume) ? (
+          {activeLayer && activeLayer.visible && isAnimatedEditor ? (
             <CostumeToolbar
               editorMode={editorMode}
               activeTool={activeTool}
@@ -2312,27 +2347,40 @@ export function CostumeEditor() {
           ) : null}
         </div>
 
-        {editorCostume && isAnimatedCostume(editorCostume) ? (
-          <AnimatedCostumeTimeline
-            clip={editorCostume.clip}
-            currentFrameIndex={clampedAnimatedFrameIndex}
-            onFrameSelect={handleAnimatedFrameSelect}
-            onChangeTotalFrames={handleAnimatedFrameCountChange}
-            onChangeFps={handleAnimatedFpsChange}
-            onChangePlayback={handleAnimatedPlaybackChange}
-            onSelectTrack={handleSelectLayer}
-            onAddBitmapTrack={handleAddBitmapLayer}
-            onAddVectorTrack={handleAddVectorLayer}
-            onDuplicateTrack={handleDuplicateLayer}
-            onDeleteTrack={handleDeleteLayer}
-            onReorderTrack={handleReorderLayer}
-            onToggleVisibility={handleToggleLayerVisibility}
-            onToggleLocked={handleToggleLayerLocked}
-            onRenameTrack={handleRenameLayer}
-            onOpacityChange={handleLayerOpacityChange}
-            onUpdateCelSpan={handleAnimatedTrackCelSpanChange}
-            onDeleteCel={handleAnimatedTrackCelDelete}
-          />
+        {isAnimatedEditor ? (
+          <>
+            <div
+              data-testid="animated-costume-timeline-divider"
+              className="app-resize-divider-y hover:text-primary cursor-row-resize transition-colors"
+              onMouseDown={handleAnimatedTimelineDividerDrag}
+              data-dragging={isAnimatedTimelineSplitDragging ? 'true' : 'false'}
+            />
+            <div
+              className="min-h-0 shrink-0 overflow-hidden"
+              style={{ height: `${animatedTimelineHeightPercent}%` }}
+            >
+              <AnimatedCostumeTimeline
+                clip={editorCostume.clip}
+                currentFrameIndex={clampedAnimatedFrameIndex}
+                onFrameSelect={handleAnimatedFrameSelect}
+                onChangeTotalFrames={handleAnimatedFrameCountChange}
+                onChangeFps={handleAnimatedFpsChange}
+                onChangePlayback={handleAnimatedPlaybackChange}
+                onSelectTrack={handleSelectLayer}
+                onAddBitmapTrack={handleAddBitmapLayer}
+                onAddVectorTrack={handleAddVectorLayer}
+                onDuplicateTrack={handleDuplicateLayer}
+                onDeleteTrack={handleDeleteLayer}
+                onReorderTrack={handleReorderLayer}
+                onToggleVisibility={handleToggleLayerVisibility}
+                onToggleLocked={handleToggleLayerLocked}
+                onRenameTrack={handleRenameLayer}
+                onOpacityChange={handleLayerOpacityChange}
+                onUpdateCelSpan={handleAnimatedTrackCelSpanChange}
+                onDeleteCel={handleAnimatedTrackCelDelete}
+              />
+            </div>
+          </>
         ) : null}
       </div>
 
