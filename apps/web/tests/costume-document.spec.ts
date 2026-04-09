@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
 import {
+  applyCanvasStateToAnimatedCostumeClip,
   applyCanvasStateToCostumeDocument,
+  createAnimatedCostumeClipFromDocument,
   createBlankCostumeDocument,
+  createBitmapCostumeDocument,
   createBitmapLayer,
   createEmptyCostumeVectorDocument,
   createVectorLayer,
@@ -152,6 +155,71 @@ test.describe('costume document visibility', () => {
       y: 256,
       width: 320,
       height: 240,
+    });
+  });
+
+  test('editing a bitmap animated cel rewrites that cel from the playhead forward', () => {
+    const document = createBitmapCostumeDocument('data:image/png;base64,ORIGINAL');
+    const clip = createAnimatedCostumeClipFromDocument(document, { totalFrames: 6 });
+
+    const nextClip = applyCanvasStateToAnimatedCostumeClip(clip, 2, {
+      editorMode: 'bitmap',
+      dataUrl: 'data:image/png;base64,UPDATED',
+    });
+
+    expect(nextClip).not.toBeNull();
+    expect(nextClip?.tracks).toHaveLength(1);
+    expect(nextClip?.tracks[0]?.cels).toHaveLength(2);
+    expect(nextClip?.tracks[0]?.cels[0]).toMatchObject({
+      startFrame: 0,
+      durationFrames: 2,
+      kind: 'bitmap',
+      bitmap: {
+        assetId: 'data:image/png;base64,ORIGINAL',
+      },
+    });
+    expect(nextClip?.tracks[0]?.cels[1]).toMatchObject({
+      startFrame: 2,
+      durationFrames: 4,
+      kind: 'bitmap',
+      bitmap: {
+        assetId: 'data:image/png;base64,UPDATED',
+      },
+    });
+  });
+
+  test('editing a vector animated cel rewrites that cel from the playhead forward', () => {
+    const document = createBlankCostumeDocument();
+    const clip = createAnimatedCostumeClipFromDocument(document, { totalFrames: 6 });
+
+    const nextClip = applyCanvasStateToAnimatedCostumeClip(clip, 3, {
+      editorMode: 'vector',
+      dataUrl: 'ignored-for-vector',
+      vectorDocument: {
+        engine: 'fabric',
+        version: 1,
+        fabricJson: '{"version":"7.0.0","objects":[{"type":"circle","radius":24}]}',
+      },
+    });
+
+    expect(nextClip).not.toBeNull();
+    expect(nextClip?.tracks).toHaveLength(1);
+    expect(nextClip?.tracks[0]?.cels).toHaveLength(2);
+    expect(nextClip?.tracks[0]?.cels[0]).toMatchObject({
+      startFrame: 0,
+      durationFrames: 3,
+      kind: 'vector',
+      vector: createEmptyCostumeVectorDocument(),
+    });
+    expect(nextClip?.tracks[0]?.cels[1]).toMatchObject({
+      startFrame: 3,
+      durationFrames: 3,
+      kind: 'vector',
+      vector: {
+        engine: 'fabric',
+        version: 1,
+        fabricJson: '{"version":"7.0.0","objects":[{"type":"circle","radius":24}]}',
+      },
     });
   });
 });

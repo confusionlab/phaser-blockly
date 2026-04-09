@@ -1109,19 +1109,12 @@ function replaceAnimatedTrackCel(
       }
 
       replacementCels.push(
-        createCelFromLayerForFrame(layer, frameIndex, 1) as AnimatedCostumeBitmapCel,
+        createCelFromLayerForFrame(
+          layer,
+          frameIndex,
+          existingCelEnd - frameIndex,
+        ) as AnimatedCostumeBitmapCel,
       );
-
-      const trailingDuration = existingCelEnd - (frameIndex + 1);
-      if (trailingDuration > 0) {
-        replacementCels.push(
-          cloneAnimatedCelWithSpan(
-            existingCel,
-            frameIndex + 1,
-            trailingDuration,
-          ) as AnimatedCostumeBitmapCel,
-        );
-      }
 
       nextTrack.cels.splice(existingCelIndex, 1, ...replacementCels);
       nextTrack.cels.sort((a, b) => a.startFrame - b.startFrame);
@@ -1166,19 +1159,12 @@ function replaceAnimatedTrackCel(
     }
 
     replacementCels.push(
-      createCelFromLayerForFrame(layer, frameIndex, 1) as AnimatedCostumeVectorCel,
+      createCelFromLayerForFrame(
+        layer,
+        frameIndex,
+        existingCelEnd - frameIndex,
+      ) as AnimatedCostumeVectorCel,
     );
-
-    const trailingDuration = existingCelEnd - (frameIndex + 1);
-    if (trailingDuration > 0) {
-      replacementCels.push(
-        cloneAnimatedCelWithSpan(
-          existingCel,
-          frameIndex + 1,
-          trailingDuration,
-        ) as AnimatedCostumeVectorCel,
-      );
-    }
 
     nextTrack.cels.splice(existingCelIndex, 1, ...replacementCels);
     nextTrack.cels.sort((a, b) => a.startFrame - b.startFrame);
