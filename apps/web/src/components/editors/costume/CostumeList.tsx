@@ -66,9 +66,9 @@ function CostumeKindIcon({
   if (kind === 'animated') {
     return (
       <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
-        <circle cx="6" cy="8.75" r="3" stroke="currentColor" strokeWidth="1.5" />
-        <circle cx="10" cy="8.75" r="3" stroke="currentColor" strokeWidth="1.5" />
-        <circle cx="8" cy="5.25" r="3" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="5.25" cy="10.25" r="2.75" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="8" cy="8" r="2.75" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="10.75" cy="5.75" r="2.75" stroke="currentColor" strokeWidth="1.5" />
       </svg>
     );
   }

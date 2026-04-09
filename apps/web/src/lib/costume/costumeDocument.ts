@@ -344,6 +344,18 @@ export function cloneAnimatedCostumeCel(cel: AnimatedCostumeCel): AnimatedCostum
     : cloneAnimatedVectorCel(cel);
 }
 
+function createAnimatedCostumeCelWithSpan(
+  cel: AnimatedCostumeCel,
+  startFrame: number,
+  durationFrames: number,
+): AnimatedCostumeCel {
+  const nextCel = cloneAnimatedCostumeCel(cel);
+  nextCel.id = crypto.randomUUID();
+  nextCel.startFrame = startFrame;
+  nextCel.durationFrames = durationFrames;
+  return nextCel;
+}
+
 export function cloneAnimatedCostumeTrack(track: AnimatedCostumeTrack): AnimatedCostumeTrack {
   if (track.kind === 'bitmap') {
     return {
@@ -1208,6 +1220,70 @@ export function updateAnimatedCostumeTrackCelSpan(
     startFrame: nextStartFrame,
     durationFrames: nextDuration,
   };
+  track.cels.sort((left, right) => left.startFrame - right.startFrame);
+  return replaceAnimatedTrackAtIndex(clip, trackIndex, track);
+}
+
+export function getAnimatedCostumeTrackCelPasteDuration(
+  clip: AnimatedCostumeClip,
+  trackId: string,
+  frameIndex: number,
+  cel: AnimatedCostumeCel,
+): number {
+  const trackIndex = getAnimatedCostumeTrackIndex(clip, trackId);
+  if (trackIndex < 0) {
+    return 0;
+  }
+
+  const track = clip.tracks[trackIndex];
+  if (track.kind !== cel.kind) {
+    return 0;
+  }
+
+  const sanitizedFrameIndex = sanitizeFrameIndex(frameIndex, clip.totalFrames);
+  const occupyingCel = track.cels.find((candidate) => (
+    sanitizedFrameIndex >= candidate.startFrame &&
+    sanitizedFrameIndex < candidate.startFrame + candidate.durationFrames
+  ));
+  if (occupyingCel) {
+    return 0;
+  }
+
+  const nextStartFrame = track.cels.find((candidate) => candidate.startFrame > sanitizedFrameIndex)?.startFrame ?? clip.totalFrames;
+  const maxDuration = Math.max(0, Math.min(nextStartFrame - sanitizedFrameIndex, clip.totalFrames - sanitizedFrameIndex));
+  if (maxDuration <= 0) {
+    return 0;
+  }
+
+  return Math.max(1, Math.min(cel.durationFrames, maxDuration));
+}
+
+export function pasteAnimatedCostumeTrackCel(
+  clip: AnimatedCostumeClip,
+  trackId: string,
+  frameIndex: number,
+  cel: AnimatedCostumeCel,
+): AnimatedCostumeClip | null {
+  const trackIndex = getAnimatedCostumeTrackIndex(clip, trackId);
+  if (trackIndex < 0) {
+    return null;
+  }
+
+  const nextDuration = getAnimatedCostumeTrackCelPasteDuration(clip, trackId, frameIndex, cel);
+  if (nextDuration <= 0) {
+    return null;
+  }
+
+  const sanitizedFrameIndex = sanitizeFrameIndex(frameIndex, clip.totalFrames);
+  const track = cloneAnimatedCostumeTrack(clip.tracks[trackIndex]);
+  const nextCel = createAnimatedCostumeCelWithSpan(cel, sanitizedFrameIndex, nextDuration);
+
+  if (track.kind === 'bitmap') {
+    track.cels.push(nextCel as AnimatedCostumeBitmapCel);
+  } else {
+    track.cels.push(nextCel as AnimatedCostumeVectorCel);
+  }
+
   track.cels.sort((left, right) => left.startFrame - right.startFrame);
   return replaceAnimatedTrackAtIndex(clip, trackIndex, track);
 }

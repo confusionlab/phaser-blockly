@@ -84,6 +84,7 @@ import {
   isVectorCostumeLayer,
   materializeAnimatedEditorFrame,
   materializeAnimatedFrame,
+  pasteAnimatedCostumeTrackCel,
   reorderCostumeLayer,
   reorderAnimatedCostumeTrack,
   removeCostumeLayer,
@@ -1584,6 +1585,15 @@ export function CostumeEditor() {
     void commitAnimatedClipMutation((working) => deleteAnimatedCostumeTrackCel(working.clip!, trackId, celId));
   }, [commitAnimatedClipMutation]);
 
+  const handleAnimatedTrackCelPaste = useCallback((trackId: string, frameIndex: number, cel: Parameters<typeof pasteAnimatedCostumeTrackCel>[3]) => {
+    void commitAnimatedClipMutation((working) => pasteAnimatedCostumeTrackCel(
+      working.clip!,
+      trackId,
+      frameIndex,
+      cel,
+    ));
+  }, [commitAnimatedClipMutation]);
+
   const handleReplaceCostumes = useCallback((
     nextCostumes: Costume[],
     nextActiveCostumeId: string | null,
@@ -2378,6 +2388,7 @@ export function CostumeEditor() {
                 onOpacityChange={handleLayerOpacityChange}
                 onUpdateCelSpan={handleAnimatedTrackCelSpanChange}
                 onDeleteCel={handleAnimatedTrackCelDelete}
+                onPasteCel={handleAnimatedTrackCelPaste}
               />
             </div>
           </>

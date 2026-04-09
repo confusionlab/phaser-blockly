@@ -2,7 +2,7 @@ import * as Blockly from 'blockly';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { getAppIconDataUri, type AppIconName } from '@/components/ui/icons';
-import type { MessageDefinition, Variable, VariableType } from '@/types';
+import type { Costume, MessageDefinition, Variable, VariableType } from '@/types';
 import { COMPONENT_ANY_PREFIX, PICK_FROM_STAGE } from '@/lib/blocklyReferenceMaps';
 import {
   buildVariableDisplayLabelMap,
@@ -72,6 +72,7 @@ const ADVANCED_BLOCK_TYPES = new Set<string>([
 ]);
 const BLOCKLY_INLINE_ICON_DEFAULT_SIZE = 16;
 const BLOCKLY_INLINE_ICON_DEFAULT_TEXT = '#ffffff';
+const BLOCKLY_COSTUME_KIND_ICON_SIZE = 14;
 const FLYOUT_SUBSECTION_HEADING_GAP = '20';
 const FLYOUT_SUBSECTION_HEADING_BOTTOM_GAP = '12';
 const FLYOUT_GROUP_BREAK_GAP = '56';

@@ -11,15 +11,21 @@ import { Card } from '@/components/ui/card';
 import { IconButton } from '@/components/ui/icon-button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Copy, Eye, EyeOff, Image, Lock, LockOpen, Minus, Plus, Shapes, Trash2 } from '@/components/ui/icons';
+import { Clipboard, Copy, Eye, EyeOff, Image, Lock, LockOpen, Minus, Plus, Scissors, Shapes, Trash2 } from '@/components/ui/icons';
 import { EDITOR_POPOVER_Z_INDEX } from '@/components/editors/shared/editorChromeZIndices';
-import { MAX_ANIMATED_COSTUME_FPS, MAX_COSTUME_LAYERS } from '@/lib/costume/costumeDocument';
+import {
+  cloneAnimatedCostumeCel,
+  getAnimatedCostumeTrackCelPasteDuration,
+  MAX_ANIMATED_COSTUME_FPS,
+  MAX_COSTUME_LAYERS,
+} from '@/lib/costume/costumeDocument';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
 import type { AnimatedCostumeCel, AnimatedCostumeClip } from '@/types';
@@ -41,6 +47,17 @@ type CelContextMenuState = {
   celId: string;
   x: number;
   y: number;
+};
+
+type EmptyFrameContextMenuState = {
+  trackId: string;
+  frameIndex: number;
+  x: number;
+  y: number;
+};
+
+type CelClipboardState = {
+  cel: AnimatedCostumeCel;
 };
 
 type CelInteractionState = {
@@ -81,6 +98,7 @@ interface AnimatedCostumeTimelineProps {
   onOpacityChange: (trackId: string, opacity: number) => void;
   onUpdateCelSpan: (trackId: string, celId: string, startFrame: number, durationFrames: number) => void;
   onDeleteCel: (trackId: string, celId: string) => void;
+  onPasteCel: (trackId: string, frameIndex: number, cel: AnimatedCostumeCel) => void;
 }
 
 function clampOpacityPercent(value: number): number {
@@ -192,6 +210,7 @@ export function AnimatedCostumeTimeline({
   onOpacityChange,
   onUpdateCelSpan,
   onDeleteCel,
+  onPasteCel,
 }: AnimatedCostumeTimelineProps) {
   const canAddTrack = clip.tracks.length < MAX_COSTUME_LAYERS;
   const maxTrackTooltip = `Max layer, max ${MAX_COSTUME_LAYERS} layers`;
@@ -204,10 +223,14 @@ export function AnimatedCostumeTimeline({
   const [trackContextMenuOpacityDraft, setTrackContextMenuOpacityDraft] = useState(100);
   const [celContextMenu, setCelContextMenu] = useState<CelContextMenuState | null>(null);
   const [celContextMenuPosition, setCelContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [emptyFrameContextMenu, setEmptyFrameContextMenu] = useState<EmptyFrameContextMenuState | null>(null);
+  const [emptyFrameContextMenuPosition, setEmptyFrameContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [celClipboard, setCelClipboard] = useState<CelClipboardState | null>(null);
   const [celInteraction, setCelInteraction] = useState<CelInteractionState | null>(null);
   const [frameHeaderScrub, setFrameHeaderScrub] = useState<FrameHeaderScrubState | null>(null);
   const trackContextMenuRef = useRef<HTMLDivElement | null>(null);
   const celContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const emptyFrameContextMenuRef = useRef<HTMLDivElement | null>(null);
   const frameHeaderStripRef = useRef<HTMLDivElement | null>(null);
   const timelineScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const previousTotalFramesRef = useRef(clip.totalFrames);
@@ -225,6 +248,21 @@ export function AnimatedCostumeTimeline({
       ? celContextMenuTrack.cels.find((cel) => cel.id === celContextMenu.celId) ?? null
       : null
   ), [celContextMenu, celContextMenuTrack]);
+  const emptyFrameContextMenuTrack = useMemo(() => (
+    emptyFrameContextMenu ? clip.tracks.find((track) => track.id === emptyFrameContextMenu.trackId) ?? null : null
+  ), [clip.tracks, emptyFrameContextMenu]);
+  const emptyFramePasteDuration = useMemo(() => {
+    if (!emptyFrameContextMenu || !celClipboard) {
+      return 0;
+    }
+
+    return getAnimatedCostumeTrackCelPasteDuration(
+      clip,
+      emptyFrameContextMenu.trackId,
+      emptyFrameContextMenu.frameIndex,
+      celClipboard.cel,
+    );
+  }, [celClipboard, clip, emptyFrameContextMenu]);
   const canRemoveTrailingFrame = useMemo(() => {
     if (clip.totalFrames <= 1) {
       return false;
@@ -306,6 +344,23 @@ export function AnimatedCostumeTimeline({
   }, [celContextMenu, celContextMenuPosition]);
 
   useEffect(() => {
+    if (!emptyFrameContextMenu || !emptyFrameContextMenuRef.current || !emptyFrameContextMenuPosition) {
+      return;
+    }
+
+    const nextPosition = resolveContextMenuPosition(
+      emptyFrameContextMenuPosition,
+      emptyFrameContextMenuRef.current.getBoundingClientRect(),
+    );
+    if (
+      nextPosition &&
+      (nextPosition.left !== emptyFrameContextMenuPosition.left || nextPosition.top !== emptyFrameContextMenuPosition.top)
+    ) {
+      setEmptyFrameContextMenuPosition(nextPosition);
+    }
+  }, [emptyFrameContextMenu, emptyFrameContextMenuPosition]);
+
+  useEffect(() => {
     if (!celContextMenu) {
       setCelContextMenuPosition(null);
       return;
@@ -315,7 +370,16 @@ export function AnimatedCostumeTimeline({
   }, [celContextMenu]);
 
   useEffect(() => {
-    if (!trackContextMenu && !celContextMenu) {
+    if (!emptyFrameContextMenu) {
+      setEmptyFrameContextMenuPosition(null);
+      return;
+    }
+
+    setEmptyFrameContextMenuPosition({ left: emptyFrameContextMenu.x, top: emptyFrameContextMenu.y });
+  }, [emptyFrameContextMenu]);
+
+  useEffect(() => {
+    if (!trackContextMenu && !celContextMenu && !emptyFrameContextMenu) {
       return;
     }
 
@@ -323,6 +387,7 @@ export function AnimatedCostumeTimeline({
       if (event.key === 'Escape') {
         setTrackContextMenu(null);
         setCelContextMenu(null);
+        setEmptyFrameContextMenu(null);
       }
     };
 
@@ -330,7 +395,7 @@ export function AnimatedCostumeTimeline({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [celContextMenu, trackContextMenu]);
+  }, [celContextMenu, emptyFrameContextMenu, trackContextMenu]);
 
   useEffect(() => {
     if (!celInteraction) {
@@ -480,6 +545,10 @@ export function AnimatedCostumeTimeline({
     setCelContextMenu(null);
   };
 
+  const closeEmptyFrameContextMenu = () => {
+    setEmptyFrameContextMenu(null);
+  };
+
   const startInlineRename = (trackId: string, currentName: string) => {
     onSelectTrack(trackId);
     setEditingTrackId(trackId);
@@ -586,6 +655,7 @@ export function AnimatedCostumeTimeline({
     event.preventDefault();
     onSelectTrack(trackId);
     setCelContextMenu(null);
+    setEmptyFrameContextMenu(null);
     setTrackContextMenu({
       trackId,
       x: event.clientX,
@@ -605,6 +675,7 @@ export function AnimatedCostumeTimeline({
     event.stopPropagation();
     setTrackContextMenu(null);
     setCelContextMenu(null);
+    setEmptyFrameContextMenu(null);
     if (mode === 'move') {
       onSelectTrack(trackId);
       onFrameSelect(getFrameIndexFromCelPointer(event, cel));
@@ -637,11 +708,34 @@ export function AnimatedCostumeTimeline({
     event.stopPropagation();
     onSelectTrack(trackId);
     setTrackContextMenu(null);
+    setEmptyFrameContextMenu(null);
     setCelContextMenu({
       trackId,
       celId,
       x: event.clientX,
       y: event.clientY,
+    });
+  };
+
+  const handleEmptyFrameContextMenu = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    trackId: string,
+    frameIndex: number,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onSelectTrack(trackId);
+    setTrackContextMenu(null);
+    setCelContextMenu(null);
+    setEmptyFrameContextMenu({
+      trackId,
+      frameIndex,
+      x: event.clientX,
+      y: event.clientY,
+    });
+    setEmptyFrameContextMenuPosition({
+      left: event.clientX,
+      top: event.clientY,
     });
   };
 
@@ -760,16 +854,23 @@ export function AnimatedCostumeTimeline({
                       />
                     </label>
 
-                    <select
+                    <Select
                       value={clip.playback}
-                      onChange={(event) => onChangePlayback(event.target.value as AnimatedCostumeClip['playback'])}
-                      className="h-7 rounded border border-input bg-background px-2 text-xs"
-                      aria-label="Playback mode"
+                      onValueChange={(value) => onChangePlayback(value as AnimatedCostumeClip['playback'])}
                     >
-                      <option value="play-once">Play Once</option>
-                      <option value="loop">Loop</option>
-                      <option value="ping-pong">Ping-Pong</option>
-                    </select>
+                      <SelectTrigger
+                        size="sm"
+                        aria-label="Playback mode"
+                        className="h-7 rounded border border-input bg-background px-2 text-xs shadow-none focus-visible:ring-2"
+                      >
+                        <SelectValue placeholder="Playback" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="play-once">Play Once</SelectItem>
+                        <SelectItem value="loop">Loop</SelectItem>
+                        <SelectItem value="ping-pong">Ping-Pong</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </div>
@@ -941,6 +1042,7 @@ export function AnimatedCostumeTimeline({
                                 onSelectTrack(track.id);
                                 onFrameSelect(frameIndex);
                               }}
+                              onContextMenu={(event) => handleEmptyFrameContextMenu(event, track.id, frameIndex)}
                               className="h-full bg-transparent"
                               style={{ width: TIMELINE_FRAME_WIDTH }}
                             />
@@ -1139,6 +1241,31 @@ export function AnimatedCostumeTimeline({
             }}
           >
             <MenuItemButton
+              icon={<Copy className="size-4" />}
+              onClick={() => {
+                setCelClipboard({
+                  cel: cloneAnimatedCostumeCel(celContextMenuCel),
+                });
+                closeCelContextMenu();
+              }}
+            >
+              Copy
+            </MenuItemButton>
+            <MenuItemButton
+              icon={<Scissors className="size-4" />}
+              onClick={() => {
+                setCelClipboard({
+                  cel: cloneAnimatedCostumeCel(celContextMenuCel),
+                });
+                onDeleteCel(celContextMenuTrack.id, celContextMenuCel.id);
+                closeCelContextMenu();
+              }}
+              disabled={celContextMenuTrack.cels.length <= 1}
+            >
+              Cut
+            </MenuItemButton>
+            <MenuSeparator />
+            <MenuItemButton
               icon={<Trash2 className="size-4" />}
               intent="destructive"
               onClick={() => {
@@ -1148,6 +1275,45 @@ export function AnimatedCostumeTimeline({
               disabled={celContextMenuTrack.cels.length <= 1}
             >
               Delete Cel
+            </MenuItemButton>
+          </Card>
+        </>
+      ) : null}
+
+      {emptyFrameContextMenu && emptyFrameContextMenuTrack ? (
+        <>
+          <div
+            className="fixed inset-0"
+            style={{ zIndex: EDITOR_POPOVER_Z_INDEX - 1 }}
+            onClick={closeEmptyFrameContextMenu}
+          />
+          <Card
+            ref={emptyFrameContextMenuRef}
+            className="fixed min-w-44 gap-0 rounded-2xl border-border/80 bg-surface-floating px-0 py-1.5 shadow-[0_28px_80px_-34px_rgba(2,6,23,0.78)]"
+            style={{
+              left: emptyFrameContextMenuPosition?.left ?? emptyFrameContextMenu.x,
+              top: emptyFrameContextMenuPosition?.top ?? emptyFrameContextMenu.y,
+              zIndex: EDITOR_POPOVER_Z_INDEX,
+            }}
+          >
+            <MenuItemButton
+              icon={<Clipboard className="size-4" />}
+              onClick={() => {
+                if (!celClipboard || emptyFramePasteDuration <= 0) {
+                  return;
+                }
+                onPasteCel(
+                  emptyFrameContextMenu.trackId,
+                  emptyFrameContextMenu.frameIndex,
+                  cloneAnimatedCostumeCel(celClipboard.cel),
+                );
+                onSelectTrack(emptyFrameContextMenu.trackId);
+                onFrameSelect(emptyFrameContextMenu.frameIndex);
+                closeEmptyFrameContextMenu();
+              }}
+              disabled={!celClipboard || emptyFramePasteDuration <= 0}
+            >
+              Paste
             </MenuItemButton>
           </Card>
         </>

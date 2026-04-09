@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 import {
   applyCanvasStateToAnimatedCostumeClip,
   applyCanvasStateToCostumeDocument,
+  cloneAnimatedCostumeCel,
+  cloneAnimatedCostumeClip,
   createAnimatedCostumeClipFromDocument,
   createBlankCostumeDocument,
   createBitmapCostumeDocument,
@@ -9,9 +11,11 @@ import {
   createEmptyCostumeVectorDocument,
   createVectorLayer,
   insertCostumeLayerAfterActive,
+  pasteAnimatedCostumeTrackCel,
   resolveActiveCostumeLayerEditorLoadState,
   setActiveCostumeLayer,
   setCostumeLayerVisibility,
+  updateAnimatedCostumeTrackCelSpan,
 } from '../src/lib/costume/costumeDocument';
 import { getCostumeDocumentPreviewSignature } from '../src/lib/costume/costumeDocumentRender';
 
@@ -207,5 +211,85 @@ test.describe('costume document visibility', () => {
         fabricJson: '{"version":"7.0.0","objects":[{"type":"circle","radius":24}]}',
       },
     });
+  });
+
+  test('pastes a cel into an empty same-kind track and preserves duration when space allows', () => {
+    let document = createBitmapCostumeDocument('data:image/png;base64,SOURCE');
+    const targetLayer = createBitmapLayer({
+      name: 'Target',
+      assetId: 'data:image/png;base64,TARGET',
+    });
+    document = insertCostumeLayerAfterActive(document, targetLayer);
+
+    let clip = createAnimatedCostumeClipFromDocument(document, { totalFrames: 6 });
+    const sourceTrack = clip.tracks[0];
+    const targetTrack = clip.tracks[1];
+    clip = updateAnimatedCostumeTrackCelSpan(clip, targetTrack.id, targetTrack.cels[0].id, 0, 2) ?? clip;
+
+    const nextClip = pasteAnimatedCostumeTrackCel(clip, targetTrack.id, 2, sourceTrack.cels[0]);
+    expect(nextClip).not.toBeNull();
+    expect(nextClip?.tracks[1]?.cels).toHaveLength(2);
+    expect(nextClip?.tracks[1]?.cels[1]).toMatchObject({
+      startFrame: 2,
+      durationFrames: 4,
+      kind: 'bitmap',
+      bitmap: {
+        assetId: 'data:image/png;base64,SOURCE',
+      },
+    });
+  });
+
+  test('truncates pasted cel duration to fit before the next cel', () => {
+    let document = createBitmapCostumeDocument('data:image/png;base64,SOURCE');
+    const targetLayer = createBitmapLayer({
+      name: 'Target',
+      assetId: 'data:image/png;base64,TARGET',
+    });
+    document = insertCostumeLayerAfterActive(document, targetLayer);
+
+    let clip = createAnimatedCostumeClipFromDocument(document, { totalFrames: 6 });
+    const sourceTrack = clip.tracks[0];
+    const targetTrackId = clip.tracks[1].id;
+    clip = updateAnimatedCostumeTrackCelSpan(clip, targetTrackId, clip.tracks[1].cels[0].id, 0, 2) ?? clip;
+
+    const setupClip = cloneAnimatedCostumeClip(clip);
+    const setupTrack = setupClip.tracks[1];
+    const trailingCel = cloneAnimatedCostumeCel(setupTrack.cels[0]);
+    trailingCel.id = crypto.randomUUID();
+    trailingCel.startFrame = 5;
+    trailingCel.durationFrames = 1;
+    setupTrack.cels.push(trailingCel as typeof setupTrack.cels[number]);
+    setupTrack.cels.sort((left, right) => left.startFrame - right.startFrame);
+
+    const nextClip = pasteAnimatedCostumeTrackCel(setupClip, targetTrackId, 2, sourceTrack.cels[0]);
+    expect(nextClip).not.toBeNull();
+    expect(nextClip?.tracks[1]?.cels[1]).toMatchObject({
+      startFrame: 2,
+      durationFrames: 3,
+    });
+  });
+
+  test('rejects paste into occupied frames or across mismatched track kinds', () => {
+    const bitmapClip = createAnimatedCostumeClipFromDocument(
+      createBitmapCostumeDocument('data:image/png;base64,SOURCE'),
+      { totalFrames: 6 },
+    );
+
+    const occupiedPaste = pasteAnimatedCostumeTrackCel(
+      bitmapClip,
+      bitmapClip.tracks[0].id,
+      1,
+      bitmapClip.tracks[0].cels[0],
+    );
+    expect(occupiedPaste).toBeNull();
+
+    const vectorClip = createAnimatedCostumeClipFromDocument(createBlankCostumeDocument(), { totalFrames: 6 });
+    const mismatchedPaste = pasteAnimatedCostumeTrackCel(
+      vectorClip,
+      vectorClip.tracks[0].id,
+      1,
+      bitmapClip.tracks[0].cels[0],
+    );
+    expect(mismatchedPaste).toBeNull();
   });
 });
