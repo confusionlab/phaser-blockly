@@ -1048,29 +1048,6 @@ function createCelFromLayerForFrame(
   };
 }
 
-function cloneAnimatedCelWithSpan(
-  cel: AnimatedCostumeCel,
-  startFrame: number,
-  durationFrames: number,
-  celId?: string,
-): AnimatedCostumeCel {
-  if (cel.kind === 'bitmap') {
-    return {
-      ...cloneAnimatedBitmapCel(cel),
-      id: celId ?? cel.id,
-      startFrame,
-      durationFrames,
-    };
-  }
-
-  return {
-    ...cloneAnimatedVectorCel(cel),
-    id: celId ?? cel.id,
-    startFrame,
-    durationFrames,
-  };
-}
-
 function replaceAnimatedTrackCel(
   track: AnimatedCostumeTrack,
   frameIndex: number,
@@ -1085,40 +1062,14 @@ function replaceAnimatedTrackCel(
 
     if (existingCelIndex >= 0) {
       const existingCel = nextTrack.cels[existingCelIndex];
-      if (frameIndex === existingCel.startFrame) {
-        nextTrack.cels[existingCelIndex] = createCelFromLayerForFrame(
+      nextTrack.cels[existingCelIndex] = (
+        createCelFromLayerForFrame(
           layer,
           existingCel.startFrame,
           existingCel.durationFrames,
           existingCel.id,
-        ) as AnimatedCostumeBitmapCel;
-        return nextTrack;
-      }
-
-      const existingCelEnd = existingCel.startFrame + existingCel.durationFrames;
-      const replacementCels: AnimatedCostumeBitmapCel[] = [];
-      const leadingDuration = frameIndex - existingCel.startFrame;
-      if (leadingDuration > 0) {
-        replacementCels.push(
-          cloneAnimatedCelWithSpan(
-            existingCel,
-            existingCel.startFrame,
-            leadingDuration,
-            existingCel.id,
-          ) as AnimatedCostumeBitmapCel,
-        );
-      }
-
-      replacementCels.push(
-        createCelFromLayerForFrame(
-          layer,
-          frameIndex,
-          existingCelEnd - frameIndex,
-        ) as AnimatedCostumeBitmapCel,
+        ) as AnimatedCostumeBitmapCel
       );
-
-      nextTrack.cels.splice(existingCelIndex, 1, ...replacementCels);
-      nextTrack.cels.sort((a, b) => a.startFrame - b.startFrame);
       return nextTrack;
     }
 
@@ -1135,40 +1086,14 @@ function replaceAnimatedTrackCel(
 
   if (existingCelIndex >= 0) {
     const existingCel = nextTrack.cels[existingCelIndex];
-    if (frameIndex === existingCel.startFrame) {
-      nextTrack.cels[existingCelIndex] = createCelFromLayerForFrame(
+    nextTrack.cels[existingCelIndex] = (
+      createCelFromLayerForFrame(
         layer,
         existingCel.startFrame,
         existingCel.durationFrames,
         existingCel.id,
-      ) as AnimatedCostumeVectorCel;
-      return nextTrack;
-    }
-
-    const existingCelEnd = existingCel.startFrame + existingCel.durationFrames;
-    const replacementCels: AnimatedCostumeVectorCel[] = [];
-    const leadingDuration = frameIndex - existingCel.startFrame;
-    if (leadingDuration > 0) {
-      replacementCels.push(
-        cloneAnimatedCelWithSpan(
-          existingCel,
-          existingCel.startFrame,
-          leadingDuration,
-          existingCel.id,
-        ) as AnimatedCostumeVectorCel,
-      );
-    }
-
-    replacementCels.push(
-      createCelFromLayerForFrame(
-        layer,
-        frameIndex,
-        existingCelEnd - frameIndex,
-      ) as AnimatedCostumeVectorCel,
+      ) as AnimatedCostumeVectorCel
     );
-
-    nextTrack.cels.splice(existingCelIndex, 1, ...replacementCels);
-    nextTrack.cels.sort((a, b) => a.startFrame - b.startFrame);
     return nextTrack;
   }
 

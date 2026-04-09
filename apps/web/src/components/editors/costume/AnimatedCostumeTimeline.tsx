@@ -630,7 +630,7 @@ export function AnimatedCostumeTimeline({
     <>
       <div className="border-t border-border/70 bg-background/95">
         <div ref={timelineScrollContainerRef} className="overflow-auto px-3 py-3">
-          <div className="relative min-w-max">
+          <div className="relative min-w-max overflow-visible">
             <div
               aria-hidden="true"
               className="pointer-events-none absolute top-0 bottom-0 z-[5]"
@@ -639,21 +639,26 @@ export function AnimatedCostumeTimeline({
                 width: clip.totalFrames * TIMELINE_FRAME_WIDTH,
               }}
             >
-              {Array.from({ length: Math.max(0, clip.totalFrames - 1) }, (_, separatorIndex) => (
+              {[0, ...Array.from(
+                { length: Math.max(0, clip.totalFrames - 1) },
+                (_, separatorIndex) => ((separatorIndex + 1) * TIMELINE_FRAME_WIDTH) - 0.5,
+              ), (clip.totalFrames * TIMELINE_FRAME_WIDTH) - 0.5].map((separatorLeft, separatorIndex) => (
                 <div
                   key={`frame-separator-${separatorIndex}`}
                   className="absolute top-0 bottom-0 w-px bg-border/45"
                   style={{
-                    left: ((separatorIndex + 1) * TIMELINE_FRAME_WIDTH) - 0.5,
+                    left: separatorLeft,
                   }}
                 />
               ))}
             </div>
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute top-0 bottom-0 z-10 rounded-sm border-x border-primary/35 bg-primary/10"
+              className="pointer-events-none absolute z-10 rounded-sm border-x border-primary/35 bg-primary/10"
               style={{
                 left: TIMELINE_TRACK_HEADER_WIDTH + TIMELINE_SECTION_GAP + (currentFrameIndex * TIMELINE_FRAME_WIDTH),
+                top: 4,
+                bottom: 4,
                 width: TIMELINE_FRAME_WIDTH,
               }}
             />

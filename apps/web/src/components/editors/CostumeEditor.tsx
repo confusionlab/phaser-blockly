@@ -2155,7 +2155,7 @@ export function CostumeEditor() {
   }
 
   return (
-    <div className="relative flex h-full overflow-hidden">
+    <div className="relative flex h-full overflow-visible">
       <CostumeList
         costumes={costumes}
         activeCostumeId={activeCostumeId}
