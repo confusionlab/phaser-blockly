@@ -961,10 +961,10 @@ export function AnimatedCostumeTimeline({
                               key={`${cel.id}:${celIndex}`}
                               data-animated-cel="true"
                               className={cn(
-                                'group/cel absolute inset-y-1 rounded-xl shadow-sm transition-[background-color,box-shadow]',
+                                'group/cel absolute inset-y-1 overflow-hidden rounded-xl shadow-sm transition-[background-color,box-shadow]',
                                 isSelectedCel
-                                  ? 'bg-primary/14 shadow-[0_10px_24px_-18px_rgba(37,99,235,0.8)]'
-                                  : 'bg-slate-300/88 hover:bg-slate-400/95 dark:bg-slate-700/84 dark:hover:bg-slate-600/96',
+                                  ? 'z-10 bg-[var(--editor-selection-surface-selected)] shadow-sm ring-1 ring-inset ring-primary/30'
+                                  : 'bg-neutral-300 hover:bg-neutral-400 dark:bg-neutral-700 dark:hover:bg-neutral-600',
                                 celInteraction?.celId === cel.id && 'z-20 shadow-md',
                               )}
                               style={{
@@ -978,10 +978,10 @@ export function AnimatedCostumeTimeline({
                             >
                               <div
                                 className={cn(
-                                  'absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-xl transition-[opacity,background-color]',
+                                  'absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize transition-[opacity,background-color]',
                                   isSelectedCel
                                     ? 'bg-primary/20 hover:bg-primary/30'
-                                    : 'bg-slate-500/18 hover:bg-slate-500/28 dark:bg-slate-400/18 dark:hover:bg-slate-400/30',
+                                    : 'bg-neutral-500/22 hover:bg-neutral-500/34 dark:bg-neutral-400/22 dark:hover:bg-neutral-400/34',
                                   'opacity-0 group-hover/cel:opacity-100',
                                   celInteraction?.celId === cel.id && 'opacity-100',
                                 )}
@@ -996,10 +996,10 @@ export function AnimatedCostumeTimeline({
                               />
                               <div
                                 className={cn(
-                                  'absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-xl transition-[opacity,background-color]',
+                                  'absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize transition-[opacity,background-color]',
                                   isSelectedCel
                                     ? 'bg-primary/20 hover:bg-primary/30'
-                                    : 'bg-slate-500/18 hover:bg-slate-500/28 dark:bg-slate-400/18 dark:hover:bg-slate-400/30',
+                                    : 'bg-neutral-500/22 hover:bg-neutral-500/34 dark:bg-neutral-400/22 dark:hover:bg-neutral-400/34',
                                   'opacity-0 group-hover/cel:opacity-100',
                                   celInteraction?.celId === cel.id && 'opacity-100',
                                 )}
