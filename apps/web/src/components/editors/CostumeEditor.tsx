@@ -94,7 +94,7 @@ import {
   setCostumeLayerVisibility,
   updateAnimatedCostumeClipPlayback,
   updateAnimatedCostumeTrack,
-  updateAnimatedCostumeTrackCelDuration,
+  updateAnimatedCostumeTrackCelSpan,
   updateCostumeLayer,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
@@ -1616,8 +1616,19 @@ export function CostumeEditor() {
     });
   }, [commitAnimatedClipMutation]);
 
-  const handleAnimatedTrackCelDurationChange = useCallback((trackId: string, celId: string, durationFrames: number) => {
-    void commitAnimatedClipMutation((working) => updateAnimatedCostumeTrackCelDuration(working.clip!, trackId, celId, durationFrames));
+  const handleAnimatedTrackCelSpanChange = useCallback((
+    trackId: string,
+    celId: string,
+    startFrame: number,
+    durationFrames: number,
+  ) => {
+    void commitAnimatedClipMutation((working) => updateAnimatedCostumeTrackCelSpan(
+      working.clip!,
+      trackId,
+      celId,
+      startFrame,
+      durationFrames,
+    ));
   }, [commitAnimatedClipMutation]);
 
   const handleAnimatedTrackCelDelete = useCallback((trackId: string, celId: string) => {
@@ -2191,7 +2202,7 @@ export function CostumeEditor() {
           </div>
         ) : null}
 
-        {activeLayer && activeLayer.visible ? (
+        {activeLayer && activeLayer.visible && (!editorCostume || !isAnimatedCostume(editorCostume)) ? (
           <CostumeToolbar
             editorMode={editorMode}
             activeTool={activeTool}
@@ -2271,6 +2282,47 @@ export function CostumeEditor() {
             onVectorGroupingStateChange={handleVectorGroupingStateChange}
             onViewScaleChange={setCanvasPreviewScale}
           />
+          {activeLayer && activeLayer.visible && editorCostume && isAnimatedCostume(editorCostume) ? (
+            <CostumeToolbar
+              editorMode={editorMode}
+              activeTool={activeTool}
+              hasActiveSelection={editorMode === 'bitmap' ? hasBitmapFloatingSelection : hasCanvasSelection}
+              showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
+              isVectorPointEditing={isVectorPointEditing}
+              hasSelectedVectorPoints={hasSelectedVectorPoints}
+              bitmapBrushKind={bitmapBrushKind}
+              brushColor={brushColor}
+              brushOpacity={brushOpacity}
+              brushSize={brushSize}
+              bitmapFillStyle={bitmapFillStyle}
+              bitmapShapeStyle={bitmapShapeStyle}
+              textStyle={textStyle}
+              vectorStyle={vectorStyle}
+              vectorStyleMixedState={vectorStyleMixedState}
+              vectorStyleCapabilities={vectorStyleCapabilities}
+              previewScale={canvasPreviewScale}
+              onToolChange={handleToolChange}
+              onMoveOrder={handleMoveOrder}
+              canGroupSelection={canGroupSelection}
+              canUngroupSelection={canUngroupSelection}
+              onGroupSelection={handleGroupSelection}
+              onFlipSelection={handleFlipSelection}
+              onRotateSelection={handleRotateSelection}
+              onUngroupSelection={handleUngroupSelection}
+              vectorHandleMode={vectorHandleMode}
+              onVectorHandleModeChange={(mode) => setVectorHandleMode(mode)}
+              onAlign={handleAlign}
+              alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
+              onColorChange={handlePrimaryColorChange}
+              onBrushOpacityChange={handlePrimaryBrushOpacityChange}
+              onBitmapBrushKindChange={setBitmapBrushKind}
+              onBrushSizeChange={handleBrushSizeChange}
+              onBitmapFillStyleChange={handleBitmapFillStyleChange}
+              onBitmapShapeStyleChange={handleBitmapShapeStyleChange}
+              onTextStyleChange={handleTextStyleChange}
+              onVectorStyleChange={handleVectorStyleChange}
+            />
+          ) : null}
           {editorCostume && !isAnimatedCostume(editorCostume) ? (
             <CostumeLayerPanel
               document={editorDocument ?? editorCostume.document}
@@ -2309,7 +2361,7 @@ export function CostumeEditor() {
             onToggleLocked={handleToggleLayerLocked}
             onRenameTrack={handleRenameLayer}
             onOpacityChange={handleLayerOpacityChange}
-            onChangeCelDuration={handleAnimatedTrackCelDurationChange}
+            onUpdateCelSpan={handleAnimatedTrackCelSpanChange}
             onDeleteCel={handleAnimatedTrackCelDelete}
           />
         ) : null}

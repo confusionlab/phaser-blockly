@@ -110,6 +110,15 @@ function sanitizeLayerEffects(value: unknown): CostumeLayerEffect[] {
   return Array.isArray(value) ? [] : [];
 }
 
+function ensureUniqueId(id: string, seen: Set<string>): string {
+  let nextId = id;
+  while (seen.has(nextId)) {
+    nextId = crypto.randomUUID();
+  }
+  seen.add(nextId);
+  return nextId;
+}
+
 function sanitizeCommonLayerFields(
   layer: Record<string, unknown>,
   fallbackName: string,
@@ -197,6 +206,7 @@ function sanitizeAnimatedTrack(value: unknown, fallbackIndex: number, totalFrame
     return null;
   }
 
+  const seenCelIds = new Set<string>();
   const rawCels = Array.isArray(maybe.cels) ? maybe.cels : [];
   const cels = rawCels
     .map((entry, index) => (
@@ -207,6 +217,7 @@ function sanitizeAnimatedTrack(value: unknown, fallbackIndex: number, totalFrame
     .filter((cel): cel is AnimatedCostumeCel => cel !== null)
     .map((cel) => ({
       ...cel,
+      id: ensureUniqueId(cel.id, seenCelIds),
       startFrame: sanitizeFrameIndex(cel.startFrame, totalFrames),
       durationFrames: Math.min(Math.max(1, cel.durationFrames), totalFrames),
     }))
@@ -247,9 +258,14 @@ export function sanitizeAnimatedCostumeClip(value: unknown): AnimatedCostumeClip
   }
 
   const totalFrames = sanitizeTotalFrames(maybe.totalFrames);
+  const seenTrackIds = new Set<string>();
   const tracks = maybe.tracks
     .map((entry, index) => sanitizeAnimatedTrack(entry, index, totalFrames))
     .filter((track): track is AnimatedCostumeTrack => track !== null)
+    .map((track) => ({
+      ...track,
+      id: ensureUniqueId(track.id, seenTrackIds),
+    }))
     .slice(0, MAX_COSTUME_LAYERS);
 
   if (tracks.length === 0) {
@@ -1219,6 +1235,33 @@ export function updateAnimatedCostumeTrackCelDuration(
     return null;
   }
 
+  const track = clip.tracks[trackIndex];
+  const cel = track.cels.find((candidate) => candidate.id === celId);
+  if (!cel) {
+    return null;
+  }
+
+  return updateAnimatedCostumeTrackCelSpan(
+    clip,
+    trackId,
+    celId,
+    cel.startFrame,
+    durationFrames,
+  );
+}
+
+export function updateAnimatedCostumeTrackCelSpan(
+  clip: AnimatedCostumeClip,
+  trackId: string,
+  celId: string,
+  startFrame: number,
+  durationFrames: number,
+): AnimatedCostumeClip | null {
+  const trackIndex = getAnimatedCostumeTrackIndex(clip, trackId);
+  if (trackIndex < 0) {
+    return null;
+  }
+
   const track = cloneAnimatedCostumeTrack(clip.tracks[trackIndex]);
   const celIndex = track.cels.findIndex((cel) => cel.id === celId);
   if (celIndex < 0) {
@@ -1226,12 +1269,34 @@ export function updateAnimatedCostumeTrackCelDuration(
   }
 
   const cel = track.cels[celIndex];
+  const previousEnd = celIndex > 0
+    ? track.cels[celIndex - 1].startFrame + track.cels[celIndex - 1].durationFrames
+    : 0;
   const nextStart = track.cels[celIndex + 1]?.startFrame ?? clip.totalFrames;
-  const maxDuration = Math.max(1, nextStart - cel.startFrame);
+
+  let nextDuration = Math.max(1, Math.floor(durationFrames));
+  let nextStartFrame = Math.max(0, Math.floor(startFrame));
+
+  if (nextDuration > clip.totalFrames) {
+    nextDuration = clip.totalFrames;
+  }
+
+  nextStartFrame = Math.max(previousEnd, nextStartFrame);
+  if (nextStartFrame + nextDuration > nextStart) {
+    nextStartFrame = Math.max(previousEnd, nextStart - nextDuration);
+  }
+
+  const maxDuration = Math.max(1, nextStart - nextStartFrame);
+  if (nextDuration > maxDuration) {
+    nextDuration = maxDuration;
+  }
+
   track.cels[celIndex] = {
     ...cel,
-    durationFrames: Math.min(Math.max(1, Math.floor(durationFrames)), maxDuration),
+    startFrame: nextStartFrame,
+    durationFrames: nextDuration,
   };
+  track.cels.sort((left, right) => left.startFrame - right.startFrame);
   return replaceAnimatedTrackAtIndex(clip, trackIndex, track);
 }
 
@@ -1463,6 +1528,7 @@ export function sanitizeCostumeDocument(value: unknown): CostumeDocument | null 
     return null;
   }
 
+  const seenLayerIds = new Set<string>();
   const layers: CostumeLayer[] = maybe.layers
     .map((entry, index) => {
       if (!entry || typeof entry !== 'object') {
@@ -1480,6 +1546,7 @@ export function sanitizeCostumeDocument(value: unknown): CostumeDocument | null 
       if (kind === 'bitmap') {
         return {
           ...common,
+          id: ensureUniqueId(common.id, seenLayerIds),
           kind,
           width: COSTUME_CANVAS_SIZE,
           height: COSTUME_CANVAS_SIZE,
@@ -1493,6 +1560,7 @@ export function sanitizeCostumeDocument(value: unknown): CostumeDocument | null 
       }
       return {
         ...common,
+        id: ensureUniqueId(common.id, seenLayerIds),
         kind,
         vector,
       } satisfies CostumeVectorLayer;

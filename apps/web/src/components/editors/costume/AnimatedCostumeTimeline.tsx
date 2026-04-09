@@ -1,5 +1,60 @@
-import type { AnimatedCostumeClip } from '@/types';
-import { getAnimatedCostumeTrackCelAtFrame } from '@/lib/costume/costumeDocument';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
+import { Card } from '@/components/ui/card';
+import { IconButton } from '@/components/ui/icon-button';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
+import { MenuItemButton, MenuSeparator } from '@/components/ui/menu-item-button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Copy, Eye, EyeOff, Image, Lock, LockOpen, Plus, Shapes, Trash2 } from '@/components/ui/icons';
+import { EDITOR_POPOVER_Z_INDEX } from '@/components/editors/shared/editorChromeZIndices';
+import { MAX_COSTUME_LAYERS } from '@/lib/costume/costumeDocument';
+import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
+import { cn } from '@/lib/utils';
+import type { AnimatedCostumeCel, AnimatedCostumeClip } from '@/types';
+
+const MAX_CONTEXT_MENU_MARGIN = 12;
+const TIMELINE_FRAME_WIDTH = 32;
+const TIMELINE_TRACK_HEADER_WIDTH = 260;
+
+type TrackContextMenuState = {
+  trackId: string;
+  x: number;
+  y: number;
+};
+
+type CelContextMenuState = {
+  trackId: string;
+  celId: string;
+  x: number;
+  y: number;
+};
+
+type CelInteractionState = {
+  trackId: string;
+  celId: string;
+  mode: 'move' | 'resize-start' | 'resize-end';
+  initialClientX: number;
+  initialStartFrame: number;
+  initialDurationFrames: number;
+  minStartFrame: number;
+  maxStartFrame: number;
+  minEndFrame: number;
+  maxEndFrame: number;
+  previewStartFrame: number;
+  previewDurationFrames: number;
+};
 
 interface AnimatedCostumeTimelineProps {
   clip: AnimatedCostumeClip;
@@ -18,8 +73,76 @@ interface AnimatedCostumeTimelineProps {
   onToggleLocked: (trackId: string) => void;
   onRenameTrack: (trackId: string, name: string) => void;
   onOpacityChange: (trackId: string, opacity: number) => void;
-  onChangeCelDuration: (trackId: string, celId: string, durationFrames: number) => void;
+  onUpdateCelSpan: (trackId: string, celId: string, startFrame: number, durationFrames: number) => void;
   onDeleteCel: (trackId: string, celId: string) => void;
+}
+
+function clampOpacityPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 100;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function clampFrame(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function TrackKindIcon({ kind }: { kind: AnimatedCostumeClip['tracks'][number]['kind'] }) {
+  return kind === 'bitmap'
+    ? <Image className="size-3.5" />
+    : <Shapes className="size-3.5" />;
+}
+
+function resolveContextMenuPosition(
+  position: { left: number; top: number } | null,
+  rect: DOMRect | null,
+): { left: number; top: number } | null {
+  if (!position || !rect) {
+    return position;
+  }
+
+  let nextLeft = position.left;
+  let nextTop = position.top;
+
+  if (nextLeft + rect.width > window.innerWidth - MAX_CONTEXT_MENU_MARGIN) {
+    nextLeft = Math.max(MAX_CONTEXT_MENU_MARGIN, window.innerWidth - rect.width - MAX_CONTEXT_MENU_MARGIN);
+  }
+  if (nextTop + rect.height > window.innerHeight - MAX_CONTEXT_MENU_MARGIN) {
+    nextTop = Math.max(MAX_CONTEXT_MENU_MARGIN, window.innerHeight - rect.height - MAX_CONTEXT_MENU_MARGIN);
+  }
+  if (nextLeft < MAX_CONTEXT_MENU_MARGIN) {
+    nextLeft = MAX_CONTEXT_MENU_MARGIN;
+  }
+  if (nextTop < MAX_CONTEXT_MENU_MARGIN) {
+    nextTop = MAX_CONTEXT_MENU_MARGIN;
+  }
+
+  return {
+    left: nextLeft,
+    top: nextTop,
+  };
+}
+
+function getDisplayedCelSpan(
+  cel: AnimatedCostumeCel,
+  interaction: CelInteractionState | null,
+): { startFrame: number; durationFrames: number } {
+  if (!interaction || interaction.celId !== cel.id) {
+    return {
+      startFrame: cel.startFrame,
+      durationFrames: cel.durationFrames,
+    };
+  }
+
+  return {
+    startFrame: interaction.previewStartFrame,
+    durationFrames: interaction.previewDurationFrames,
+  };
 }
 
 export function AnimatedCostumeTimeline({
@@ -39,239 +162,775 @@ export function AnimatedCostumeTimeline({
   onToggleLocked,
   onRenameTrack,
   onOpacityChange,
-  onChangeCelDuration,
+  onUpdateCelSpan,
   onDeleteCel,
 }: AnimatedCostumeTimelineProps) {
+  const canAddTrack = clip.tracks.length < MAX_COSTUME_LAYERS;
+  const maxTrackTooltip = `Max layer, max ${MAX_COSTUME_LAYERS} layers`;
+  const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [draggedTrackId, setDraggedTrackId] = useState<string | null>(null);
+  const [dropIndicatorIndex, setDropIndicatorIndex] = useState<number | null>(null);
+  const [trackContextMenu, setTrackContextMenu] = useState<TrackContextMenuState | null>(null);
+  const [trackContextMenuPosition, setTrackContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [trackContextMenuOpacityDraft, setTrackContextMenuOpacityDraft] = useState(100);
+  const [celContextMenu, setCelContextMenu] = useState<CelContextMenuState | null>(null);
+  const [celContextMenuPosition, setCelContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [celInteraction, setCelInteraction] = useState<CelInteractionState | null>(null);
+  const trackContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const celContextMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const trackContextMenuTrack = useMemo(() => (
+    trackContextMenu ? clip.tracks.find((track) => track.id === trackContextMenu.trackId) ?? null : null
+  ), [clip.tracks, trackContextMenu]);
+
+  const celContextMenuTrack = useMemo(() => (
+    celContextMenu ? clip.tracks.find((track) => track.id === celContextMenu.trackId) ?? null : null
+  ), [clip.tracks, celContextMenu]);
+
+  const celContextMenuCel = useMemo(() => (
+    celContextMenuTrack && celContextMenu
+      ? celContextMenuTrack.cels.find((cel) => cel.id === celContextMenu.celId) ?? null
+      : null
+  ), [celContextMenu, celContextMenuTrack]);
+
+  useEffect(() => {
+    if (editingTrackId && !clip.tracks.some((track) => track.id === editingTrackId)) {
+      setEditingTrackId(null);
+      setRenameDraft('');
+    }
+  }, [clip.tracks, editingTrackId]);
+
+  useEffect(() => {
+    if (!trackContextMenuTrack || !trackContextMenu) {
+      setTrackContextMenuPosition(null);
+      return;
+    }
+
+    setTrackContextMenuPosition({ left: trackContextMenu.x, top: trackContextMenu.y });
+    setTrackContextMenuOpacityDraft(clampOpacityPercent(trackContextMenuTrack.opacity * 100));
+  }, [trackContextMenu, trackContextMenuTrack]);
+
+  useEffect(() => {
+    if (!trackContextMenu || !trackContextMenuRef.current || !trackContextMenuPosition) {
+      return;
+    }
+
+    const nextPosition = resolveContextMenuPosition(
+      trackContextMenuPosition,
+      trackContextMenuRef.current.getBoundingClientRect(),
+    );
+    if (
+      nextPosition &&
+      (nextPosition.left !== trackContextMenuPosition.left || nextPosition.top !== trackContextMenuPosition.top)
+    ) {
+      setTrackContextMenuPosition(nextPosition);
+    }
+  }, [trackContextMenu, trackContextMenuPosition]);
+
+  useEffect(() => {
+    if (!celContextMenu || !celContextMenuRef.current || !celContextMenuPosition) {
+      return;
+    }
+
+    const nextPosition = resolveContextMenuPosition(
+      celContextMenuPosition,
+      celContextMenuRef.current.getBoundingClientRect(),
+    );
+    if (
+      nextPosition &&
+      (nextPosition.left !== celContextMenuPosition.left || nextPosition.top !== celContextMenuPosition.top)
+    ) {
+      setCelContextMenuPosition(nextPosition);
+    }
+  }, [celContextMenu, celContextMenuPosition]);
+
+  useEffect(() => {
+    if (!celContextMenu) {
+      setCelContextMenuPosition(null);
+      return;
+    }
+
+    setCelContextMenuPosition({ left: celContextMenu.x, top: celContextMenu.y });
+  }, [celContextMenu]);
+
+  useEffect(() => {
+    if (!trackContextMenu && !celContextMenu) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setTrackContextMenu(null);
+        setCelContextMenu(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [celContextMenu, trackContextMenu]);
+
+  useEffect(() => {
+    if (!celInteraction) {
+      return;
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const deltaFrames = Math.round((event.clientX - celInteraction.initialClientX) / TIMELINE_FRAME_WIDTH);
+      setCelInteraction((current) => {
+        if (!current) {
+          return current;
+        }
+
+        if (current.mode === 'move') {
+          const nextStartFrame = clampFrame(
+            current.initialStartFrame + deltaFrames,
+            current.minStartFrame,
+            current.maxStartFrame,
+          );
+          return {
+            ...current,
+            previewStartFrame: nextStartFrame,
+            previewDurationFrames: current.initialDurationFrames,
+          };
+        }
+
+        if (current.mode === 'resize-start') {
+          const nextStartFrame = clampFrame(
+            current.initialStartFrame + deltaFrames,
+            current.minStartFrame,
+            current.maxStartFrame,
+          );
+          return {
+            ...current,
+            previewStartFrame: nextStartFrame,
+            previewDurationFrames: current.initialStartFrame + current.initialDurationFrames - nextStartFrame,
+          };
+        }
+
+        const currentEndFrame = current.initialStartFrame + current.initialDurationFrames;
+        const nextEndFrame = clampFrame(
+          currentEndFrame + deltaFrames,
+          current.minEndFrame,
+          current.maxEndFrame,
+        );
+        return {
+          ...current,
+          previewStartFrame: current.initialStartFrame,
+          previewDurationFrames: nextEndFrame - current.initialStartFrame,
+        };
+      });
+    };
+
+    const handleMouseUp = () => {
+      setCelInteraction((current) => {
+        if (!current) {
+          return current;
+        }
+
+        if (
+          current.previewStartFrame !== current.initialStartFrame ||
+          current.previewDurationFrames !== current.initialDurationFrames
+        ) {
+          onUpdateCelSpan(
+            current.trackId,
+            current.celId,
+            current.previewStartFrame,
+            current.previewDurationFrames,
+          );
+        }
+        return null;
+      });
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp, { once: true });
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [celInteraction, onUpdateCelSpan]);
+
+  const closeTrackContextMenu = () => {
+    setTrackContextMenu(null);
+  };
+
+  const closeCelContextMenu = () => {
+    setCelContextMenu(null);
+  };
+
+  const startInlineRename = (trackId: string, currentName: string) => {
+    onSelectTrack(trackId);
+    setEditingTrackId(trackId);
+    setRenameDraft(currentName);
+  };
+
+  const commitInlineRename = (trackId: string) => {
+    const track = clip.tracks.find((candidate) => candidate.id === trackId);
+    if (!track) {
+      setEditingTrackId(null);
+      setRenameDraft('');
+      return;
+    }
+
+    if (renameDraft !== track.name) {
+      onRenameTrack(trackId, renameDraft);
+    }
+
+    setEditingTrackId(null);
+    setRenameDraft('');
+  };
+
+  const cancelInlineRename = () => {
+    setEditingTrackId(null);
+    setRenameDraft('');
+  };
+
+  const commitTrackContextMenuOpacity = (nextDraft = trackContextMenuOpacityDraft) => {
+    if (!trackContextMenuTrack) {
+      return;
+    }
+
+    const clampedDraft = clampOpacityPercent(nextDraft);
+    if (clampedDraft !== trackContextMenuOpacityDraft) {
+      setTrackContextMenuOpacityDraft(clampedDraft);
+    }
+
+    if (clampOpacityPercent(trackContextMenuTrack.opacity * 100) === clampedDraft) {
+      return;
+    }
+
+    onOpacityChange(trackContextMenuTrack.id, clampedDraft / 100);
+  };
+
+  const clearTrackDragState = () => {
+    setDraggedTrackId(null);
+    setDropIndicatorIndex(null);
+  };
+
+  const handleTrackDragStart = (event: ReactDragEvent<HTMLDivElement>, trackId: string) => {
+    setDraggedTrackId(trackId);
+    setDropIndicatorIndex(null);
+    onSelectTrack(trackId);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', trackId);
+  };
+
+  const handleTrackDragOver = (event: ReactDragEvent<HTMLDivElement>, displayIndex: number) => {
+    if (!draggedTrackId) {
+      return;
+    }
+
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const before = event.clientY < rect.top + rect.height / 2;
+    setDropIndicatorIndex(before ? displayIndex : displayIndex + 1);
+    event.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleTrackDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const sourceTrackId = draggedTrackId ?? event.dataTransfer.getData('text/plain');
+    if (!sourceTrackId || dropIndicatorIndex === null) {
+      clearTrackDragState();
+      return;
+    }
+
+    const sourceDisplayIndex = clip.tracks.findIndex((track) => track.id === sourceTrackId);
+    if (sourceDisplayIndex < 0) {
+      clearTrackDragState();
+      return;
+    }
+
+    const finalDisplayIndex = dropIndicatorIndex > sourceDisplayIndex
+      ? dropIndicatorIndex - 1
+      : dropIndicatorIndex;
+    const targetIndex = Math.max(0, Math.min(finalDisplayIndex, clip.tracks.length - 1));
+
+    if (targetIndex !== sourceDisplayIndex) {
+      onReorderTrack(sourceTrackId, targetIndex);
+    }
+
+    clearTrackDragState();
+  };
+
+  const handleTrackKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>, trackId: string) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onSelectTrack(trackId);
+    }
+  };
+
+  const handleTrackContextMenu = (event: ReactMouseEvent<HTMLDivElement>, trackId: string) => {
+    event.preventDefault();
+    onSelectTrack(trackId);
+    setCelContextMenu(null);
+    setTrackContextMenu({
+      trackId,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
+
+  const beginCelInteraction = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    trackId: string,
+    cel: AnimatedCostumeCel,
+    mode: CelInteractionState['mode'],
+    previousEndFrame: number,
+    nextStartFrame: number,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setTrackContextMenu(null);
+    setCelContextMenu(null);
+    onSelectTrack(trackId);
+    onFrameSelect(cel.startFrame);
+
+    setCelInteraction({
+      trackId,
+      celId: cel.id,
+      mode,
+      initialClientX: event.clientX,
+      initialStartFrame: cel.startFrame,
+      initialDurationFrames: cel.durationFrames,
+      minStartFrame: previousEndFrame,
+      maxStartFrame: mode === 'move'
+        ? Math.max(previousEndFrame, nextStartFrame - cel.durationFrames)
+        : Math.max(previousEndFrame, cel.startFrame + cel.durationFrames - 1),
+      minEndFrame: cel.startFrame + 1,
+      maxEndFrame: nextStartFrame,
+      previewStartFrame: cel.startFrame,
+      previewDurationFrames: cel.durationFrames,
+    });
+  };
+
+  const handleCelContextMenu = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    trackId: string,
+    celId: string,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onSelectTrack(trackId);
+    setTrackContextMenu(null);
+    setCelContextMenu({
+      trackId,
+      celId,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
+
   return (
-    <div className="border-t border-border/70 bg-background/95">
-      <div className="flex flex-wrap items-center gap-3 border-b border-border/60 px-3 py-2 text-xs">
-        <label className="flex items-center gap-2">
-          <span className="text-muted-foreground">Frames</span>
-          <input
-            type="number"
-            min={1}
-            value={clip.totalFrames}
-            onChange={(event) => onChangeTotalFrames(Number(event.target.value))}
-            className="h-7 w-16 rounded border border-input bg-background px-2 text-xs"
-          />
-        </label>
-        <label className="flex items-center gap-2">
-          <span className="text-muted-foreground">FPS</span>
-          <input
-            type="number"
-            min={1}
-            value={clip.fps}
-            onChange={(event) => onChangeFps(Number(event.target.value))}
-            className="h-7 w-16 rounded border border-input bg-background px-2 text-xs"
-          />
-        </label>
-        <label className="flex items-center gap-2">
-          <span className="text-muted-foreground">Playback</span>
-          <select
-            value={clip.playback}
-            onChange={(event) => onChangePlayback(event.target.value as AnimatedCostumeClip['playback'])}
-            className="h-7 rounded border border-input bg-background px-2 text-xs"
-          >
-            <option value="play-once">Play Once</option>
-            <option value="loop">Loop</option>
-            <option value="ping-pong">Ping-Pong</option>
-          </select>
-        </label>
-        <button
-          type="button"
-          onClick={onAddBitmapTrack}
-          className="rounded border border-input px-2 py-1 text-xs text-foreground transition hover:bg-accent"
-        >
-          + Bitmap Track
-        </button>
-        <button
-          type="button"
-          onClick={onAddVectorTrack}
-          className="rounded border border-input px-2 py-1 text-xs text-foreground transition hover:bg-accent"
-        >
-          + Vector Track
-        </button>
-      </div>
-
-      <div className="overflow-auto px-3 py-3">
-        <div className="min-w-max">
-          <div className="mb-2 flex items-center gap-1 pl-[230px]">
-            {Array.from({ length: clip.totalFrames }, (_, frameIndex) => (
-              <button
-                key={`frame-header-${frameIndex}`}
-                type="button"
-                onClick={() => onFrameSelect(frameIndex)}
-                className={`flex h-8 w-8 items-center justify-center rounded text-[11px] ${
-                  frameIndex === currentFrameIndex
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted/60 text-muted-foreground hover:bg-accent'
-                }`}
-              >
-                {frameIndex + 1}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-col gap-2">
-            {clip.tracks.map((track, trackIndex) => {
-              const currentCel = getAnimatedCostumeTrackCelAtFrame(track, currentFrameIndex);
-              return (
-                <div
-                  key={track.id}
-                  className={`rounded-lg border p-2 ${
-                    track.id === clip.activeTrackId
-                      ? 'border-primary/60 bg-primary/5'
-                      : 'border-border/60 bg-card'
-                  }`}
+    <>
+      <div className="border-t border-border/70 bg-background/95">
+        <div className="flex flex-wrap items-center gap-3 border-b border-border/60 px-3 py-2 text-xs">
+          <div className="relative flex justify-center group/track-add">
+            {canAddTrack ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <IconButton
+                    className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-surface-interactive hover:text-foreground"
+                    label="Add track"
+                    size="sm"
+                  >
+                    <Plus className="size-3.5" />
+                  </IconButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="bottom" align="start" sideOffset={8} className="min-w-36 rounded-xl">
+                  <DropdownMenuItem onClick={onAddVectorTrack}>
+                    <Shapes className="size-4" />
+                    Vector
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onAddBitmapTrack}>
+                    <Image className="size-4" />
+                    Pixel
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <>
+                <IconButton
+                  disabled
+                  className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/track-add:bg-surface-interactive"
+                  label="Add track"
+                  size="sm"
+                  title={maxTrackTooltip}
                 >
-                  <div className="flex gap-3">
-                    <div className="w-[220px] shrink-0">
-                      <div className="mb-2 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onSelectTrack(track.id)}
-                          className={`rounded px-2 py-1 text-xs ${
-                            track.id === clip.activeTrackId
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-muted text-foreground'
-                          }`}
-                        >
-                          {track.kind}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onReorderTrack(track.id, Math.max(0, trackIndex - 1))}
-                          disabled={trackIndex === 0}
-                          className="rounded border border-input px-2 py-1 text-xs disabled:opacity-40"
-                        >
-                          Up
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onReorderTrack(track.id, Math.min(clip.tracks.length - 1, trackIndex + 1))}
-                          disabled={trackIndex === clip.tracks.length - 1}
-                          className="rounded border border-input px-2 py-1 text-xs disabled:opacity-40"
-                        >
-                          Down
-                        </button>
-                      </div>
-
-                      <input
-                        type="text"
-                        value={track.name}
-                        onChange={(event) => onRenameTrack(track.id, event.target.value)}
-                        className="mb-2 h-8 w-full rounded border border-input bg-background px-2 text-sm"
-                      />
-
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <button
-                          type="button"
-                          onClick={() => onToggleVisibility(track.id)}
-                          className="rounded border border-input px-2 py-1"
-                        >
-                          {track.visible ? 'Visible' : 'Hidden'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onToggleLocked(track.id)}
-                          className="rounded border border-input px-2 py-1"
-                        >
-                          {track.locked ? 'Locked' : 'Unlocked'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDuplicateTrack(track.id)}
-                          className="rounded border border-input px-2 py-1"
-                        >
-                          Duplicate
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteTrack(track.id)}
-                          className="rounded border border-destructive/40 px-2 py-1 text-destructive"
-                        >
-                          Delete
-                        </button>
-                      </div>
-
-                      <label className="mt-2 flex items-center gap-2 text-xs">
-                        <span className="text-muted-foreground">Opacity</span>
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={track.opacity}
-                          onChange={(event) => onOpacityChange(track.id, Number(event.target.value))}
-                          className="flex-1"
-                        />
-                      </label>
-
-                      {currentCel ? (
-                        <div className="mt-3 rounded border border-border/60 bg-muted/40 p-2 text-xs">
-                          <div className="font-medium">Current Cel</div>
-                          <div className="mt-1 text-muted-foreground">
-                            Starts at frame {currentCel.startFrame + 1}
-                          </div>
-                          <label className="mt-2 flex items-center gap-2">
-                            <span className="text-muted-foreground">Duration</span>
-                            <input
-                              type="number"
-                              min={1}
-                              value={currentCel.durationFrames}
-                              onChange={(event) => onChangeCelDuration(track.id, currentCel.id, Number(event.target.value))}
-                              className="h-7 w-16 rounded border border-input bg-background px-2 text-xs"
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => onDeleteCel(track.id, currentCel.id)}
-                            className="mt-2 rounded border border-destructive/40 px-2 py-1 text-destructive"
-                          >
-                            Delete Cel
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="mt-3 rounded border border-dashed border-border/60 px-2 py-2 text-xs text-muted-foreground">
-                          No cel on the selected frame yet. Paint on this frame to create one.
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex min-w-max items-center gap-1">
-                      {Array.from({ length: clip.totalFrames }, (_, frameIndex) => {
-                        const cel = getAnimatedCostumeTrackCelAtFrame(track, frameIndex);
-                        const isCelStart = !!cel && cel.startFrame === frameIndex;
-                        const isCurrentFrame = frameIndex === currentFrameIndex;
-                        return (
-                          <button
-                            key={`${track.id}-${frameIndex}`}
-                            type="button"
-                            onClick={() => {
-                              onSelectTrack(track.id);
-                              onFrameSelect(frameIndex);
-                            }}
-                            className={`relative flex h-8 w-8 items-center justify-center rounded border text-[11px] ${
-                              isCurrentFrame
-                                ? 'border-primary bg-primary text-primary-foreground'
-                                : cel
-                                  ? (isCelStart ? 'border-emerald-500 bg-emerald-100 text-emerald-900' : 'border-emerald-200 bg-emerald-50 text-emerald-700')
-                                  : 'border-border/60 bg-background text-muted-foreground hover:bg-accent'
-                            }`}
-                            title={cel ? `${track.name}: cel ${cel.startFrame + 1}-${cel.startFrame + cel.durationFrames}` : `${track.name}: empty frame`}
-                          >
-                            {cel ? (isCelStart ? '●' : '•') : ''}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <Plus className="size-3.5" />
+                </IconButton>
+                <div
+                  role="tooltip"
+                  className="pointer-events-none absolute left-[calc(100%+0.75rem)] top-1/2 min-w-max -translate-y-1/2 rounded-xl border border-border/70 bg-surface-floating px-3 py-2 text-xs text-foreground opacity-0 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)] transition-opacity group-hover/track-add:opacity-100"
+                >
+                  {maxTrackTooltip}
                 </div>
-              );
-            })}
+              </>
+            )}
+          </div>
+          <label className="flex items-center gap-2">
+            <span className="text-muted-foreground">Frames</span>
+            <input
+              type="number"
+              min={1}
+              value={clip.totalFrames}
+              onChange={(event) => onChangeTotalFrames(Number(event.target.value))}
+              className="h-7 w-16 rounded border border-input bg-background px-2 text-xs"
+            />
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="text-muted-foreground">FPS</span>
+            <input
+              type="number"
+              min={1}
+              value={clip.fps}
+              onChange={(event) => onChangeFps(Number(event.target.value))}
+              className="h-7 w-16 rounded border border-input bg-background px-2 text-xs"
+            />
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="text-muted-foreground">Playback</span>
+            <select
+              value={clip.playback}
+              onChange={(event) => onChangePlayback(event.target.value as AnimatedCostumeClip['playback'])}
+              className="h-7 rounded border border-input bg-background px-2 text-xs"
+            >
+              <option value="play-once">Play Once</option>
+              <option value="loop">Loop</option>
+              <option value="ping-pong">Ping-Pong</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="overflow-auto px-3 py-3">
+          <div className="min-w-max">
+            <div className="mb-2 flex items-center gap-1" style={{ paddingLeft: TIMELINE_TRACK_HEADER_WIDTH + 12 }}>
+              {Array.from({ length: clip.totalFrames }, (_, frameIndex) => (
+                <button
+                  key={`frame-header-${frameIndex}`}
+                  type="button"
+                  onClick={() => onFrameSelect(frameIndex)}
+                  className={cn(
+                    'flex h-8 items-center justify-center rounded text-[11px]',
+                    frameIndex === currentFrameIndex
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted/60 text-muted-foreground hover:bg-accent',
+                  )}
+                  style={{ width: TIMELINE_FRAME_WIDTH }}
+                >
+                  {frameIndex + 1}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {clip.tracks.map((track, trackIndex) => {
+                const isActive = track.id === clip.activeTrackId;
+                const isEditing = editingTrackId === track.id;
+                const isDragged = draggedTrackId === track.id;
+
+                return (
+                  <div key={`${track.id}:${trackIndex}`} className="relative w-full">
+                    {dropIndicatorIndex === trackIndex ? (
+                      <div className="pointer-events-none absolute inset-x-0 -top-1 z-20 h-0 border-t-2 border-primary" />
+                    ) : null}
+
+                    <div className="rounded-lg border border-border/60 bg-card p-2">
+                      <div className="flex gap-3">
+                        <div className="shrink-0" style={{ width: TIMELINE_TRACK_HEADER_WIDTH }}>
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`${track.name} ${track.kind}`}
+                            aria-pressed={isActive}
+                            draggable={!isEditing}
+                            onClick={() => onSelectTrack(track.id)}
+                            onKeyDown={(event) => handleTrackKeyDown(event, track.id)}
+                            onContextMenu={(event) => handleTrackContextMenu(event, track.id)}
+                            onDragStart={(event) => handleTrackDragStart(event, track.id)}
+                            onDragOver={(event) => handleTrackDragOver(event, trackIndex)}
+                            onDrop={handleTrackDrop}
+                            onDragEnd={clearTrackDragState}
+                            className={cn(
+                              'group/track-row relative flex w-full items-center gap-3 rounded-[14px] text-left outline-none',
+                              isDragged && 'opacity-45',
+                            )}
+                          >
+                            {!isActive ? (
+                              <div
+                                aria-hidden="true"
+                                className={cn(
+                                  'pointer-events-none absolute inset-0 rounded-[14px] opacity-0 transition-opacity group-hover/track-row:opacity-100',
+                                  selectionSurfaceClassNames.hover,
+                                )}
+                              />
+                            ) : null}
+
+                            <div
+                              aria-hidden="true"
+                              className={cn(
+                                'pointer-events-none absolute inset-0 rounded-[14px] transition-opacity',
+                                selectionSurfaceClassNames.selected,
+                                isActive ? 'opacity-100' : 'opacity-0',
+                              )}
+                            />
+
+                            <div className="relative z-10 flex min-w-0 flex-1 items-center gap-1.5 px-2 py-2">
+                              <span className="inline-flex shrink-0 text-muted-foreground">
+                                <TrackKindIcon kind={track.kind} />
+                              </span>
+
+                              <InlineRenameField
+                                editing={isEditing}
+                                value={isEditing ? renameDraft : track.name}
+                                onChange={(event) => setRenameDraft(event.target.value)}
+                                onBlur={() => commitInlineRename(track.id)}
+                                onClick={(event) => event.stopPropagation()}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onKeyDown={(event) => {
+                                  event.stopPropagation();
+                                  if (event.key === 'Enter') {
+                                    event.preventDefault();
+                                    commitInlineRename(track.id);
+                                  }
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault();
+                                    cancelInlineRename();
+                                  }
+                                }}
+                                autoFocus={isEditing}
+                                className="min-w-0 flex-1"
+                                textClassName="min-w-0 truncate text-sm font-medium leading-5"
+                                displayProps={{
+                                  onDoubleClick: (event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    startInlineRename(track.id, track.name);
+                                  },
+                                }}
+                              />
+
+                              <IconButton
+                                label={track.visible ? 'Hide track' : 'Show track'}
+                                shape="pill"
+                                size="sm"
+                                className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onToggleVisibility(track.id);
+                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
+                              >
+                                {track.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+                              </IconButton>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div
+                          className="relative h-10 select-none"
+                          style={{ width: clip.totalFrames * TIMELINE_FRAME_WIDTH }}
+                        >
+                          <div className="absolute inset-0 flex">
+                            {Array.from({ length: clip.totalFrames }, (_, frameIndex) => (
+                              <button
+                                key={`${track.id}-frame-${frameIndex}`}
+                                type="button"
+                                onClick={() => {
+                                  onSelectTrack(track.id);
+                                  onFrameSelect(frameIndex);
+                                }}
+                                className={cn(
+                                  'h-full border border-border/50 bg-background/60 transition-colors hover:bg-accent/70',
+                                  frameIndex === currentFrameIndex && 'bg-primary/10 ring-1 ring-inset ring-primary/70',
+                                )}
+                                style={{ width: TIMELINE_FRAME_WIDTH }}
+                              />
+                            ))}
+                          </div>
+
+                          {track.cels.map((cel, celIndex) => {
+                            const displayedCel = getDisplayedCelSpan(cel, celInteraction?.trackId === track.id ? celInteraction : null);
+                            const previousEndFrame = celIndex > 0
+                              ? track.cels[celIndex - 1].startFrame + track.cels[celIndex - 1].durationFrames
+                              : 0;
+                            const nextStartFrame = track.cels[celIndex + 1]?.startFrame ?? clip.totalFrames;
+                            const spansCurrentFrame = currentFrameIndex >= displayedCel.startFrame
+                              && currentFrameIndex < displayedCel.startFrame + displayedCel.durationFrames;
+
+                            return (
+                              <div
+                                key={`${cel.id}:${celIndex}`}
+                                className={cn(
+                                  'absolute inset-y-1 rounded-md border shadow-sm transition-[background-color,border-color,box-shadow]',
+                                  spansCurrentFrame
+                                    ? 'border-primary bg-primary/20 shadow-[0_0_0_1px_rgba(59,130,246,0.18)]'
+                                    : 'border-emerald-500/70 bg-emerald-100/90 hover:bg-emerald-100',
+                                  celInteraction?.celId === cel.id && 'z-20 shadow-md',
+                                )}
+                                style={{
+                                  left: displayedCel.startFrame * TIMELINE_FRAME_WIDTH,
+                                  width: displayedCel.durationFrames * TIMELINE_FRAME_WIDTH,
+                                }}
+                                onContextMenu={(event) => handleCelContextMenu(event, track.id, cel.id)}
+                              >
+                                <div
+                                  className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-md bg-emerald-500/20 hover:bg-emerald-500/35"
+                                  onMouseDown={(event) => beginCelInteraction(
+                                    event,
+                                    track.id,
+                                    cel,
+                                    'resize-start',
+                                    previousEndFrame,
+                                    nextStartFrame,
+                                  )}
+                                />
+                                <div
+                                  className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-md bg-emerald-500/20 hover:bg-emerald-500/35"
+                                  onMouseDown={(event) => beginCelInteraction(
+                                    event,
+                                    track.id,
+                                    cel,
+                                    'resize-end',
+                                    previousEndFrame,
+                                    nextStartFrame,
+                                  )}
+                                />
+                                <div
+                                  className="flex h-full cursor-grab items-center justify-center overflow-hidden rounded-md px-2 active:cursor-grabbing"
+                                  onMouseDown={(event) => beginCelInteraction(
+                                    event,
+                                    track.id,
+                                    cel,
+                                    'move',
+                                    previousEndFrame,
+                                    nextStartFrame,
+                                  )}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {dropIndicatorIndex === clip.tracks.length && trackIndex === clip.tracks.length - 1 ? (
+                      <div className="pointer-events-none absolute inset-x-0 -bottom-1 z-20 h-0 border-t-2 border-primary" />
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {trackContextMenuTrack ? (
+        <>
+          <div
+            className="fixed inset-0"
+            style={{ zIndex: EDITOR_POPOVER_Z_INDEX - 1 }}
+            onClick={closeTrackContextMenu}
+          />
+          <Card
+            ref={trackContextMenuRef}
+            className="fixed min-w-56 gap-0 rounded-2xl border-border/80 bg-surface-floating px-0 py-1.5 shadow-[0_28px_80px_-34px_rgba(2,6,23,0.78)]"
+            style={{
+              left: trackContextMenuPosition?.left ?? trackContextMenu?.x ?? 0,
+              top: trackContextMenuPosition?.top ?? trackContextMenu?.y ?? 0,
+              zIndex: EDITOR_POPOVER_Z_INDEX,
+            }}
+          >
+            <div className="px-3 py-2">
+              <div className="mb-2 flex items-center justify-between text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+                <span>Opacity</span>
+                <span>{trackContextMenuOpacityDraft}%</span>
+              </div>
+              <input
+                aria-label="Track opacity"
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={trackContextMenuOpacityDraft}
+                onChange={(event) => setTrackContextMenuOpacityDraft(clampOpacityPercent(Number(event.target.value)))}
+                onPointerUp={(event) => commitTrackContextMenuOpacity(Number(event.currentTarget.value))}
+                onKeyUp={(event) => commitTrackContextMenuOpacity(Number(event.currentTarget.value))}
+                onBlur={(event) => commitTrackContextMenuOpacity(Number(event.currentTarget.value))}
+                className="w-full accent-primary"
+              />
+            </div>
+
+            <MenuSeparator />
+
+            <MenuItemButton
+              icon={<Copy className="size-4" />}
+              onClick={() => {
+                onDuplicateTrack(trackContextMenuTrack.id);
+                closeTrackContextMenu();
+              }}
+            >
+              Duplicate
+            </MenuItemButton>
+
+            <MenuItemButton
+              icon={trackContextMenuTrack.locked ? <LockOpen className="size-4" /> : <Lock className="size-4" />}
+              onClick={() => {
+                onToggleLocked(trackContextMenuTrack.id);
+                closeTrackContextMenu();
+              }}
+            >
+              {trackContextMenuTrack.locked ? 'Unlock' : 'Lock'}
+            </MenuItemButton>
+
+            <MenuItemButton
+              icon={<Trash2 className="size-4" />}
+              intent="destructive"
+              onClick={() => {
+                onDeleteTrack(trackContextMenuTrack.id);
+                closeTrackContextMenu();
+              }}
+              disabled={clip.tracks.length <= 1}
+            >
+              Delete
+            </MenuItemButton>
+          </Card>
+        </>
+      ) : null}
+
+      {celContextMenu && celContextMenuTrack && celContextMenuCel ? (
+        <>
+          <div
+            className="fixed inset-0"
+            style={{ zIndex: EDITOR_POPOVER_Z_INDEX - 1 }}
+            onClick={closeCelContextMenu}
+          />
+          <Card
+            ref={celContextMenuRef}
+            className="fixed min-w-44 gap-0 rounded-2xl border-border/80 bg-surface-floating px-0 py-1.5 shadow-[0_28px_80px_-34px_rgba(2,6,23,0.78)]"
+            style={{
+              left: celContextMenuPosition?.left ?? celContextMenu.x,
+              top: celContextMenuPosition?.top ?? celContextMenu.y,
+              zIndex: EDITOR_POPOVER_Z_INDEX,
+            }}
+          >
+            <MenuItemButton
+              icon={<Trash2 className="size-4" />}
+              intent="destructive"
+              onClick={() => {
+                onDeleteCel(celContextMenuTrack.id, celContextMenuCel.id);
+                closeCelContextMenu();
+              }}
+              disabled={celContextMenuTrack.cels.length <= 1}
+            >
+              Delete Cel
+            </MenuItemButton>
+          </Card>
+        </>
+      ) : null}
+    </>
   );
 }
