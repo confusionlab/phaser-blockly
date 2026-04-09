@@ -188,6 +188,50 @@ class PreservingFieldDropdown extends Blockly.FieldDropdown {
   }
 }
 
+class PreservingCostumeFieldDropdown extends Blockly.FieldDropdown {
+  protected override doClassValidation_(newValue?: any): string | null {
+    if (newValue === null || newValue === undefined) {
+      return null;
+    }
+    return String(newValue);
+  }
+
+  override getText(): string {
+    const value = this.getValue();
+    const options = this.getOptions(false);
+
+    for (const option of options) {
+      if (option === Blockly.FieldDropdown.SEPARATOR) {
+        continue;
+      }
+
+      const [displayValue, optionValue] = option;
+      if (optionValue !== value) {
+        continue;
+      }
+
+      if (typeof displayValue === 'string') {
+        return displayValue;
+      }
+
+      if ('alt' in displayValue) {
+        return displayValue.alt;
+      }
+
+      if (typeof HTMLElement !== 'undefined' && displayValue instanceof HTMLElement) {
+        return displayValue.title || displayValue.ariaLabel || displayValue.innerText || '';
+      }
+    }
+
+    const selectedEntry = getCostumeDropdownEntryById(value);
+    if (selectedEntry) {
+      return selectedEntry.label;
+    }
+
+    return '(select costume)';
+  }
+}
+
 // Custom FieldDropdown for variables that preserves unknown values
 class VariableFieldDropdown extends Blockly.FieldDropdown {
   // Override doClassValidation_ to accept any value
@@ -335,6 +379,72 @@ type BlocklyInlineIconOptions = {
   size?: number;
 };
 
+function getAnimatedCostumeIconDataUri(
+  color = BLOCKLY_INLINE_ICON_DEFAULT_TEXT,
+  size = BLOCKLY_COSTUME_KIND_ICON_SIZE,
+): string {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 16 16" fill="none">
+      <circle cx="5.25" cy="10.25" r="2.75" stroke="${color}" stroke-width="1.5" />
+      <circle cx="8" cy="8" r="2.75" stroke="${color}" stroke-width="1.5" />
+      <circle cx="10.75" cy="5.75" r="2.75" stroke="${color}" stroke-width="1.5" />
+    </svg>
+  `.trim();
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+function createAnimatedCostumeOptionIcon(size = BLOCKLY_COSTUME_KIND_ICON_SIZE): SVGSVGElement | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNs, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.style.flex = 'none';
+
+  for (const [cx, cy] of [['5.25', '10.25'], ['8', '8'], ['10.75', '5.75']] as const) {
+    const circle = document.createElementNS(svgNs, 'circle');
+    circle.setAttribute('cx', cx);
+    circle.setAttribute('cy', cy);
+    circle.setAttribute('r', '2.75');
+    circle.setAttribute('stroke', 'currentColor');
+    circle.setAttribute('stroke-width', '1.5');
+    svg.appendChild(circle);
+  }
+
+  return svg;
+}
+
+function createCostumeDropdownLabelElement(entry: CostumeDropdownEntry): HTMLElement | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  const container = document.createElement('span');
+  container.title = entry.label;
+  container.setAttribute('aria-label', entry.label);
+  container.style.display = 'inline-flex';
+  container.style.alignItems = 'center';
+  container.style.gap = '6px';
+
+  if (entry.kind === 'animated') {
+    const icon = createAnimatedCostumeOptionIcon();
+    if (icon) {
+      container.appendChild(icon);
+    }
+  }
+
+  const text = document.createElement('span');
+  text.textContent = entry.label;
+  container.appendChild(text);
+  return container;
+}
+
 function getBlockSvgRoot(block: Blockly.Block | null | undefined): SVGElement | null {
   if (!block) return null;
   const maybeSvgBlock = block as Blockly.Block & { getSvgRoot?: () => SVGElement | null };
@@ -425,6 +535,60 @@ function appendBlocklyInlineIcon(
   options: BlocklyInlineIconOptions = {},
 ): Blockly.Input {
   return input.appendField(createBlocklyInlineIcon(iconName, altText, options), fieldName);
+}
+
+class BlocklyAnimatedCostumeIconField extends Blockly.FieldImage {
+  private readonly iconSize: number;
+  private animated = false;
+
+  constructor(size = BLOCKLY_COSTUME_KIND_ICON_SIZE) {
+    super(getAnimatedCostumeIconDataUri(BLOCKLY_INLINE_ICON_DEFAULT_TEXT, size), size, size, 'animated costume');
+    this.iconSize = size;
+  }
+
+  override initView(): void {
+    super.initView();
+    this.setVisible(this.animated);
+    this.syncIconColour();
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => this.syncIconColour());
+    }
+  }
+
+  override applyColour(): void {
+    super.applyColour();
+    this.syncIconColour();
+  }
+
+  protected override render_(): void {
+    super.render_();
+    this.syncIconColour();
+  }
+
+  setAnimated(animated: boolean): boolean {
+    const changed = this.animated !== animated;
+    this.animated = animated;
+    this.setVisible(animated);
+    this.syncIconColour();
+    return changed;
+  }
+
+  private syncIconColour(): void {
+    if (!this.animated) {
+      return;
+    }
+
+    const sourceBlock = this.getSourceBlock();
+    if (!sourceBlock) {
+      return;
+    }
+
+    const color = getBlocklyInlineIconTextColor(sourceBlock);
+    const nextValue = getAnimatedCostumeIconDataUri(color, this.iconSize);
+    if (this.getValue() !== nextValue) {
+      this.setValue(nextValue);
+    }
+  }
 }
 
 function syncGroupBlockToggleIcon(block: Blockly.Block): void {
@@ -666,7 +830,7 @@ function getSoundDropdownOptions(): Array<[string, string]> {
   return sounds.map(sound => [sound.name, sound.id]);
 }
 
-function getCurrentTargetCostumes(): Array<{ id: string; name: string; kind?: string; clip?: { playback?: string } }> {
+function getCurrentTargetCostumes(): Costume[] {
   const project = useProjectStore.getState().project;
   const selectedSceneId = useEditorStore.getState().selectedSceneId;
   const selectedObjectId = useEditorStore.getState().selectedObjectId;
@@ -697,12 +861,13 @@ function getCurrentTargetCostumes(): Array<{ id: string; name: string; kind?: st
   return [];
 }
 
-function getCostumeDropdownOptions(): Array<[string, string]> {
-  const costumes = getCurrentTargetCostumes();
-  if (costumes.length === 0) {
-    return [['(no costumes)', '']];
-  }
+type CostumeDropdownEntry = {
+  id: string;
+  kind: Costume['kind'];
+  label: string;
+};
 
+function buildCostumeDropdownEntries(costumes: readonly Costume[]): CostumeDropdownEntry[] {
   const nameCounts = new Map<string, number>();
   for (const costume of costumes) {
     nameCounts.set(costume.name, (nameCounts.get(costume.name) || 0) + 1);
@@ -712,12 +877,42 @@ function getCostumeDropdownOptions(): Array<[string, string]> {
   return costumes.map((costume) => {
     const duplicateCount = nameCounts.get(costume.name) || 0;
     if (duplicateCount <= 1) {
-      return [costume.name, costume.id];
+      return {
+        id: costume.id,
+        kind: costume.kind,
+        label: costume.name,
+      };
     }
+
     const nextIndex = (seenCounts.get(costume.name) || 0) + 1;
     seenCounts.set(costume.name, nextIndex);
-    return [`${costume.name} (${nextIndex})`, costume.id];
+    return {
+      id: costume.id,
+      kind: costume.kind,
+      label: `${costume.name} (${nextIndex})`,
+    };
   });
+}
+
+function getCostumeDropdownEntries(): CostumeDropdownEntry[] {
+  return buildCostumeDropdownEntries(getCurrentTargetCostumes());
+}
+
+function getCostumeDropdownOptions(): Array<[string | HTMLElement, string]> {
+  const costumeEntries = getCostumeDropdownEntries();
+  if (costumeEntries.length === 0) {
+    return [['(no costumes)', '']];
+  }
+
+  return costumeEntries.map((entry) => [createCostumeDropdownLabelElement(entry) ?? entry.label, entry.id]);
+}
+
+function getCostumeDropdownEntryById(costumeId: string | null | undefined): CostumeDropdownEntry | null {
+  if (!costumeId) {
+    return null;
+  }
+
+  return getCostumeDropdownEntries().find((entry) => entry.id === costumeId) ?? null;
 }
 
 function getCostumeById(costumeId: string | null | undefined) {
@@ -745,15 +940,37 @@ function shouldShowSwitchCostumeWaitInput(block: Blockly.Block): boolean {
   return !!costume && costume.kind === 'animated' && costume.clip?.playback === 'play-once';
 }
 
-function syncSwitchCostumeWaitInput(block: Blockly.Block): void {
+export function syncCostumeLiteralFieldAppearance(block: Blockly.Block): void {
+  if (block.type !== 'looks_costume_literal') {
+    return;
+  }
+
+  const iconField = block.getField('COSTUME_KIND_ICON');
+  if (!(iconField instanceof BlocklyAnimatedCostumeIconField)) {
+    return;
+  }
+
+  const selectedEntry = getCostumeDropdownEntryById(block.getFieldValue('COSTUME'));
+  const changed = iconField.setAnimated(selectedEntry?.kind === 'animated');
+  if (changed && block.rendered && block instanceof Blockly.BlockSvg) {
+    block.render();
+  }
+}
+
+export function syncSwitchCostumeWaitInput(block: Blockly.Block): void {
   const inputName = 'WAIT_INPUT';
   const shouldShow = shouldShowSwitchCostumeWaitInput(block);
   const existingInput = block.getInput(inputName);
+  let changed = false;
 
   if (!shouldShow) {
     if (existingInput) {
       writeSwitchCostumeWaitPreference(block, block.getFieldValue('WAIT_UNTIL_COMPLETE') === 'TRUE');
       block.removeInput(inputName, true);
+      changed = true;
+    }
+    if (changed && block.rendered && block instanceof Blockly.BlockSvg) {
+      block.render();
     }
     return;
   }
@@ -776,6 +993,11 @@ function syncSwitchCostumeWaitInput(block: Blockly.Block): void {
     block.moveInputBefore(inputName, null);
   }
   waitInput.setAlign(Blockly.inputs.Align.RIGHT);
+  changed = true;
+
+  if (changed && block.rendered && block instanceof Blockly.BlockSvg) {
+    block.render();
+  }
 }
 
 function getTouchDirectionOptions(): Array<[string, string]> {
@@ -2386,12 +2608,26 @@ function registerCustomBlocks() {
   Blockly.Blocks['looks_costume_literal'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('costume')
-        .appendField(new PreservingFieldDropdown(getCostumeDropdownOptions), 'COSTUME');
+        .appendField(new BlocklyAnimatedCostumeIconField(), 'COSTUME_KIND_ICON')
+        .appendField(new PreservingCostumeFieldDropdown(getCostumeDropdownOptions), 'COSTUME');
       this.setOutput(true, 'String');
       this.setColour(BLOCK_COLOURS.looks);
       this.setTooltip('Costume literal from the current object or component');
-    }
+      syncCostumeLiteralFieldAppearance(this);
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (!event) {
+        return;
+      }
+      if (
+        event.type !== Blockly.Events.BLOCK_CREATE &&
+        event.type !== Blockly.Events.BLOCK_CHANGE &&
+        event.type !== Blockly.Events.BLOCK_MOVE
+      ) {
+        return;
+      }
+      syncCostumeLiteralFieldAppearance(this);
+    },
   };
 
   Blockly.Blocks['looks_costume_number'] = {

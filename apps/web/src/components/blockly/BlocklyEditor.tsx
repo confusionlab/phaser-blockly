@@ -18,6 +18,8 @@ import {
   setCreateVariablesCallback,
   setEditMessagesToolbarCallback,
   setEditVariablesCallback,
+  syncCostumeLiteralFieldAppearance,
+  syncSwitchCostumeWaitInput,
   setTypedVariableLoading,
   updateVariableBlockAppearance,
 } from './toolbox';
@@ -537,6 +539,9 @@ export function BlocklyEditor() {
     ?? (selectedObject?.componentId
       ? (project?.components || []).find((component) => component.id === selectedObject.componentId)
       : undefined);
+  const costumeDropdownStamp = (selectedLogicComponent?.costumes ?? selectedObject?.costumes ?? [])
+    .map((costume, index) => `${index}:${costume.id}:${costume.name}:${costume.kind}:${costume.kind === 'animated' ? costume.clip.playback : ''}`)
+    .join('|');
   const selectedBlocklyXml = selectedLogicComponent?.blocklyXml || selectedObject?.blocklyXml || '';
 
   // Keep refs in sync
@@ -1244,6 +1249,26 @@ export function BlocklyEditor() {
       }
     }
   }, [messageDropdownStamp]);
+
+  useEffect(() => {
+    if (!workspaceRef.current) return;
+
+    const allBlocks = workspaceRef.current.getAllBlocks(false);
+    for (const block of allBlocks) {
+      if (block.type === 'looks_costume_literal') {
+        const field = block.getField('COSTUME');
+        if (field instanceof Blockly.FieldDropdown) {
+          field.forceRerender();
+        }
+        syncCostumeLiteralFieldAppearance(block);
+        continue;
+      }
+
+      if (block.type === 'looks_switch_costume') {
+        syncSwitchCostumeWaitInput(block);
+      }
+    }
+  }, [costumeDropdownStamp]);
 
   const blocklyContainerStyle = {
     '--blockly-flyout-width': `${
