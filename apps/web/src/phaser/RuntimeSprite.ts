@@ -17,6 +17,7 @@ import {
   getScaleSign,
   toggleScaleDirection,
 } from './scaleMath';
+import { getTouchPixelMask, isTouchMaskPixelOpaque } from './touchMask';
 import type { Costume, CostumeAssetFrame, CostumeBounds, ColliderConfig, PhysicsConfig } from '../types';
 import { isAnimatedCostume } from '@/lib/costume/costumeDocument';
 import type { RuntimeEngine } from './RuntimeEngine';
@@ -791,27 +792,47 @@ export class RuntimeSprite {
     }
 
     if (this._costumeImage) {
-      const local = this._costumeImage
-        .getWorldTransformMatrix()
-        .applyInverse(worldX, worldY, new Phaser.Math.Vector2());
-      const localX = local.x + this._costumeImage.displayOriginX;
-      const localY = local.y + this._costumeImage.displayOriginY;
-      const spriteWidth = this._costumeImage.width;
-      const spriteHeight = this._costumeImage.height;
-      if (spriteWidth <= 0 || spriteHeight <= 0) return false;
-      if (localX < 0 || localY < 0 || localX >= spriteWidth || localY >= spriteHeight) return false;
-      const pixelX = Math.floor(Math.max(0, Math.min(spriteWidth - 1, localX)));
-      const pixelY = Math.floor(Math.max(0, Math.min(spriteHeight - 1, localY)));
-      const alpha = this.scene.textures.getPixelAlpha(
-        pixelX,
-        pixelY,
-        this._costumeImage.texture.key,
-        this._costumeImage.frame.name,
-      );
-      return alpha !== null && alpha !== undefined && alpha >= 1;
+      return this.sampleOpaqueAtWorldPoint(worldX, worldY);
     }
 
     return this.container.getBounds().contains(worldX, worldY);
+  }
+
+  hasPixelTouchMask(): boolean {
+    return this.getCurrentTouchMask() !== null;
+  }
+
+  getTouchOpaquePixelCount(): number {
+    const mask = this.getCurrentTouchMask();
+    return mask?.opaquePixelCount ?? 0;
+  }
+
+  sampleOpaqueAtWorldPoint(worldX: number, worldY: number): boolean {
+    if (!this.container.visible || !this.container.active || this.container.alpha <= 0) {
+      return false;
+    }
+
+    if (!this._costumeImage) {
+      return this.container.getBounds().contains(worldX, worldY);
+    }
+
+    const mask = this.getCurrentTouchMask();
+    if (!mask) {
+      return this.container.getBounds().contains(worldX, worldY);
+    }
+
+    const local = this._costumeImage
+      .getWorldTransformMatrix()
+      .applyInverse(worldX, worldY, new Phaser.Math.Vector2());
+    const localX = local.x + this._costumeImage.displayOriginX;
+    const localY = local.y + this._costumeImage.displayOriginY;
+    if (localX < 0 || localY < 0 || localX >= mask.width || localY >= mask.height) {
+      return false;
+    }
+
+    const pixelX = Math.floor(localX);
+    const pixelY = Math.floor(localY);
+    return isTouchMaskPixelOpaque(mask, pixelX, pixelY);
   }
 
   nextCostume(): void {
@@ -1566,6 +1587,10 @@ export class RuntimeSprite {
   }
 
   private getVisibleSpeechAnchorBounds(): { left: number; right: number; top: number; bottom: number } {
+    return this.getVisibleTouchBounds();
+  }
+
+  getVisibleTouchBounds(): { left: number; right: number; top: number; bottom: number } {
     const costume = this._costumes[this._currentCostumeIndex];
     const bounds = costume?.bounds;
     if (!this._costumeImage || !bounds || bounds.width <= 0 || bounds.height <= 0) {
@@ -1610,5 +1635,17 @@ export class RuntimeSprite {
       top: Math.min(...ys),
       bottom: Math.max(...ys),
     };
+  }
+
+  private getCurrentTouchMask() {
+    if (!this._costumeImage?.texture) {
+      return null;
+    }
+
+    return getTouchPixelMask(
+      this.scene,
+      this._costumeImage.texture.key,
+      this._costumeImage.frame?.name,
+    );
   }
 }

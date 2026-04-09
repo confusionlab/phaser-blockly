@@ -2,6 +2,11 @@ import Phaser from 'phaser';
 import { RuntimeSprite } from './RuntimeSprite';
 import { applyCustomGravityForce } from './gravity';
 import {
+  areTouchSurfacesTouching,
+  collectPotentialTouchPairs,
+  type TouchSurface,
+} from './touchDetection';
+import {
   areVariableValuesEqual,
   cloneVariableValue,
   coerceDefaultValue,
@@ -309,8 +314,8 @@ export class RuntimeEngine {
     }
   };
 
-  // Collision tracking to prevent duplicate events per frame
-  private _touchingPairs: Set<string> = new Set();
+  // Active touching state used to fire touch hats on enter.
+  private _activeTouchPairs: Set<string> = new Set();
   // Track active ground contacts per sprite; supports multi-part bodies reliably.
   private _groundTouchCounts: Map<string, number> = new Map();
 
@@ -1467,8 +1472,7 @@ export class RuntimeEngine {
       }
     }
 
-    // Clear touching pairs from previous frame
-    this._touchingPairs.clear();
+    this.updateTouchingState();
 
     // Process message queue
     this.processMessages();
@@ -1480,10 +1484,8 @@ export class RuntimeEngine {
   setupPhysicsColliders(): void {
     const sprites = Array.from(this.sprites.values());
 
-    // Matter.js handles collisions automatically between all bodies
-    // We just need to listen for collision events for "when touching" handlers
-
-    // Helper to find sprite IDs from collision bodies
+    // Matter.js remains the source of truth for GROUND contact, but sprite-to-sprite
+    // touching is computed from the runtime touch system so it works without physics.
     const bodyMatches = (spriteBody: MatterJS.BodyType | undefined, collisionBody: MatterJS.BodyType) => {
       if (!spriteBody) return false;
       return (
@@ -1509,17 +1511,12 @@ export class RuntimeEngine {
       return { spriteIdA, spriteIdB };
     };
 
-    // Listen for collision START events (for "when touching" event handlers)
+    // Listen for collision START events to initialize ground contact counts promptly.
     this.scene.matter.world.on('collisionstart', (event: Phaser.Physics.Matter.Events.CollisionStartEvent) => {
       for (const pair of event.pairs) {
         const bodyA = pair.bodyA;
         const bodyB = pair.bodyB;
         const { spriteIdA, spriteIdB } = findSpriteIds(bodyA, bodyB);
-
-        // Handle sprite-to-sprite collision events
-        if (spriteIdA && spriteIdB) {
-          this.handleSpriteOverlap(spriteIdA, spriteIdB);
-        }
 
         // Also handle ground collision on start (first frame of contact)
         const isGroundA = bodyA === this._groundBody || bodyA.label === 'ground';
@@ -1529,7 +1526,7 @@ export class RuntimeEngine {
           if (spriteId) {
             const next = (this._groundTouchCounts.get(spriteId) ?? 0) + 1;
             this._groundTouchCounts.set(spriteId, next);
-            this.handleGroundCollision(spriteId, true);
+            this.handleGroundCollision(spriteId);
           }
         }
       }
@@ -1551,7 +1548,7 @@ export class RuntimeEngine {
           const { spriteIdA, spriteIdB } = findSpriteIds(bodyA, bodyB);
           const spriteId = isGroundA ? spriteIdB : spriteIdA;
           if (spriteId) {
-            this.handleGroundCollision(spriteId, false);
+            this.handleGroundCollision(spriteId);
           }
         }
       }
@@ -1597,17 +1594,10 @@ export class RuntimeEngine {
   }
 
   private groundLogThrottle = 0;
-  private handleGroundCollision(spriteId: string, triggerHandlers: boolean): void {
+  private handleGroundCollision(spriteId: string): void {
     const sprite = this.sprites.get(spriteId);
     if (sprite) {
       sprite.setTouchingGround(true);
-      if (triggerHandlers) {
-        const pairKey = `GROUND|${spriteId}`;
-        if (!this._touchingPairs.has(pairKey)) {
-          this._touchingPairs.add(pairKey);
-          this.triggerGroundTouchHandlers(spriteId);
-        }
-      }
       // Log occasionally to avoid spam
       if (this.groundLogThrottle++ % 60 === 0) {
         debugLog('event', `${sprite.name} touching ground`);
@@ -1624,17 +1614,11 @@ export class RuntimeEngine {
   }
 
   private getSpriteBoundsSnapshot(sprite: RuntimeSprite): BoundsSnapshot {
-    const body = (sprite.container as unknown as { body?: MatterJS.BodyType }).body;
-    if (body) {
-      return this.getBodyBoundsSnapshot(body);
-    }
-
-    const width = (sprite.container.width * Math.abs(sprite.container.scaleX)) || 64;
-    const height = (sprite.container.height * Math.abs(sprite.container.scaleY)) || 64;
-    const minX = sprite.container.x - width / 2;
-    const maxX = sprite.container.x + width / 2;
-    const minY = sprite.container.y - height / 2;
-    const maxY = sprite.container.y + height / 2;
+    const bounds = sprite.getVisibleTouchBounds();
+    const minX = bounds.left;
+    const maxX = bounds.right;
+    const minY = bounds.top;
+    const maxY = bounds.bottom;
     return {
       minX,
       maxX,
@@ -1768,14 +1752,7 @@ export class RuntimeEngine {
     this.triggerTouchHandlersForTarget(spriteId, 'GROUND', direction, handlers);
   }
 
-  private handleSpriteOverlap(spriteIdA: string, spriteIdB: string): void {
-    // Create a unique key for this pair (order-independent)
-    const pairKey = [spriteIdA, spriteIdB].sort().join('|');
-
-    // Only fire once per frame per pair
-    if (this._touchingPairs.has(pairKey)) return;
-    this._touchingPairs.add(pairKey);
-
+  private triggerSpriteTouchHandlers(spriteIdA: string, spriteIdB: string): void {
     const triggerForSource = (sourceId: string, targetId: string) => {
       const sourceHandlers = this.handlers.get(sourceId);
       const sourceSprite = this.sprites.get(sourceId);
@@ -1812,6 +1789,54 @@ export class RuntimeEngine {
 
     triggerForSource(spriteIdA, spriteIdB);
     triggerForSource(spriteIdB, spriteIdA);
+  }
+
+  private updateTouchingState(): void {
+    const currentTouchPairs = new Set<string>();
+    const touchSurfaces: TouchSurface[] = [];
+
+    for (const sprite of this.sprites.values()) {
+      if (sprite.isStopped()) {
+        continue;
+      }
+      if (!sprite.container.visible || !sprite.container.active || sprite.container.alpha <= 0) {
+        continue;
+      }
+
+      touchSurfaces.push({
+        id: sprite.id,
+        bounds: this.getSpriteBoundsSnapshot(sprite),
+        hasPixelMask: sprite.hasPixelTouchMask(),
+        sampleOpaqueAtWorldPoint: (worldX: number, worldY: number) => sprite.sampleOpaqueAtWorldPoint(worldX, worldY),
+      });
+    }
+
+    const potentialPairs = collectPotentialTouchPairs(touchSurfaces);
+    for (const [surfaceA, surfaceB] of potentialPairs) {
+      if (!areTouchSurfacesTouching(surfaceA, surfaceB)) {
+        continue;
+      }
+
+      const pairKey = [surfaceA.id, surfaceB.id].sort().join('|');
+      currentTouchPairs.add(pairKey);
+      if (!this._activeTouchPairs.has(pairKey)) {
+        this.triggerSpriteTouchHandlers(surfaceA.id, surfaceB.id);
+      }
+    }
+
+    for (const sprite of this.sprites.values()) {
+      if (!sprite.isTouchingGround() || sprite.isStopped() || !this._groundBody) {
+        continue;
+      }
+
+      const pairKey = `GROUND|${sprite.id}`;
+      currentTouchPairs.add(pairKey);
+      if (!this._activeTouchPairs.has(pairKey)) {
+        this.triggerGroundTouchHandlers(sprite.id);
+      }
+    }
+
+    this._activeTouchPairs = currentTouchPairs;
   }
 
   private processMessages(): void {
@@ -1901,6 +1926,7 @@ export class RuntimeEngine {
     this._isRunning = false;
     this.queuedKeyPresses = [];
     this._groundTouchCounts.clear();
+    this._activeTouchPairs.clear();
     this.activeForeverLoops.clear();
     this.pendingForeverHandlers.clear();
     for (const sprite of this.sprites.values()) {
@@ -1959,6 +1985,7 @@ export class RuntimeEngine {
     // Use clearSharedGlobalVariables() when the entire play session ends
     this.localVariables.clear();
     this._worldBoundaryLimitedSprites.clear();
+    this._activeTouchPairs.clear();
 
     debugLog('info', 'RuntimeEngine cleanup complete');
   }
@@ -1970,6 +1997,7 @@ export class RuntimeEngine {
       sprite.setTouchingGround(false);
     }
     this._groundTouchCounts.delete(spriteId);
+    this.clearActiveTouchStateForSprite(spriteId);
     this.activeForeverLoops.set(spriteId, false);
     this.pendingForeverHandlers.delete(spriteId);
   }
@@ -2574,6 +2602,14 @@ export class RuntimeEngine {
     return clone;
   }
 
+  private clearActiveTouchStateForSprite(spriteId: string): void {
+    this._activeTouchPairs.forEach((pairKey) => {
+      if (pairKey === `GROUND|${spriteId}` || pairKey.split('|').includes(spriteId)) {
+        this._activeTouchPairs.delete(pairKey);
+      }
+    });
+  }
+
   deleteSelf(spriteId: string): void {
     const sprite = this.sprites.get(spriteId);
     if (sprite) {
@@ -2585,6 +2621,7 @@ export class RuntimeEngine {
       this.pendingForeverHandlers.delete(spriteId);
       this._groundTouchCounts.delete(spriteId);
       this._worldBoundaryLimitedSprites.delete(spriteId);
+      this.clearActiveTouchStateForSprite(spriteId);
     }
   }
 
@@ -2598,6 +2635,7 @@ export class RuntimeEngine {
     this.pendingForeverHandlers.delete(obj.id);
     this._groundTouchCounts.delete(obj.id);
     this._worldBoundaryLimitedSprites.delete(obj.id);
+    this.clearActiveTouchStateForSprite(obj.id);
   }
 
   private getObjectColor(id: string): number {
@@ -2618,9 +2656,9 @@ export class RuntimeEngine {
 
     // Handle EDGE special case - check if touching canvas bounds
     if (targetId === 'EDGE') {
-      const bounds = sprite.container.getBounds();
-      return bounds.left <= 0 || bounds.right >= this._canvasWidth ||
-             bounds.top <= 0 || bounds.bottom >= this._canvasHeight;
+      const bounds = this.getSpriteBoundsSnapshot(sprite);
+      return bounds.minX <= 0 || bounds.maxX >= this._canvasWidth ||
+             bounds.minY <= 0 || bounds.maxY >= this._canvasHeight;
     }
 
     if (targetId === 'GROUND') {
@@ -2774,61 +2812,20 @@ export class RuntimeEngine {
   }
 
   private isTouchingSingle(sprite: RuntimeSprite, target: RuntimeSprite): boolean {
-    // Use Matter.js body bounds for collision detection
-    const matterContainerA = sprite.container as unknown as { body?: MatterJS.BodyType };
-    const matterContainerB = target.container as unknown as { body?: MatterJS.BodyType };
-    const bodyA = matterContainerA.body;
-    const bodyB = matterContainerB.body;
-
-    if (bodyA && bodyB) {
-      // Check AABB overlap using Matter.js bounds
-      const boundsA = bodyA.bounds;
-      const boundsB = bodyB.bounds;
-      return !(boundsA.max.x < boundsB.min.x ||
-               boundsA.min.x > boundsB.max.x ||
-               boundsA.max.y < boundsB.min.y ||
-               boundsA.min.y > boundsB.max.y);
-    }
-
-    // Mixed collision: one has body, one doesn't
-    // Use actual bounds (min/max) to handle body offset correctly
-    let aMinX: number, aMaxX: number, aMinY: number, aMaxY: number;
-    let bMinX: number, bMaxX: number, bMinY: number, bMaxY: number;
-
-    if (bodyA) {
-      // Use body bounds directly (already in world coordinates)
-      aMinX = bodyA.bounds.min.x;
-      aMaxX = bodyA.bounds.max.x;
-      aMinY = bodyA.bounds.min.y;
-      aMaxY = bodyA.bounds.max.y;
-    } else {
-      // Use container position + size
-      const w = (sprite.container.width * Math.abs(sprite.container.scaleX)) || 64;
-      const h = (sprite.container.height * Math.abs(sprite.container.scaleY)) || 64;
-      aMinX = sprite.container.x - w / 2;
-      aMaxX = sprite.container.x + w / 2;
-      aMinY = sprite.container.y - h / 2;
-      aMaxY = sprite.container.y + h / 2;
-    }
-
-    if (bodyB) {
-      // Use body bounds directly (already in world coordinates)
-      bMinX = bodyB.bounds.min.x;
-      bMaxX = bodyB.bounds.max.x;
-      bMinY = bodyB.bounds.min.y;
-      bMaxY = bodyB.bounds.max.y;
-    } else {
-      // Use container position + size
-      const w = (target.container.width * Math.abs(target.container.scaleX)) || 64;
-      const h = (target.container.height * Math.abs(target.container.scaleY)) || 64;
-      bMinX = target.container.x - w / 2;
-      bMaxX = target.container.x + w / 2;
-      bMinY = target.container.y - h / 2;
-      bMaxY = target.container.y + h / 2;
-    }
-
-    // AABB overlap check
-    return !(aMaxX < bMinX || aMinX > bMaxX || aMaxY < bMinY || aMinY > bMaxY);
+    return areTouchSurfacesTouching(
+      {
+        id: sprite.id,
+        bounds: this.getSpriteBoundsSnapshot(sprite),
+        hasPixelMask: sprite.hasPixelTouchMask(),
+        sampleOpaqueAtWorldPoint: (worldX: number, worldY: number) => sprite.sampleOpaqueAtWorldPoint(worldX, worldY),
+      },
+      {
+        id: target.id,
+        bounds: this.getSpriteBoundsSnapshot(target),
+        hasPixelMask: target.hasPixelTouchMask(),
+        sampleOpaqueAtWorldPoint: (worldX: number, worldY: number) => target.sampleOpaqueAtWorldPoint(worldX, worldY),
+      },
+    );
   }
 
   private isTouchingDirectionSingle(
