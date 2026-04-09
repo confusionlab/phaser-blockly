@@ -605,8 +605,10 @@ export function AnimatedCostumeTimeline({
     event.stopPropagation();
     setTrackContextMenu(null);
     setCelContextMenu(null);
-    onSelectTrack(trackId);
-    onFrameSelect(getFrameIndexFromCelPointer(event, cel));
+    if (mode === 'move') {
+      onSelectTrack(trackId);
+      onFrameSelect(getFrameIndexFromCelPointer(event, cel));
+    }
 
     setCelInteraction({
       trackId,
@@ -689,7 +691,7 @@ export function AnimatedCostumeTimeline({
             </div>
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute z-10 rounded-sm border-x border-primary/35 bg-primary/10"
+              className="pointer-events-none absolute z-10 rounded-sm bg-primary/10"
               style={{
                 left: TIMELINE_TRACK_HEADER_WIDTH + TIMELINE_SECTION_GAP + (currentFrameIndex * TIMELINE_FRAME_WIDTH),
                 top: 4,
@@ -947,9 +949,10 @@ export function AnimatedCostumeTimeline({
 
                         {track.cels.map((cel, celIndex) => {
                           const displayedCel = getDisplayedCelSpan(cel, celInteraction?.trackId === track.id ? celInteraction : null);
+                          const isHandleResizingCel = celInteraction?.celId === cel.id && celInteraction.mode !== 'move';
                           const isSelectedCel = (
                             (track.id === clip.activeTrackId && cel.id === autoSelectedCelId) ||
-                            celInteraction?.celId === cel.id
+                            (celInteraction?.celId === cel.id && celInteraction.mode === 'move')
                           );
                           const previousEndFrame = celIndex > 0
                             ? track.cels[celIndex - 1].startFrame + track.cels[celIndex - 1].durationFrames
@@ -964,6 +967,8 @@ export function AnimatedCostumeTimeline({
                                 'group/cel absolute inset-y-1 overflow-hidden rounded-xl shadow-sm transition-[background-color,box-shadow]',
                                 isSelectedCel
                                   ? 'z-10 bg-[var(--editor-selection-surface-selected)] shadow-sm ring-1 ring-inset ring-primary/30'
+                                  : isHandleResizingCel
+                                  ? 'bg-neutral-400 dark:bg-neutral-600'
                                   : 'bg-neutral-300 hover:bg-neutral-400 dark:bg-neutral-700 dark:hover:bg-neutral-600',
                                 celInteraction?.celId === cel.id && 'z-20 shadow-md',
                               )}
@@ -981,6 +986,8 @@ export function AnimatedCostumeTimeline({
                                   'absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize transition-[opacity,background-color]',
                                   isSelectedCel
                                     ? 'bg-primary/20 hover:bg-primary/30'
+                                    : isHandleResizingCel
+                                    ? 'bg-neutral-500/34 dark:bg-neutral-400/34'
                                     : 'bg-neutral-500/22 hover:bg-neutral-500/34 dark:bg-neutral-400/22 dark:hover:bg-neutral-400/34',
                                   'opacity-0 group-hover/cel:opacity-100',
                                   celInteraction?.celId === cel.id && 'opacity-100',
@@ -999,6 +1006,8 @@ export function AnimatedCostumeTimeline({
                                   'absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize transition-[opacity,background-color]',
                                   isSelectedCel
                                     ? 'bg-primary/20 hover:bg-primary/30'
+                                    : isHandleResizingCel
+                                    ? 'bg-neutral-500/34 dark:bg-neutral-400/34'
                                     : 'bg-neutral-500/22 hover:bg-neutral-500/34 dark:bg-neutral-400/22 dark:hover:bg-neutral-400/34',
                                   'opacity-0 group-hover/cel:opacity-100',
                                   celInteraction?.celId === cel.id && 'opacity-100',
