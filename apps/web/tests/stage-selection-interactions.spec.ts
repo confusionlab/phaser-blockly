@@ -15,11 +15,24 @@ async function waitForStageReady(page: Page): Promise<void> {
   await expect(page.getByTestId('stage-phaser-host')).toBeVisible({ timeout: 10000 });
   await expect(page.locator('[data-testid="stage-phaser-host"] canvas').first()).toBeVisible({ timeout: 10000 });
   await expect.poll(async () => page.evaluate(() => Boolean(window['__pochaStageDebug']))).toBe(true);
-  await page.evaluate(async () => {
+  await waitForAnimationFrames(page, 2);
+}
+
+async function waitForAnimationFrames(page: Page, count: number): Promise<void> {
+  await page.evaluate(async (frameCount) => {
     await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      let remaining = frameCount;
+      const tick = () => {
+        if (remaining <= 0) {
+          resolve();
+          return;
+        }
+        remaining -= 1;
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
     });
-  });
+  }, count);
 }
 
 async function seedStageObjects(
@@ -152,6 +165,22 @@ async function getObjectPosition(page: Page, objectId: string): Promise<{ x: num
   return position;
 }
 
+async function getLiveObjectSnapshot(
+  page: Page,
+  objectId: string,
+): Promise<{ x: number; y: number; scaleX: number; scaleY: number; rotation: number }> {
+  const snapshot = await page.evaluate((targetObjectId) => {
+    const debug = window['__pochaStageDebug'];
+    return debug?.getEditorObjectSnapshot?.(targetObjectId) ?? null;
+  }, objectId);
+
+  if (!snapshot) {
+    throw new Error(`Could not resolve live stage state for object ${objectId}.`);
+  }
+
+  return snapshot;
+}
+
 test.describe('Stage selection interactions', () => {
   test('click selects, empty stage deselects, and dragging moves the selected object', async ({ page }) => {
     await bootstrapEditorProject(page, {
@@ -185,6 +214,35 @@ test.describe('Stage selection interactions', () => {
       selectedObjectId: null,
       selectedObjectIds: [],
     });
+  });
+
+  test('dragging preserves the live stage position until mouse-up commit', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Drag Live Position ${Date.now()}`,
+    });
+    await waitForStageReady(page);
+
+    const [firstObject] = await seedStageObjects(page, [
+      { name: 'Object 1', x: -120, y: 0 },
+    ]);
+
+    const objectPoint = await getStagePointForObject(page, firstObject.id);
+    const startPosition = await getObjectPosition(page, firstObject.id);
+    const startLiveSnapshot = await getLiveObjectSnapshot(page, firstObject.id);
+
+    await page.mouse.move(objectPoint.x, objectPoint.y);
+    await page.mouse.down();
+    await page.mouse.move(objectPoint.x + 120, objectPoint.y + 72, { steps: 16 });
+    await waitForAnimationFrames(page, 4);
+
+    const liveDuringDrag = await getLiveObjectSnapshot(page, firstObject.id);
+    expect(Math.abs(liveDuringDrag.x - startLiveSnapshot.x)).toBeGreaterThan(40);
+    expect(Math.abs(liveDuringDrag.y - startLiveSnapshot.y)).toBeGreaterThan(20);
+    await expect(getObjectPosition(page, firstObject.id)).resolves.toEqual(startPosition);
+
+    await page.mouse.up();
+
+    await expect.poll(() => getObjectPosition(page, firstObject.id)).not.toEqual(startPosition);
   });
 
   test('dragging across empty stage creates a marquee selection', async ({ page }) => {

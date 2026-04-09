@@ -163,6 +163,8 @@ type PendingCostumeVisualTarget = {
   textureKey: string | null;
 };
 
+const LOCAL_STAGE_TRANSFORM_SESSION_KEY = 'localStageTransformSessionCount';
+
 type ComponentDragPreview = {
   componentId: string;
   localX: number;
@@ -252,6 +254,13 @@ type StageDebugApi = {
   setEditorViewport: (viewport: StageEditorViewport) => void;
   setViewMode: (mode: StageViewMode) => void;
   getWorldPointAtClientPosition: (clientX: number, clientY: number) => { x: number; y: number } | null;
+  getEditorObjectSnapshot: (objectId: string) => {
+    x: number;
+    y: number;
+    scaleX: number;
+    scaleY: number;
+    rotation: number;
+  } | null;
 };
 
 function getCostumeVisualMetrics({
@@ -596,6 +605,42 @@ function getPendingCostumeVisualTarget(
   container: Phaser.GameObjects.Container,
 ): PendingCostumeVisualTarget | undefined {
   return container.getData('pendingVisualTarget') as PendingCostumeVisualTarget | undefined;
+}
+
+function beginLocalStageTransformSession(container: Phaser.GameObjects.Container): void {
+  const currentCount = (container.getData(LOCAL_STAGE_TRANSFORM_SESSION_KEY) as number | undefined) ?? 0;
+  container.setData(LOCAL_STAGE_TRANSFORM_SESSION_KEY, currentCount + 1);
+}
+
+function endLocalStageTransformSession(container: Phaser.GameObjects.Container): void {
+  const currentCount = (container.getData(LOCAL_STAGE_TRANSFORM_SESSION_KEY) as number | undefined) ?? 0;
+  if (currentCount <= 1) {
+    container.setData(LOCAL_STAGE_TRANSFORM_SESSION_KEY, 0);
+    return;
+  }
+  container.setData(LOCAL_STAGE_TRANSFORM_SESSION_KEY, currentCount - 1);
+}
+
+function hasLocalStageTransformSession(container: Phaser.GameObjects.Container): boolean {
+  return ((container.getData(LOCAL_STAGE_TRANSFORM_SESSION_KEY) as number | undefined) ?? 0) > 0;
+}
+
+function beginLocalStageTransformSessions(scene: Phaser.Scene, objectIds: string[]): void {
+  for (const objectId of objectIds) {
+    const container = scene.children.getByName(objectId) as Phaser.GameObjects.Container | null;
+    if (container) {
+      beginLocalStageTransformSession(container);
+    }
+  }
+}
+
+function endLocalStageTransformSessions(scene: Phaser.Scene, objectIds: string[]): void {
+  for (const objectId of objectIds) {
+    const container = scene.children.getByName(objectId) as Phaser.GameObjects.Container | null;
+    if (container) {
+      endLocalStageTransformSession(container);
+    }
+  }
 }
 
 function drawWorldBoundary(
@@ -1740,6 +1785,20 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         );
         return worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
       },
+      getEditorObjectSnapshot: (objectId) => {
+        const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+        const container = editorScene?.children.getByName(objectId) as Phaser.GameObjects.Container | null | undefined;
+        if (!container) {
+          return null;
+        }
+        return {
+          x: container.x,
+          y: container.y,
+          scaleX: container.scaleX,
+          scaleY: container.scaleY,
+          rotation: container.rotation,
+        };
+      },
     };
 
     const stageWindow = window as typeof window & { __pochaStageDebug?: StageDebugApi };
@@ -2611,76 +2670,6 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
 
         // Set initial selection visibility
         setSelectionVisible(false);
-
-        let dragContext: {
-          leaderStartX: number;
-          leaderStartY: number;
-          objectIds: string[];
-          startPositions: Map<string, { x: number; y: number }>;
-        } | null = null;
-
-        newContainer.on('dragstart', () => {
-          const storeState = useEditorStore.getState();
-          const selectedIds = storeState.selectedObjectIds.length > 0
-            ? storeState.selectedObjectIds
-            : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
-          const orderedSceneObjectIds = getOrderedObjectIdsForActiveScene(
-            orderedSceneObjects.map((sceneObj) => sceneObj.id),
-          );
-          const dragIds = (selectedIds.length > 1 && selectedIds.includes(obj.id))
-            ? orderedSceneObjectIds.filter((id) => selectedIds.includes(id))
-            : [obj.id];
-          const startPositions = new Map<string, { x: number; y: number }>();
-          for (const id of dragIds) {
-            const selectedContainer = phaserScene.children.getByName(id) as Phaser.GameObjects.Container | null;
-            if (selectedContainer) {
-              startPositions.set(id, { x: selectedContainer.x, y: selectedContainer.y });
-            }
-          }
-          dragContext = {
-            leaderStartX: newContainer.x,
-            leaderStartY: newContainer.y,
-            objectIds: dragIds,
-            startPositions,
-          };
-        });
-
-        newContainer.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
-          if (dragContext) {
-            const dx = dragX - dragContext.leaderStartX;
-            const dy = dragY - dragContext.leaderStartY;
-            for (const id of dragContext.objectIds) {
-              const selectedContainer = phaserScene.children.getByName(id) as Phaser.GameObjects.Container | null;
-              const startPos = dragContext.startPositions.get(id);
-              if (selectedContainer && startPos) {
-                selectedContainer.x = startPos.x + dx;
-                selectedContainer.y = startPos.y + dy;
-              }
-            }
-            return;
-          }
-          newContainer.x = dragX;
-          newContainer.y = dragY;
-        });
-
-        newContainer.on('dragend', () => {
-          if (dragContext) {
-            const currentDragContext = dragContext;
-            runInHistoryTransaction('stage:drag-selection', () => {
-              for (const id of currentDragContext.objectIds) {
-                const selectedContainer = phaserScene.children.getByName(id) as Phaser.GameObjects.Container | null;
-                if (selectedContainer) {
-                  handleObjectDragEnd(id, selectedContainer.x, selectedContainer.y);
-                }
-              }
-            });
-            dragContext = null;
-            return;
-          }
-          runInHistoryTransaction('stage:drag-object', () => {
-            handleObjectDragEnd(obj.id, newContainer.x, newContainer.y);
-          });
-        });
       } else {
         const targetContainer = container;
         targetContainer.setData('objectData', obj);
@@ -2694,9 +2683,11 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         const cw = phaserScene.data.get('canvasWidth') as number || 800;
         const ch = phaserScene.data.get('canvasHeight') as number || 600;
         const phaserPos = userToPhaser(obj.x, obj.y, cw, ch);
-        targetContainer.setPosition(phaserPos.x, phaserPos.y);
-        targetContainer.setScale(obj.scaleX, obj.scaleY);
-        targetContainer.setRotation(Phaser.Math.DegToRad(obj.rotation));
+        if (!hasLocalStageTransformSession(targetContainer)) {
+          targetContainer.setPosition(phaserPos.x, phaserPos.y);
+          targetContainer.setScale(obj.scaleX, obj.scaleY);
+          targetContainer.setRotation(Phaser.Math.DegToRad(obj.rotation));
+        }
         targetContainer.setVisible(obj.visible);
 
         // Update costume if changed (use effective props for component instances)
@@ -4297,6 +4288,7 @@ function createEditorScene(
       setLockedStageCursor(handleName.startsWith('handle_rotate_') && groupTransformContext.corner
         ? getTransformGizmoRotateCursor(frame.rotation ?? 0, groupTransformContext.corner)
         : null);
+      beginLocalStageTransformSessions(scene, selectedIds);
     });
 
     handle.on('drag', (pointer: Phaser.Input.Pointer) => {
@@ -4447,16 +4439,20 @@ function createEditorScene(
     handle.on('dragend', () => {
       if (!groupTransformContext || groupTransformContext.handleName !== handleName) return;
       const currentTransformContext = groupTransformContext;
-      runInHistoryTransaction('stage:transform-selection', () => {
-        for (const id of currentTransformContext.selectedIds) {
-          const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
-          if (!selectedContainer) continue;
-          const rotationDeg = Phaser.Math.RadToDeg(selectedContainer.rotation);
-          onDragEnd(id, selectedContainer.x, selectedContainer.y, selectedContainer.scaleX, selectedContainer.scaleY, rotationDeg);
-        }
-      });
       groupTransformContext = null;
-      setLockedStageCursor(null);
+      try {
+        runInHistoryTransaction('stage:transform-selection', () => {
+          for (const id of currentTransformContext.selectedIds) {
+            const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+            if (!selectedContainer) continue;
+            const rotationDeg = Phaser.Math.RadToDeg(selectedContainer.rotation);
+            onDragEnd(id, selectedContainer.x, selectedContainer.y, selectedContainer.scaleX, selectedContainer.scaleY, rotationDeg);
+          }
+        });
+      } finally {
+        endLocalStageTransformSessions(scene, currentTransformContext.selectedIds);
+        setLockedStageCursor(null);
+      }
     });
   }
 
@@ -4511,6 +4507,7 @@ function createEditorScene(
       startPositions,
       hasMoved: false,
     };
+    beginLocalStageTransformSessions(scene, dragIds);
     if (typeof window !== 'undefined') {
       const handleTranslatePointerMove = (event: PointerEvent | MouseEvent) => {
         if (!activeTranslateDrag) {
@@ -4561,20 +4558,23 @@ function createEditorScene(
   const endTranslateDrag = (pointerId: number, _worldX: number, _worldY: number) => {
     if (!activeTranslateDrag || activeTranslateDrag.pointerId !== pointerId) return;
 
-    if (activeTranslateDrag.hasMoved) {
-      const currentTranslateDrag = activeTranslateDrag;
-      runInHistoryTransaction('stage:translate-selection', () => {
-        for (const id of currentTranslateDrag.objectIds) {
-          const draggedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
-          if (draggedContainer) {
-            onDragEnd(id, draggedContainer.x, draggedContainer.y);
-          }
-        }
-      });
-    }
-
+    const currentTranslateDrag = activeTranslateDrag;
     activeTranslateDrag = null;
-    clearTranslateDragPointerListeners();
+    try {
+      if (currentTranslateDrag.hasMoved) {
+        runInHistoryTransaction('stage:translate-selection', () => {
+          for (const id of currentTranslateDrag.objectIds) {
+            const draggedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+            if (draggedContainer) {
+              onDragEnd(id, draggedContainer.x, draggedContainer.y);
+            }
+          }
+        });
+      }
+    } finally {
+      endLocalStageTransformSessions(scene, currentTranslateDrag.objectIds);
+      clearTranslateDragPointerListeners();
+    }
   };
 
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
@@ -4643,84 +4643,6 @@ function createEditorScene(
     };
     setSelectionVisible(false);
     container.setData('setSelectionVisible', setSelectionVisible);
-
-    const dragHandle = container.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
-    const dragEventSource: Phaser.GameObjects.GameObject & Phaser.Events.EventEmitter = dragHandle ?? container;
-    if (dragHandle) {
-      scene.input.setDraggable(dragHandle);
-    }
-
-    let dragContext: {
-      pointerId: number;
-      leaderStartX: number;
-      leaderStartY: number;
-      objectIds: string[];
-      startPositions: Map<string, { x: number; y: number }>;
-    } | null = null;
-
-    dragEventSource.on('dragstart', (pointer: Phaser.Input.Pointer) => {
-      const storeState = useEditorStore.getState();
-      const selectedIds = storeState.selectedObjectIds.length > 0
-        ? storeState.selectedObjectIds
-        : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
-      const orderedSceneObjectIds = getOrderedSceneObjectIds();
-      const dragIds = (selectedIds.length > 1 && selectedIds.includes(obj.id))
-        ? orderedSceneObjectIds.filter((id) => selectedIds.includes(id))
-        : [obj.id];
-      const startPositions = new Map<string, { x: number; y: number }>();
-      for (const id of dragIds) {
-        const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
-        if (selectedContainer) {
-          startPositions.set(id, { x: selectedContainer.x, y: selectedContainer.y });
-        }
-      }
-      const leaderBounds = dragHandle?.getBounds() ?? container.getBounds();
-      dragContext = {
-        pointerId: pointer.id,
-        leaderStartX: leaderBounds.centerX,
-        leaderStartY: leaderBounds.centerY,
-        objectIds: dragIds,
-        startPositions,
-      };
-    });
-
-    dragEventSource.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
-      if (dragContext) {
-        const dx = dragX - dragContext.leaderStartX;
-        const dy = dragY - dragContext.leaderStartY;
-        for (const id of dragContext.objectIds) {
-          const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
-          const startPos = dragContext.startPositions.get(id);
-          if (selectedContainer && startPos) {
-            selectedContainer.x = startPos.x + dx;
-            selectedContainer.y = startPos.y + dy;
-          }
-        }
-        return;
-      }
-      container.x = dragX;
-      container.y = dragY;
-    });
-
-    dragEventSource.on('dragend', () => {
-      if (dragContext) {
-        const currentDragContext = dragContext;
-        runInHistoryTransaction('stage:drag-selection', () => {
-          for (const id of currentDragContext.objectIds) {
-            const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
-            if (selectedContainer) {
-              onDragEnd(id, selectedContainer.x, selectedContainer.y);
-            }
-          }
-        });
-        dragContext = null;
-        return;
-      }
-      runInHistoryTransaction('stage:drag-object', () => {
-        onDragEnd(obj.id, container.x, container.y);
-      });
-    });
-
   });
 
   // Update selection visuals on scene update
@@ -5267,7 +5189,6 @@ function createObjectVisual(
     hitRect = scene.add.rectangle(0, 0, defaultSize, defaultSize, 0x000000, 0);
     hitRect.setName('hitArea');
     hitRect.setInteractive({ useHandCursor: true });
-    scene.input.setDraggable(hitRect);
     container.add(hitRect);
   }
 
@@ -5292,7 +5213,6 @@ function createObjectVisual(
       hitRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
       hitRect.removeInteractive();
       hitRect.setInteractive({ useHandCursor: true });
-      scene.input.setDraggable(hitRect);
     }
 
     if (selectionRect) {
@@ -5396,7 +5316,7 @@ function createObjectVisual(
       selectionRect.setSize(72, 72);
     }
     if (hitRect) {
-      scene.input.setDraggable(hitRect);
+      hitRect.setInteractive({ useHandCursor: true });
     }
   }
 
