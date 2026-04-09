@@ -648,182 +648,180 @@ export function AnimatedCostumeTimeline({
                       <div className="pointer-events-none absolute inset-x-0 -top-1 z-20 h-0 border-t-2 border-primary" />
                     ) : null}
 
-                    <div className="rounded-lg border border-border/60 bg-card p-2">
-                      <div className="flex gap-3">
-                        <div className="shrink-0" style={{ width: TIMELINE_TRACK_HEADER_WIDTH }}>
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`${track.name} ${track.kind}`}
-                            aria-pressed={isActive}
-                            draggable={!isEditing}
-                            onClick={() => onSelectTrack(track.id)}
-                            onKeyDown={(event) => handleTrackKeyDown(event, track.id)}
-                            onContextMenu={(event) => handleTrackContextMenu(event, track.id)}
-                            onDragStart={(event) => handleTrackDragStart(event, track.id)}
-                            onDragOver={(event) => handleTrackDragOver(event, trackIndex)}
-                            onDrop={handleTrackDrop}
-                            onDragEnd={clearTrackDragState}
-                            className={cn(
-                              'group/track-row relative flex w-full items-center gap-3 rounded-[14px] text-left outline-none',
-                              isDragged && 'opacity-45',
-                            )}
-                          >
-                            {!isActive ? (
-                              <div
-                                aria-hidden="true"
-                                className={cn(
-                                  'pointer-events-none absolute inset-0 rounded-[14px] opacity-0 transition-opacity group-hover/track-row:opacity-100',
-                                  selectionSurfaceClassNames.hover,
-                                )}
-                              />
-                            ) : null}
-
+                    <div className="flex gap-3">
+                      <div className="shrink-0" style={{ width: TIMELINE_TRACK_HEADER_WIDTH }}>
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${track.name} ${track.kind}`}
+                          aria-pressed={isActive}
+                          draggable={!isEditing}
+                          onClick={() => onSelectTrack(track.id)}
+                          onKeyDown={(event) => handleTrackKeyDown(event, track.id)}
+                          onContextMenu={(event) => handleTrackContextMenu(event, track.id)}
+                          onDragStart={(event) => handleTrackDragStart(event, track.id)}
+                          onDragOver={(event) => handleTrackDragOver(event, trackIndex)}
+                          onDrop={handleTrackDrop}
+                          onDragEnd={clearTrackDragState}
+                          className={cn(
+                            'group/track-row relative flex w-full items-center gap-3 rounded-[14px] text-left outline-none',
+                            isDragged && 'opacity-45',
+                          )}
+                        >
+                          {!isActive ? (
                             <div
                               aria-hidden="true"
                               className={cn(
-                                'pointer-events-none absolute inset-0 rounded-[14px] transition-opacity',
-                                selectionSurfaceClassNames.selected,
-                                isActive ? 'opacity-100' : 'opacity-0',
+                                'pointer-events-none absolute inset-0 rounded-[14px] opacity-0 transition-opacity group-hover/track-row:opacity-100',
+                                selectionSurfaceClassNames.hover,
                               )}
                             />
+                          ) : null}
 
-                            <div className="relative z-10 flex min-w-0 flex-1 items-center gap-1.5 px-2 py-2">
-                              <span className="inline-flex shrink-0 text-muted-foreground">
-                                <TrackKindIcon kind={track.kind} />
-                              </span>
+                          <div
+                            aria-hidden="true"
+                            className={cn(
+                              'pointer-events-none absolute inset-0 rounded-[14px] transition-opacity',
+                              selectionSurfaceClassNames.selected,
+                              isActive ? 'opacity-100' : 'opacity-0',
+                            )}
+                          />
 
-                              <InlineRenameField
-                                editing={isEditing}
-                                value={isEditing ? renameDraft : track.name}
-                                onChange={(event) => setRenameDraft(event.target.value)}
-                                onBlur={() => commitInlineRename(track.id)}
-                                onClick={(event) => event.stopPropagation()}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onKeyDown={(event) => {
+                          <div className="relative z-10 flex min-w-0 flex-1 items-center gap-1.5 px-2 py-2">
+                            <span className="inline-flex shrink-0 text-muted-foreground">
+                              <TrackKindIcon kind={track.kind} />
+                            </span>
+
+                            <InlineRenameField
+                              editing={isEditing}
+                              value={isEditing ? renameDraft : track.name}
+                              onChange={(event) => setRenameDraft(event.target.value)}
+                              onBlur={() => commitInlineRename(track.id)}
+                              onClick={(event) => event.stopPropagation()}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => {
+                                event.stopPropagation();
+                                if (event.key === 'Enter') {
+                                  event.preventDefault();
+                                  commitInlineRename(track.id);
+                                }
+                                if (event.key === 'Escape') {
+                                  event.preventDefault();
+                                  cancelInlineRename();
+                                }
+                              }}
+                              autoFocus={isEditing}
+                              className="min-w-0 flex-1"
+                              textClassName="min-w-0 truncate text-sm font-medium leading-5"
+                              displayProps={{
+                                onDoubleClick: (event) => {
+                                  event.preventDefault();
                                   event.stopPropagation();
-                                  if (event.key === 'Enter') {
-                                    event.preventDefault();
-                                    commitInlineRename(track.id);
-                                  }
-                                  if (event.key === 'Escape') {
-                                    event.preventDefault();
-                                    cancelInlineRename();
-                                  }
-                                }}
-                                autoFocus={isEditing}
-                                className="min-w-0 flex-1"
-                                textClassName="min-w-0 truncate text-sm font-medium leading-5"
-                                displayProps={{
-                                  onDoubleClick: (event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    startInlineRename(track.id, track.name);
-                                  },
-                                }}
-                              />
+                                  startInlineRename(track.id, track.name);
+                                },
+                              }}
+                            />
 
-                              <IconButton
-                                label={track.visible ? 'Hide track' : 'Show track'}
-                                shape="pill"
-                                size="sm"
-                                className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onToggleVisibility(track.id);
-                                }}
-                                onPointerDown={(event) => event.stopPropagation()}
-                              >
-                                {track.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
-                              </IconButton>
-                            </div>
+                            <IconButton
+                              label={track.visible ? 'Hide track' : 'Show track'}
+                              shape="pill"
+                              size="sm"
+                              className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onToggleVisibility(track.id);
+                              }}
+                              onPointerDown={(event) => event.stopPropagation()}
+                            >
+                              {track.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+                            </IconButton>
                           </div>
                         </div>
+                      </div>
 
-                        <div
-                          className="relative h-10 select-none"
-                          style={{ width: clip.totalFrames * TIMELINE_FRAME_WIDTH }}
-                        >
-                          <div className="absolute inset-0 flex">
-                            {Array.from({ length: clip.totalFrames }, (_, frameIndex) => (
-                              <button
-                                key={`${track.id}-frame-${frameIndex}`}
-                                type="button"
-                                onClick={() => {
-                                  onSelectTrack(track.id);
-                                  onFrameSelect(frameIndex);
-                                }}
-                                className={cn(
-                                  'h-full border border-border/50 bg-background/60 transition-colors hover:bg-accent/70',
-                                  frameIndex === currentFrameIndex && 'bg-primary/10 ring-1 ring-inset ring-primary/70',
-                                )}
-                                style={{ width: TIMELINE_FRAME_WIDTH }}
-                              />
-                            ))}
-                          </div>
+                      <div
+                        className="relative h-10 select-none"
+                        style={{ width: clip.totalFrames * TIMELINE_FRAME_WIDTH }}
+                      >
+                        <div className="absolute inset-0 flex">
+                          {Array.from({ length: clip.totalFrames }, (_, frameIndex) => (
+                            <button
+                              key={`${track.id}-frame-${frameIndex}`}
+                              type="button"
+                              onClick={() => {
+                                onSelectTrack(track.id);
+                                onFrameSelect(frameIndex);
+                              }}
+                              className={cn(
+                                'h-full border border-border/50 bg-background/60 transition-colors hover:bg-accent/70',
+                                frameIndex === currentFrameIndex && 'bg-primary/10 ring-1 ring-inset ring-primary/70',
+                              )}
+                              style={{ width: TIMELINE_FRAME_WIDTH }}
+                            />
+                          ))}
+                        </div>
 
-                          {track.cels.map((cel, celIndex) => {
-                            const displayedCel = getDisplayedCelSpan(cel, celInteraction?.trackId === track.id ? celInteraction : null);
-                            const previousEndFrame = celIndex > 0
-                              ? track.cels[celIndex - 1].startFrame + track.cels[celIndex - 1].durationFrames
-                              : 0;
-                            const nextStartFrame = track.cels[celIndex + 1]?.startFrame ?? clip.totalFrames;
-                            const spansCurrentFrame = currentFrameIndex >= displayedCel.startFrame
-                              && currentFrameIndex < displayedCel.startFrame + displayedCel.durationFrames;
+                        {track.cels.map((cel, celIndex) => {
+                          const displayedCel = getDisplayedCelSpan(cel, celInteraction?.trackId === track.id ? celInteraction : null);
+                          const previousEndFrame = celIndex > 0
+                            ? track.cels[celIndex - 1].startFrame + track.cels[celIndex - 1].durationFrames
+                            : 0;
+                          const nextStartFrame = track.cels[celIndex + 1]?.startFrame ?? clip.totalFrames;
+                          const spansCurrentFrame = currentFrameIndex >= displayedCel.startFrame
+                            && currentFrameIndex < displayedCel.startFrame + displayedCel.durationFrames;
 
-                            return (
+                          return (
+                            <div
+                              key={`${cel.id}:${celIndex}`}
+                              className={cn(
+                                'absolute inset-y-1 rounded-md border shadow-sm transition-[background-color,border-color,box-shadow]',
+                                spansCurrentFrame
+                                  ? 'border-primary bg-primary/20 shadow-[0_0_0_1px_rgba(59,130,246,0.18)]'
+                                  : 'border-emerald-500/70 bg-emerald-100/90 hover:bg-emerald-100',
+                                celInteraction?.celId === cel.id && 'z-20 shadow-md',
+                              )}
+                              style={{
+                                left: displayedCel.startFrame * TIMELINE_FRAME_WIDTH,
+                                width: displayedCel.durationFrames * TIMELINE_FRAME_WIDTH,
+                              }}
+                              onContextMenu={(event) => handleCelContextMenu(event, track.id, cel.id)}
+                            >
                               <div
-                                key={`${cel.id}:${celIndex}`}
-                                className={cn(
-                                  'absolute inset-y-1 rounded-md border shadow-sm transition-[background-color,border-color,box-shadow]',
-                                  spansCurrentFrame
-                                    ? 'border-primary bg-primary/20 shadow-[0_0_0_1px_rgba(59,130,246,0.18)]'
-                                    : 'border-emerald-500/70 bg-emerald-100/90 hover:bg-emerald-100',
-                                  celInteraction?.celId === cel.id && 'z-20 shadow-md',
+                                className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-md bg-emerald-500/20 hover:bg-emerald-500/35"
+                                onMouseDown={(event) => beginCelInteraction(
+                                  event,
+                                  track.id,
+                                  cel,
+                                  'resize-start',
+                                  previousEndFrame,
+                                  nextStartFrame,
                                 )}
-                                style={{
-                                  left: displayedCel.startFrame * TIMELINE_FRAME_WIDTH,
-                                  width: displayedCel.durationFrames * TIMELINE_FRAME_WIDTH,
-                                }}
-                                onContextMenu={(event) => handleCelContextMenu(event, track.id, cel.id)}
-                              >
-                                <div
-                                  className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-md bg-emerald-500/20 hover:bg-emerald-500/35"
-                                  onMouseDown={(event) => beginCelInteraction(
-                                    event,
-                                    track.id,
-                                    cel,
-                                    'resize-start',
-                                    previousEndFrame,
-                                    nextStartFrame,
-                                  )}
-                                />
-                                <div
-                                  className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-md bg-emerald-500/20 hover:bg-emerald-500/35"
-                                  onMouseDown={(event) => beginCelInteraction(
-                                    event,
-                                    track.id,
-                                    cel,
-                                    'resize-end',
-                                    previousEndFrame,
-                                    nextStartFrame,
-                                  )}
-                                />
-                                <div
-                                  className="flex h-full cursor-grab items-center justify-center overflow-hidden rounded-md px-2 active:cursor-grabbing"
-                                  onMouseDown={(event) => beginCelInteraction(
-                                    event,
-                                    track.id,
-                                    cel,
-                                    'move',
-                                    previousEndFrame,
-                                    nextStartFrame,
-                                  )}
-                                />
-                              </div>
-                            );
-                          })}
-                        </div>
+                              />
+                              <div
+                                className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-md bg-emerald-500/20 hover:bg-emerald-500/35"
+                                onMouseDown={(event) => beginCelInteraction(
+                                  event,
+                                  track.id,
+                                  cel,
+                                  'resize-end',
+                                  previousEndFrame,
+                                  nextStartFrame,
+                                )}
+                              />
+                              <div
+                                className="flex h-full cursor-grab items-center justify-center overflow-hidden rounded-md px-2 active:cursor-grabbing"
+                                onMouseDown={(event) => beginCelInteraction(
+                                  event,
+                                  track.id,
+                                  cel,
+                                  'move',
+                                  previousEndFrame,
+                                  nextStartFrame,
+                                )}
+                              />
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
 
