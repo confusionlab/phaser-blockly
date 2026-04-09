@@ -7,6 +7,7 @@ import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { SelectionActionContextMenu } from '@/components/editors/shared/SelectionActionContextMenu';
+import { usePreventHorizontalBrowserNavigationGesture } from '@/components/editors/shared/usePreventHorizontalBrowserNavigationGesture';
 import { useViewportCenterAnimation } from '@/components/editors/shared/useViewportCenterAnimation';
 import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
 import type {
@@ -1125,6 +1126,11 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     width: number;
     height: number;
   } | null>(null);
+
+  usePreventHorizontalBrowserNavigationGesture({
+    surfaceRef: containerRef,
+    enabled: !isPlaying,
+  });
   const [draggedInventoryCanDrop, setDraggedInventoryCanDrop] = useState(false);
   const [componentDragPreview, setComponentDragPreview] = useState<ComponentDragPreview | null>(null);
   const [stageSelectionContextMenu, setStageSelectionContextMenu] = useState<{

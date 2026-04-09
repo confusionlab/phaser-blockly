@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject, type RefObject } from 'react';
 import type { BitmapBrushKind } from '@/lib/background/brushCore';
 import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
+import { usePreventHorizontalBrowserNavigationGesture } from '@/components/editors/shared/usePreventHorizontalBrowserNavigationGesture';
 import {
   computeEditorViewportFitResult,
   EDITOR_VIEWPORT_FIT_PADDING_PX,
@@ -82,6 +83,11 @@ export function useCostumeCanvasViewportController({
     cameraStartX: number;
     cameraStartY: number;
   } | null>(null);
+
+  usePreventHorizontalBrowserNavigationGesture({
+    surfaceRef: containerRef,
+    enabled: isVisible,
+  });
 
   const clampZoom = useCallback((value: number) => {
     return clampViewportZoom(value, MIN_ZOOM, MAX_ZOOM);

@@ -8,6 +8,7 @@ import { VectorSelectionContextMenu } from '@/components/editors/shared/VectorSe
 import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
 import { useViewportCenterAnimation } from '@/components/editors/shared/useViewportCenterAnimation';
+import { usePreventHorizontalBrowserNavigationGesture } from '@/components/editors/shared/usePreventHorizontalBrowserNavigationGesture';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useModal } from '@/components/ui/modal-provider';
 import {
@@ -698,6 +699,10 @@ export function BackgroundCanvasEditor() {
   const initialBackgroundColorRef = useRef('#87CEEB');
   const backgroundColorRef = useRef('#87CEEB');
   const backgroundDocumentRef = useRef<BackgroundDocument | null>(null);
+
+  usePreventHorizontalBrowserNavigationGesture({
+    surfaceRef: hostRef,
+  });
   const activeLayerDirtyRef = useRef(false);
 
   const [tool, setTool] = useState<BackgroundDrawingTool>('brush');
@@ -1701,30 +1706,6 @@ export function BackgroundCanvasEditor() {
     });
     observer.observe(host);
     return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    const prevHtmlOverscrollX = document.documentElement.style.overscrollBehaviorX;
-    const prevBodyOverscrollX = document.body.style.overscrollBehaviorX;
-    document.documentElement.style.overscrollBehaviorX = 'none';
-    document.body.style.overscrollBehaviorX = 'none';
-
-    const handleWheelCapture = (event: WheelEvent) => {
-      const target = event.target as Node | null;
-      if (target && root.contains(target)) {
-        event.preventDefault();
-      }
-    };
-
-    window.addEventListener('wheel', handleWheelCapture, { passive: false, capture: true });
-    return () => {
-      window.removeEventListener('wheel', handleWheelCapture, true);
-      document.documentElement.style.overscrollBehaviorX = prevHtmlOverscrollX;
-      document.body.style.overscrollBehaviorX = prevBodyOverscrollX;
-    };
   }, []);
 
   useEffect(() => {

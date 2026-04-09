@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { Minimize2, Trash2 } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
+import { usePreventHorizontalBrowserNavigationGesture } from '@/components/editors/shared/usePreventHorizontalBrowserNavigationGesture';
 import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
 import { useViewportCenterAnimation } from '@/components/editors/shared/useViewportCenterAnimation';
 import { HoverHelp } from '@/components/ui/hover-help';
@@ -278,6 +279,10 @@ export function WorldBoundaryEditor() {
   const initializedSceneIdRef = useRef<string | null>(null);
   const viewRef = useRef(view);
   const [backgroundRenderRevision, setBackgroundRenderRevision] = useState(0);
+
+  usePreventHorizontalBrowserNavigationGesture({
+    surfaceRef: stageRef,
+  });
 
   if (!backgroundCompositorRef.current) {
     backgroundCompositorRef.current = new TiledBackgroundCanvasCompositor({

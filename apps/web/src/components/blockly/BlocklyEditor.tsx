@@ -8,6 +8,7 @@ import {
 import * as Blockly from 'blockly';
 import { IconButton } from '@/components/ui/icon-button';
 import { Pin } from '@/components/ui/icons';
+import { usePreventHorizontalBrowserNavigationGesture } from '@/components/editors/shared/usePreventHorizontalBrowserNavigationGesture';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import {
@@ -517,12 +518,18 @@ export function BlocklyEditor() {
   const sceneDropdownStamp = project?.scenes
     .map((scene, index) => `${index}:${scene.id}:${scene.name}`)
     .join('|') ?? '';
+  const hasCodeTarget = !!selectedObjectId || !!selectedComponentId;
+
+  usePreventHorizontalBrowserNavigationGesture({
+    surfaceRef: containerRef,
+    enabled: activeObjectTab === 'code' && hasCodeTarget,
+  });
+
   const messageDropdownStamp = project?.messages
     .map((message, index) => `${index}:${message.id}:${message.name}`)
     .join('|') ?? '';
   const selectedScene = selectedSceneId ? project?.scenes.find((scene) => scene.id === selectedSceneId) : undefined;
   const selectedObject = selectedObjectId ? selectedScene?.objects.find((object) => object.id === selectedObjectId) : undefined;
-  const hasCodeTarget = !!selectedObjectId || !!selectedComponentId;
   const explicitlySelectedComponent = selectedComponentId
     ? (project?.components || []).find((component) => component.id === selectedComponentId)
     : undefined;
