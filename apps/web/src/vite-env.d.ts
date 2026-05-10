@@ -9,6 +9,7 @@ interface ImportMetaEnv {
   readonly VITE_CONVEX_URL?: string;
   readonly VITE_CONVEX_SITE_URL?: string;
   readonly VITE_APP_BRANCH?: string;
+  readonly VITE_COSTUME_EDITOR_PROVIDER?: string;
   readonly VITE_DESKTOP_AUTH_REDIRECT_URL?: string;
   readonly VITE_DESKTOP_AUTH_SIGN_IN_URL?: string;
   readonly VITE_DESKTOP_AUTH_SIGN_UP_URL?: string;

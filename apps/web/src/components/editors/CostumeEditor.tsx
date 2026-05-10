@@ -2197,7 +2197,7 @@ export function CostumeEditor() {
   }
 
   return (
-    <div className="relative flex h-full overflow-visible">
+    <div className="relative flex h-full overflow-visible" data-testid="pocha-costume-editor">
       <CostumeList
         costumes={costumes}
         activeCostumeId={activeCostumeId}

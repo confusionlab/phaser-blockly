@@ -1,0 +1,100 @@
+diff --git a/build/index.js b/build/index.js
+index 9dd5db54a1cd5c83211373a44b8587ebffb7668d..b7a509ce4386df744d9d1052ccea696eba7698a3 100644
+--- a/build/index.js
++++ b/build/index.js
+@@ -148,6 +148,12 @@ var Popover = function (_React$Component) {
+       Object.assign(_this, { containerEl: containerEl });
+     };
+ 
++    _this.getTargetNodeRef = function (targetEl) {
++      _this.targetEl = targetEl;
++      var childRef = _this.props.children && _this.props.children.ref;
++      if (typeof childRef === "function") childRef(targetEl);else if (childRef && typeof childRef === "object") childRef.current = targetEl;
++    };
++
+     _this.state = {
+       standing: "above",
+       exited: !_this.props.isOpen, // for animation-dependent rendering, should popover close/open?
+@@ -160,15 +166,6 @@ var Popover = function (_React$Component) {
+   _createClass(Popover, [{
+     key: "componentDidMount",
+     value: function componentDidMount() {
+-      /* Our component needs a DOM Node reference to the child so that it can be
+-      measured so that we can correctly layout the popover. We do not have any
+-      control over the child so cannot leverage refs. We could wrap our own
+-      primitive component around the child but that could lead to breaking the
+-      uses layout (e.g. the child is a flex item). Leveraging findDOMNode seems
+-      to be the only functional solution, despite all the general warnings not to
+-      use it. We have a legitimate use-case. */
+-      // eslint-disable-next-line
+-      this.targetEl = _reactDom2.default.findDOMNode(this);
+       if (this.props.isOpen) this.enter();
+     }
+   }, {
+@@ -516,6 +513,8 @@ var Popover = function (_React$Component) {
+           style = _props$style === undefined ? {} : _props$style,
+           tipSize = _props.tipSize;
+       var standing = this.state.standing;
++      var child = _react2.default.Children.only(this.props.children);
++      var target = _react2.default.isValidElement(child) ? _react2.default.cloneElement(child, { ref: this.getTargetNodeRef }) : child;
+ 
+ 
+       var popoverProps = {
+@@ -529,7 +528,7 @@ var Popover = function (_React$Component) {
+         _react2.default.createElement("div", { className: "Popover-body", children: this.props.body }),
+         _react2.default.createElement(_tip2.default, { direction: faces[standing], size: tipSize })
+       );
+-      return [this.props.children, _platform2.default.isClient && _reactDom2.default.createPortal(popover, this.props.appendTarget)];
++      return [target, _platform2.default.isClient && _reactDom2.default.createPortal(popover, this.props.appendTarget)];
+     }
+   }]);
+ 
+diff --git a/source/index.js b/source/index.js
+index c6138b9f180dde759998dd548b8c11b0fd0c3ad1..61979c5d2786b18e51ea31f3d4b72a154dfa11df 100644
+--- a/source/index.js
++++ b/source/index.js
+@@ -85,15 +85,6 @@ class Popover extends React.Component {
+     }
+   }
+   componentDidMount() {
+-    /* Our component needs a DOM Node reference to the child so that it can be
+-    measured so that we can correctly layout the popover. We do not have any
+-    control over the child so cannot leverage refs. We could wrap our own
+-    primitive component around the child but that could lead to breaking the
+-    uses layout (e.g. the child is a flex item). Leveraging findDOMNode seems
+-    to be the only functional solution, despite all the general warnings not to
+-    use it. We have a legitimate use-case. */
+-    // eslint-disable-next-line
+-    this.targetEl = ReactDOM.findDOMNode(this)
+     if (this.props.isOpen) this.enter()
+   }
+   componentWillReceiveProps(propsNext) {
+@@ -486,9 +477,19 @@ class Popover extends React.Component {
+   getContainerNodeRef = containerEl => {
+     Object.assign(this, { containerEl })
+   }
++  getTargetNodeRef = targetEl => {
++    this.targetEl = targetEl
++    const childRef = this.props.children && this.props.children.ref
++    if (typeof childRef === "function") childRef(targetEl)
++    else if (childRef && typeof childRef === "object") childRef.current = targetEl
++  }
+   render() {
+     const { className = "", style = {}, tipSize } = this.props
+     const { standing } = this.state
++    const child = React.Children.only(this.props.children)
++    const target = React.isValidElement(child)
++      ? React.cloneElement(child, { ref: this.getTargetNodeRef })
++      : child
+ 
+     const popoverProps = {
+       className: `Popover Popover-${standing} ${className}`,
+@@ -502,7 +503,7 @@ class Popover extends React.Component {
+       </div>
+     )
+     return [
+-      this.props.children,
++      target,
+       Platform.isClient &&
+         ReactDOM.createPortal(popover, this.props.appendTarget),
+     ]

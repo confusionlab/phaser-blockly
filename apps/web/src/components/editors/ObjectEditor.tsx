@@ -3,7 +3,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import type { ObjectEditorTab } from '@/store/editorStore';
 import { BlocklyEditor } from '../blockly/BlocklyEditor';
-import { CostumeEditor } from './CostumeEditor';
+import { CostumeEditorHost } from './CostumeEditorHost';
 import { SoundEditor } from './SoundEditor';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { IconButton } from '@/components/ui/icon-button';
@@ -153,7 +153,7 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
                 activeObjectTab !== 'costumes' && 'hidden',
               )}
             >
-              <CostumeEditor />
+              <CostumeEditorHost />
             </div>
           ) : null}
 
