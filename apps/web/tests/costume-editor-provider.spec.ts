@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type FrameLocator, type Page } from '@playwright/test';
 import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
 async function openCostumeTab(
@@ -91,8 +91,7 @@ async function readActiveCostumeDocumentSummary(page: Page): Promise<{
 }
 
 async function getScratchPaintCanvasBox(page: Page) {
-  const editor = page.getByTestId('scratch-paint-costume-editor');
-  const canvases = editor.locator('canvas');
+  const canvases = getScratchPaintFrame(page).locator('canvas');
   await expect.poll(async () => await canvases.count(), { timeout: 20000 }).toBeGreaterThan(0);
 
   const count = await canvases.count();
@@ -105,6 +104,10 @@ async function getScratchPaintCanvasBox(page: Page) {
   }
 
   throw new Error('Scratch Paint canvas did not expose a drawable bounding box.');
+}
+
+function getScratchPaintFrame(page: Page): FrameLocator {
+  return page.frameLocator('[data-testid="scratch-paint-frame"]');
 }
 
 async function chooseCostumeEditorFromMenu(page: Page, query: string): Promise<void> {
@@ -150,7 +153,7 @@ test('can toggle Scratch Paint and commit through the normal costume document', 
   await expect(page.getByTestId('pocha-costume-editor')).toHaveCount(0);
 
   const beforeAssetId = await readActiveCostumeAssetId(page);
-  await page.getByTestId('scratch-paint-costume-editor').getByRole('button', { name: /^Brush$/ }).click();
+  await getScratchPaintFrame(page).getByRole('button', { name: /^Brush$/ }).click();
   const canvasBox = await getScratchPaintCanvasBox(page);
   await page.mouse.move(canvasBox.x + canvasBox.width * 0.35, canvasBox.y + canvasBox.height * 0.45);
   await page.mouse.down();
@@ -170,7 +173,7 @@ test('preserves Scratch Paint vector source while keeping a normal runtime bitma
   await openCostumeTab(page, `Scratch Vector Source ${Date.now()}`, 'scratch');
 
   await expect(page.getByTestId('scratch-paint-costume-editor')).toBeVisible({ timeout: 20000 });
-  await page.getByTestId('scratch-paint-costume-editor').getByRole('button', { name: /convert to vector/i }).click();
+  await getScratchPaintFrame(page).getByRole('button', { name: /convert to vector/i }).click();
 
   await expect.poll(async () => {
     const summary = await readActiveCostumeDocumentSummary(page);
@@ -185,11 +188,56 @@ test('preserves Scratch Paint vector source while keeping a normal runtime bitma
   expect(summary.editorSourceText).toContain('<svg');
 });
 
+test('Scratch Paint vector moves do not block the rest of the editor UI', async ({ page }) => {
+  await openCostumeTab(page, `Scratch Vector Drag Release ${Date.now()}`, 'scratch');
+
+  const editor = page.getByTestId('scratch-paint-costume-editor');
+  await expect(editor).toBeVisible({ timeout: 20000 });
+  const frame = getScratchPaintFrame(page);
+  await frame.getByRole('button', { name: /convert to vector/i }).click();
+
+  const canvasBox = await getScratchPaintCanvasBox(page);
+  await frame.getByRole('button', { name: /^Rectangle$/i }).click();
+  await page.mouse.move(canvasBox.x + canvasBox.width * 0.44, canvasBox.y + canvasBox.height * 0.44);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.x + canvasBox.width * 0.58, canvasBox.y + canvasBox.height * 0.58, { steps: 12 });
+  await page.mouse.up();
+
+  await expect.poll(async () => {
+    const summary = await readActiveCostumeDocumentSummary(page);
+    return summary.editorSourceText;
+  }, { timeout: 20000 }).toContain('<svg');
+  const sourceBeforeMove = (await readActiveCostumeDocumentSummary(page)).editorSourceText;
+  expect(sourceBeforeMove).toBeTruthy();
+
+  await frame.getByRole('button', { name: /^Select$/i }).click();
+  await page.mouse.move(canvasBox.x + canvasBox.width * 0.51, canvasBox.y + canvasBox.height * 0.51);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.x + canvasBox.width * 0.62, canvasBox.y + canvasBox.height * 0.6, { steps: 18 });
+  await page.mouse.up();
+
+  await expect.poll(async () => {
+    const summary = await readActiveCostumeDocumentSummary(page);
+    return summary.editorSourceText;
+  }, { timeout: 20000 }).not.toBe(sourceBeforeMove);
+
+  await page.getByRole('radio', { name: /^Code$/i }).click();
+  await expect.poll(async () => {
+    return await page.evaluate(async () => {
+      const { useEditorStore } = await import('/src/store/editorStore.ts');
+      return useEditorStore.getState().activeObjectTab;
+    });
+  }, { timeout: 10000 }).toBe('code');
+
+  await page.getByRole('button', { name: /open workspace menu/i }).click();
+  await expect(page.getByRole('textbox', { name: /search workspace menu/i })).toBeVisible();
+});
+
 test('Scratch Paint vector costumes keep their native editor when the default is Pocha', async ({ page }) => {
   await openCostumeTab(page, `Scratch Native Routing ${Date.now()}`, 'scratch');
 
   await expect(page.getByTestId('scratch-paint-costume-editor')).toBeVisible({ timeout: 20000 });
-  await page.getByTestId('scratch-paint-costume-editor').getByRole('button', { name: /convert to vector/i }).click();
+  await getScratchPaintFrame(page).getByRole('button', { name: /convert to vector/i }).click();
 
   await expect.poll(async () => {
     const summary = await readActiveCostumeDocumentSummary(page);

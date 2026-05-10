@@ -1,8 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { IntlProvider } from 'react-intl';
-import { Provider as ReduxProvider } from 'react-redux';
-import { combineReducers, createStore } from 'redux';
-import PaintEditor, { ScratchPaintReducer } from 'scratch-paint/dist/scratch-paint';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { CostumeList } from '@/components/editors/costume/CostumeList';
 import { Palette, TriangleAlert } from '@/components/ui/icons';
@@ -36,23 +32,21 @@ import type {
   CostumeEditorPersistedState,
   CostumeEditorTarget,
 } from '@/lib/editor/costumeEditorSession';
+import {
+  SCRATCH_PAINT_FRAME_LOAD,
+  SCRATCH_PAINT_FRAME_RENAME,
+  SCRATCH_PAINT_FRAME_READY,
+  SCRATCH_PAINT_FRAME_UPDATE,
+  getScratchPaintFrameTargetOrigin,
+  type ScratchPaintFrameLoadMessage,
+  type ScratchPaintFrameMessage,
+  type ScratchPaintFrameRenameMessage,
+  type ScratchPaintFrameUpdateMessage,
+  type ScratchPaintImageState,
+} from './ScratchPaintFrameTypes';
 
 const SCRATCH_STAGE_SIZE = 1024;
 const SCRATCH_STAGE_CENTER = SCRATCH_STAGE_SIZE / 2;
-
-type ScratchImageFormat = 'png' | 'svg' | 'jpg';
-
-interface ScratchPaintImageState {
-  image: string;
-  imageFormat: ScratchImageFormat;
-  imageId: string;
-  rotationCenterX: number;
-  rotationCenterY: number;
-}
-
-function createScratchPaintStore() {
-  return createStore(combineReducers({ scratchPaint: ScratchPaintReducer }));
-}
 
 function createObjectTarget(
   sceneId: string | null,
@@ -140,6 +134,7 @@ async function createScratchImageStateFromCostume(costume: Costume): Promise<Scr
       image: costume.editorSource.source,
       imageFormat: costume.editorSource.format,
       imageId: costume.id,
+      name: costume.name || 'costume',
       rotationCenterX: costume.editorSource.rotationCenterX,
       rotationCenterY: costume.editorSource.rotationCenterY,
     };
@@ -150,6 +145,7 @@ async function createScratchImageStateFromCostume(costume: Costume): Promise<Scr
     image: preview.dataUrl || costume.assetId,
     imageFormat: 'png',
     imageId: costume.id,
+    name: costume.name || 'costume',
     rotationCenterX: SCRATCH_STAGE_CENTER,
     rotationCenterY: SCRATCH_STAGE_CENTER,
   };
@@ -159,8 +155,46 @@ function cloneCostumes(costumes: Costume[]): Costume[] {
   return costumes.map((costume) => cloneCostume(costume));
 }
 
+function getScratchPaintFrameSrc(): string {
+  if (typeof window === 'undefined') {
+    return '/scratch-paint-frame';
+  }
+
+  const isHashRouter = Boolean(window.desktopAssistant) || window.location.protocol === 'file:';
+  if (isHashRouter) {
+    const url = new URL(window.location.href);
+    url.hash = '/scratch-paint-frame';
+    return url.toString();
+  }
+
+  return new URL('/scratch-paint-frame', window.location.origin).toString();
+}
+
+function isFrameReadyMessage(data: unknown): data is ScratchPaintFrameMessage {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as ScratchPaintFrameMessage).type === SCRATCH_PAINT_FRAME_READY
+  );
+}
+
+function isFrameUpdateMessage(data: unknown): data is ScratchPaintFrameUpdateMessage {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as ScratchPaintFrameMessage).type === SCRATCH_PAINT_FRAME_UPDATE
+  );
+}
+
+function isFrameRenameMessage(data: unknown): data is ScratchPaintFrameRenameMessage {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as ScratchPaintFrameMessage).type === SCRATCH_PAINT_FRAME_RENAME
+  );
+}
+
 export function ScratchPaintCostumeEditor() {
-  const scratchStore = useMemo(() => createScratchPaintStore(), []);
   const {
     project,
     updateObject,
@@ -179,7 +213,9 @@ export function ScratchPaintCostumeEditor() {
   const [scratchImageState, setScratchImageState] = useState<ScratchPaintImageState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPreparingImage, setIsPreparingImage] = useState(false);
+  const [isFrameReady, setIsFrameReady] = useState(false);
   const commitSequenceRef = useRef(0);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const latestCommittedImageRef = useRef<string | null>(null);
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
@@ -370,14 +406,9 @@ export function ScratchPaintCostumeEditor() {
       return;
     }
 
+    // Scratch Paint owns the live Paper.js document while mounted. Feeding its exported image
+    // back into props during a drag can interrupt legacy pointer state; persist outward only.
     latestCommittedImageRef.current = source;
-    setScratchImageState({
-      image: source,
-      imageFormat: isVector ? 'svg' : 'png',
-      imageId: currentCostume.id,
-      rotationCenterX: rotationCenterX ?? SCRATCH_STAGE_CENTER,
-      rotationCenterY: rotationCenterY ?? SCRATCH_STAGE_CENTER,
-    });
 
     const nextState: CostumeEditorPersistedState = {
       kind: 'static',
@@ -397,6 +428,49 @@ export function ScratchPaintCostumeEditor() {
       history: { source: 'project:update-scratch-paint-costume', allowMerge: true },
     });
   }, [currentCostume, currentCostumeTarget, updateCostumeFromEditor]);
+
+  useEffect(() => {
+    const handleFrameMessage = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) {
+        return;
+      }
+
+      if (isFrameReadyMessage(event.data)) {
+        setIsFrameReady(true);
+        return;
+      }
+
+      if (isFrameUpdateMessage(event.data)) {
+        void commitScratchImage(
+          event.data.isVector,
+          event.data.image,
+          event.data.rotationCenterX,
+          event.data.rotationCenterY,
+        );
+        return;
+      }
+
+      if (isFrameRenameMessage(event.data) && activeCostumeId) {
+        setScratchImageState((current) => current ? { ...current, name: event.data.name } : current);
+        applyOperationToCurrentObject({ type: 'rename', costumeId: activeCostumeId, name: event.data.name });
+      }
+    };
+
+    window.addEventListener('message', handleFrameMessage);
+    return () => window.removeEventListener('message', handleFrameMessage);
+  }, [activeCostumeId, applyOperationToCurrentObject, commitScratchImage]);
+
+  useEffect(() => {
+    if (!isFrameReady || !scratchImageState) {
+      return;
+    }
+
+    const message: ScratchPaintFrameLoadMessage = {
+      type: SCRATCH_PAINT_FRAME_LOAD,
+      payload: scratchImageState,
+    };
+    iframeRef.current?.contentWindow?.postMessage(message, getScratchPaintFrameTargetOrigin());
+  }, [isFrameReady, scratchImageState]);
 
   useEffect(() => {
     const handler: UndoRedoHandler = {
@@ -456,30 +530,14 @@ export function ScratchPaintCostumeEditor() {
               </Button>
             </div>
           ) : scratchImageState ? (
-            <div className="min-h-0 flex-1 overflow-hidden [&_.paint-editor_paint-editor_*]:font-sans">
-              <ReduxProvider store={scratchStore}>
-                <IntlProvider locale="en" defaultLocale="en">
-                  <PaintEditor
-                    image={scratchImageState.image}
-                    imageFormat={scratchImageState.imageFormat}
-                    imageId={scratchImageState.imageId}
-                    name={currentCostume?.name ?? 'costume'}
-                    rotationCenterX={scratchImageState.rotationCenterX}
-                    rotationCenterY={scratchImageState.rotationCenterY}
-                    rtl={false}
-                    zoomLevelId={currentCostume?.id}
-                    onUpdateImage={(isVector, image, rotationCenterX, rotationCenterY) => {
-                      void commitScratchImage(isVector, image, rotationCenterX, rotationCenterY);
-                    }}
-                    onUpdateName={(name) => {
-                      if (activeCostumeId) {
-                        applyOperationToCurrentObject({ type: 'rename', costumeId: activeCostumeId, name });
-                      }
-                    }}
-                  />
-                </IntlProvider>
-              </ReduxProvider>
-            </div>
+            <iframe
+              ref={iframeRef}
+              title="Scratch Paint costume editor"
+              src={getScratchPaintFrameSrc()}
+              sandbox="allow-scripts allow-same-origin"
+              className="min-h-0 flex-1 border-0 bg-card"
+              data-testid="scratch-paint-frame"
+            />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
               <Palette className="size-8 opacity-40" />

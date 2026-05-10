@@ -1,4 +1,4 @@
-import { StrictMode } from 'react'
+import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, HashRouter } from 'react-router-dom'
 import { useAuth, ClerkProvider } from '@clerk/clerk-react'
@@ -11,6 +11,10 @@ import App from './App.tsx'
 import { getConvexCloudUrl } from '@/lib/convexEnv'
 import { resolveDesktopAuthUrls } from '@/lib/desktopAuthUrls'
 import { useClerkAppearance } from '@/lib/useClerkAppearance'
+
+const ScratchPaintFrameApp = lazy(() => import('./components/editors/scratch/ScratchPaintFrameApp').then((module) => ({
+  default: module.ScratchPaintFrameApp,
+})))
 
 function trimOrUndefined(value: string | undefined): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -56,61 +60,76 @@ if (!rootElement) {
   throw new Error('Root element not found')
 }
 
-if (!convexUrl || !clerkPublishableKey) {
-  createRoot(rootElement).render(
+function isScratchPaintFrameRoute(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.location.pathname === '/scratch-paint-frame' || window.location.hash === '#/scratch-paint-frame'
+}
+
+const root = createRoot(rootElement)
+
+if (isScratchPaintFrameRoute()) {
+  root.render(
+    <Suspense fallback={null}>
+      <ScratchPaintFrameApp />
+    </Suspense>,
+  )
+} else {
+  if (!convexUrl || !clerkPublishableKey) {
+    root.render(
+      <StrictMode>
+        <div style={{ padding: '24px', fontFamily: 'system-ui, sans-serif' }}>
+          Missing required env.
+          {!convexUrl ? (
+            <>
+              {' '}
+              Set `VITE_CONVEX_URL`.
+            </>
+          ) : null}
+          {!clerkPublishableKey
+            ? ' Set `VITE_CLERK_PUBLISHABLE_KEY_DEV` and `VITE_CLERK_PUBLISHABLE_KEY_PROD` (or fallback `VITE_CLERK_PUBLISHABLE_KEY`).'
+            : null}
+        </div>
+      </StrictMode>,
+    )
+    throw new Error('Missing required env for Convex/Clerk bootstrap.')
+  }
+
+  const convex = new ConvexReactClient(convexUrl)
+  const resolvedClerkPublishableKey = clerkPublishableKey
+
+  function RootApp() {
+    const clerkAppearance = useClerkAppearance()
+
+    return (
+      <ClerkProvider
+        publishableKey={resolvedClerkPublishableKey}
+        standardBrowser={!isFileProtocol}
+        appearance={clerkAppearance}
+        signInUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.signInUrl : undefined}
+        signUpUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.signUpUrl : undefined}
+        signInForceRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
+        signUpForceRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
+        signInFallbackRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
+        signUpFallbackRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
+      >
+        <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+          {isDesktopRuntime ? (
+            <HashRouter>
+              <App />
+            </HashRouter>
+          ) : (
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          )}
+        </ConvexProviderWithClerk>
+      </ClerkProvider>
+    )
+  }
+
+  root.render(
     <StrictMode>
-      <div style={{ padding: '24px', fontFamily: 'system-ui, sans-serif' }}>
-        Missing required env.
-        {!convexUrl ? (
-          <>
-            {' '}
-            Set `VITE_CONVEX_URL`.
-          </>
-        ) : null}
-        {!clerkPublishableKey
-          ? ' Set `VITE_CLERK_PUBLISHABLE_KEY_DEV` and `VITE_CLERK_PUBLISHABLE_KEY_PROD` (or fallback `VITE_CLERK_PUBLISHABLE_KEY`).'
-          : null}
-      </div>
+      <RootApp />
     </StrictMode>,
   )
-  throw new Error('Missing required env for Convex/Clerk bootstrap.')
 }
-
-const convex = new ConvexReactClient(convexUrl)
-const resolvedClerkPublishableKey = clerkPublishableKey
-
-function RootApp() {
-  const clerkAppearance = useClerkAppearance()
-
-  return (
-    <ClerkProvider
-      publishableKey={resolvedClerkPublishableKey}
-      standardBrowser={!isFileProtocol}
-      appearance={clerkAppearance}
-      signInUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.signInUrl : undefined}
-      signUpUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.signUpUrl : undefined}
-      signInForceRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
-      signUpForceRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
-      signInFallbackRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
-      signUpFallbackRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
-    >
-      <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
-        {isDesktopRuntime ? (
-          <HashRouter>
-            <App />
-          </HashRouter>
-        ) : (
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        )}
-      </ConvexProviderWithClerk>
-    </ClerkProvider>
-  )
-}
-
-createRoot(rootElement).render(
-  <StrictMode>
-    <RootApp />
-  </StrictMode>,
-)
