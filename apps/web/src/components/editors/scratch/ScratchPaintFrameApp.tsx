@@ -31,6 +31,69 @@ export function ScratchPaintFrameApp() {
   const [imageState, setImageState] = useState<ScratchPaintImageState | null>(null);
 
   useEffect(() => {
+    const requestScratchResize = () => {
+      window.dispatchEvent(new Event('resize'));
+    };
+
+    const frameId = window.requestAnimationFrame(requestScratchResize);
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => requestScratchResize());
+
+    observer?.observe(document.documentElement);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      observer?.disconnect();
+    };
+  }, [imageState?.imageId]);
+
+  useEffect(() => {
+    let dragFrameId = 0;
+    let isDragging = false;
+
+    const repaintWhileDragging = () => {
+      window.dispatchEvent(new Event('resize'));
+      if (isDragging) {
+        dragFrameId = window.requestAnimationFrame(repaintWhileDragging);
+      }
+    };
+
+    const startDragPaintLoop = () => {
+      if (isDragging) {
+        return;
+      }
+      isDragging = true;
+      dragFrameId = window.requestAnimationFrame(repaintWhileDragging);
+    };
+
+    const stopDragPaintLoop = () => {
+      isDragging = false;
+      if (dragFrameId) {
+        window.cancelAnimationFrame(dragFrameId);
+        dragFrameId = 0;
+      }
+      window.dispatchEvent(new Event('resize'));
+    };
+
+    document.addEventListener('mousedown', startDragPaintLoop, { capture: true });
+    document.addEventListener('touchstart', startDragPaintLoop, { capture: true });
+    window.addEventListener('mouseup', stopDragPaintLoop, { capture: true });
+    window.addEventListener('touchend', stopDragPaintLoop, { capture: true });
+    window.addEventListener('touchcancel', stopDragPaintLoop, { capture: true });
+    window.addEventListener('blur', stopDragPaintLoop);
+
+    return () => {
+      document.removeEventListener('mousedown', startDragPaintLoop, { capture: true });
+      document.removeEventListener('touchstart', startDragPaintLoop, { capture: true });
+      window.removeEventListener('mouseup', stopDragPaintLoop, { capture: true });
+      window.removeEventListener('touchend', stopDragPaintLoop, { capture: true });
+      window.removeEventListener('touchcancel', stopDragPaintLoop, { capture: true });
+      window.removeEventListener('blur', stopDragPaintLoop);
+      stopDragPaintLoop();
+    };
+  }, []);
+
+  useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== window.parent || !isFrameLoadMessage(event.data)) {
         return;

@@ -252,6 +252,7 @@ export function ScratchPaintCostumeEditor() {
     }
 
     let cancelled = false;
+    setIsFrameReady(false);
     setIsPreparingImage(true);
     setLoadError(null);
     void createScratchImageStateFromCostume(currentCostume).then((nextState) => {
@@ -531,6 +532,7 @@ export function ScratchPaintCostumeEditor() {
             </div>
           ) : scratchImageState ? (
             <iframe
+              key={scratchImageState.imageId}
               ref={iframeRef}
               title="Scratch Paint costume editor"
               src={getScratchPaintFrameSrc()}
