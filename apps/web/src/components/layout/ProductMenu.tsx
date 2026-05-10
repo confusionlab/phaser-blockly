@@ -14,6 +14,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import {
+  setCostumeEditorProvider,
+  useCostumeEditorProvider,
+} from '@/lib/appVariant';
 import { cn } from '@/lib/utils';
 
 type ProductMenuActionItem = {
@@ -218,6 +222,7 @@ export function ProductMenu({
 }: ProductMenuProps) {
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const costumeEditorProvider = useCostumeEditorProvider();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const menuItems = useMemo<ProductMenuItem[]>(() => {
@@ -259,6 +264,39 @@ export function ProductMenu({
 
     items.push({
       kind: 'submenu',
+      id: 'editor',
+      label: 'Editor',
+      keywords: ['editor', 'costume', 'paint', 'scratch', 'pocha'],
+      children: [
+        {
+          kind: 'submenu',
+          id: 'costume-editor',
+          label: 'Default Costume Editor',
+          keywords: ['costume', 'editor', 'paint', 'scratch', 'pocha'],
+          children: [
+            {
+              kind: 'toggle',
+              id: 'costume-editor-pocha',
+              label: 'Pocha',
+              keywords: ['costume', 'editor', 'pocha', 'default'],
+              checked: costumeEditorProvider === 'pocha',
+              onToggle: () => setCostumeEditorProvider('pocha'),
+            },
+            {
+              kind: 'toggle',
+              id: 'costume-editor-scratch',
+              label: 'Scratch Paint',
+              keywords: ['costume', 'editor', 'scratch', 'paint', 'penguin'],
+              checked: costumeEditorProvider === 'scratch',
+              onToggle: () => setCostumeEditorProvider('scratch'),
+            },
+          ],
+        },
+      ],
+    });
+
+    items.push({
+      kind: 'submenu',
       id: 'blocks',
       label: 'Blocks',
       keywords: ['blocks', 'toolbox', 'advanced', 'beginner', 'simple'],
@@ -293,6 +331,7 @@ export function ProductMenu({
     return items;
   }, [
     hasProject,
+    costumeEditorProvider,
     isDarkMode,
     onToggleAdvancedBlocks,
     onExportProject,

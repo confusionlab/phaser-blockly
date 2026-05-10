@@ -29,6 +29,10 @@ import {
   sanitizeCostumeAssetFrame,
 } from './costumeAssetFrame';
 import {
+  cloneCostumeEditorSource,
+  sanitizeCostumeEditorSource,
+} from './costumeEditorSource';
+import {
   duplicateDocumentLayer,
   getActiveDocumentLayer,
   getDocumentLayerById,
@@ -57,6 +61,7 @@ type LegacyCostumeShape = {
   clip?: unknown;
   document?: unknown;
   editorMode?: unknown;
+  editorSource?: unknown;
   vectorDocument?: unknown;
 };
 
@@ -1648,6 +1653,7 @@ export function sanitizeCostume(value: unknown): Costume | null {
     bounds,
     assetFrame,
     document: migrateLegacyCostumeDocument(maybe),
+    editorSource: sanitizeCostumeEditorSource(maybe.editorSource),
   };
 }
 
@@ -1667,5 +1673,6 @@ export function cloneCostume(costume: Costume): Costume {
     bounds: costume.bounds ? { ...costume.bounds } : undefined,
     assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
     document: cloneCostumeDocument(costume.document),
+    editorSource: cloneCostumeEditorSource(costume.editorSource),
   };
 }

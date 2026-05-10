@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { getCostumeEditorProvider } from '@/lib/appVariant';
+import { useCostumeEditorProvider } from '@/lib/appVariant';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
+import { getEffectiveObjectProps } from '@/types';
 import { CostumeEditor } from './CostumeEditor';
 import { TriangleAlert } from '@/components/ui/icons';
 
@@ -44,7 +47,24 @@ function ScratchPaintCostumeEditorLoader() {
 }
 
 export function CostumeEditorHost() {
-  const provider = getCostumeEditorProvider();
+  const defaultProvider = useCostumeEditorProvider();
+  const { project } = useProjectStore();
+  const {
+    selectedSceneId,
+    selectedObjectId,
+    selectedComponentId,
+  } = useEditorStore();
+  const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
+  const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
+  const component = (project?.components || []).find((candidate) => candidate.id === selectedComponentId);
+  const effectiveProps = object && project ? getEffectiveObjectProps(object, project.components || []) : null;
+  const costumes = component?.costumes ?? effectiveProps?.costumes ?? [];
+  const currentCostumeIndex = component?.currentCostumeIndex ?? effectiveProps?.currentCostumeIndex ?? 0;
+  const currentCostume = costumes[currentCostumeIndex] ?? costumes[0] ?? null;
+  const provider = currentCostume?.kind === 'static' && currentCostume.editorSource?.engine === 'scratch-paint'
+    ? 'scratch'
+    : defaultProvider;
+
   if (provider !== 'scratch') {
     return <CostumeEditor />;
   }

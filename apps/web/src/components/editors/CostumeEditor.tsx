@@ -104,6 +104,10 @@ import {
   cloneCostumeAssetFrame,
 } from '@/lib/costume/costumeAssetFrame';
 import {
+  areCostumeEditorSourcesEqual,
+  cloneCostumeEditorSource,
+} from '@/lib/costume/costumeEditorSource';
+import {
   renderAnimatedCostumePosterPreview,
   renderCostumeDocument,
 } from '@/lib/costume/costumeDocumentRender';
@@ -137,6 +141,7 @@ function clonePersistedState(
     assetFrame: cloneCostumeAssetFrame(state.assetFrame),
     document: cloneCostumeDocument(state.document),
     clip: state.clip ? cloneAnimatedCostumeClip(state.clip) : undefined,
+    editorSource: state.editorSource === null ? null : cloneCostumeEditorSource(state.editorSource),
   };
 }
 
@@ -170,7 +175,8 @@ function arePersistedStatesEqual(
     areCostumeBoundsEqual(a.bounds, b.bounds) &&
     areCostumeAssetFramesEqual(a.assetFrame, b.assetFrame) &&
     areCostumeDocumentsEqual(a.document, b.document) &&
-    areAnimatedClipsEqual(a.clip, b.clip)
+    areAnimatedClipsEqual(a.clip, b.clip) &&
+    areCostumeEditorSourcesEqual(a.editorSource, b.editorSource)
   );
 }
 
@@ -541,6 +547,7 @@ export function CostumeEditor() {
       assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
       document: cloneCostumeDocument(costume.document),
       clip: isAnimatedCostume(costume) ? cloneAnimatedCostumeClip(costume.clip) : undefined,
+      editorSource: isAnimatedCostume(costume) ? undefined : cloneCostumeEditorSource(costume.editorSource),
     };
   }, []);
   const storePersistedState = useMemo(() => {
@@ -753,6 +760,7 @@ export function CostumeEditor() {
             ? materializeAnimatedFrame(nextState.clip, 0)
             : nextState.document,
           clip: nextState.clip ? cloneAnimatedCostumeClip(nextState.clip) : undefined,
+          editorSource: nextState.editorSource === null ? null : cloneCostumeEditorSource(nextState.editorSource),
         };
 
         const didApply = updateCostumeFromEditor(session, refreshedState, {
@@ -845,6 +853,7 @@ export function CostumeEditor() {
         ? materializeAnimatedFrame(baseState.clip, 0)
         : cloneCostumeDocument(baseState.document),
       clip: baseState.clip ? cloneAnimatedCostumeClip(baseState.clip) : undefined,
+      editorSource: baseState.editorSource === null ? null : cloneCostumeEditorSource(baseState.editorSource),
     };
 
     updateCostumeFromEditor(currentSession, runtimeReadyState, {
@@ -929,6 +938,7 @@ export function CostumeEditor() {
         assetFrame: cloneCostumeAssetFrame(baseState.assetFrame),
         document: nextDocument,
         clip: baseState.clip ? cloneAnimatedCostumeClip(baseState.clip) : undefined,
+        editorSource: null,
       };
 
       const latestSession = currentSessionRef.current;

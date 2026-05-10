@@ -6,6 +6,7 @@ import type {
   CostumeAssetFrame,
   CostumeBounds,
   CostumeDocument,
+  CostumeEditorSource,
   CostumeLayer,
   GameObject,
   Project,
@@ -24,6 +25,10 @@ import {
   areCostumeAssetFramesEqual,
   cloneCostumeAssetFrame,
 } from '@/lib/costume/costumeAssetFrame';
+import {
+  areCostumeEditorSourcesEqual,
+  cloneCostumeEditorSource,
+} from '@/lib/costume/costumeEditorSource';
 import {
   reorderAssetList,
   resolveNextActiveAssetIdAfterRemoval,
@@ -66,6 +71,7 @@ export interface CostumeEditorPersistedState {
   assetFrame?: CostumeAssetFrame;
   document: CostumeDocument;
   clip?: AnimatedCostumeClip;
+  editorSource?: CostumeEditorSource | null;
 }
 
 export interface CostumeEditorPersistedSession {
@@ -209,6 +215,7 @@ function clonePersistedState(
     assetFrame: cloneCostumeAssetFrame(state.assetFrame),
     document: cloneCostumeDocument(state.document),
     clip: state.clip ? cloneAnimatedCostumeClip(state.clip) : undefined,
+    editorSource: state.editorSource === null ? null : cloneCostumeEditorSource(state.editorSource),
   };
 }
 
@@ -224,6 +231,7 @@ function createPersistedStateFromCostume(costume: Costume | null | undefined): C
     assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
     document: cloneCostumeDocument(ensureCostumeDocument(costume)),
     clip: isAnimatedCostume(costume) ? cloneAnimatedCostumeClip(costume.clip) : undefined,
+    editorSource: isAnimatedCostume(costume) ? undefined : cloneCostumeEditorSource(costume.editorSource),
   };
 }
 
@@ -259,6 +267,7 @@ export function resolveCostumeEditorPersistedState(
   return {
     ...baseState,
     document: applyCanvasStateToCostumeDocument(baseState.document, options.liveCanvasState),
+    editorSource: null,
   };
 }
 
@@ -281,22 +290,44 @@ export function applyCostumeEditorState(
   const nextClip = nextKind === 'animated'
     ? cloneAnimatedCostumeClip(state.clip ?? (isAnimatedCostume(costume) ? costume.clip : createAnimatedCostumeClipFromDocument(nextDocument)))
     : undefined;
+  const nextEditorSource = nextKind === 'static'
+    ? (state.editorSource === undefined
+      ? (!isAnimatedCostume(costume) ? cloneCostumeEditorSource(costume.editorSource) : undefined)
+      : state.editorSource === null
+        ? undefined
+        : cloneCostumeEditorSource(state.editorSource))
+    : undefined;
 
   const noAssetChange = costume.assetId === state.assetId;
   const noBoundsChange = areCostumeBoundsEqual(costume.bounds, nextBounds);
   const noAssetFrameChange = areCostumeAssetFramesEqual(costume.assetFrame, state.assetFrame);
   const noDocumentChange = areCostumeDocumentsEqual(costume.document, nextDocument);
+  const noEditorSourceChange = isAnimatedCostume(costume)
+    ? !nextEditorSource
+    : areCostumeEditorSourcesEqual(costume.editorSource, nextEditorSource);
   const noClipChange = nextKind !== 'animated'
     ? !isAnimatedCostume(costume)
     : (isAnimatedCostume(costume) && JSON.stringify(costume.clip) === JSON.stringify(nextClip));
-  if (noAssetChange && noBoundsChange && noAssetFrameChange && noDocumentChange && noClipChange && costume.kind === nextKind) {
+  if (
+    noAssetChange &&
+    noBoundsChange &&
+    noAssetFrameChange &&
+    noDocumentChange &&
+    noEditorSourceChange &&
+    noClipChange &&
+    costume.kind === nextKind
+  ) {
     return null;
   }
 
   return costumes.map((entry, index) =>
     index === costumeIndex
       ? (() => {
-          const { clip: _existingClip, ...restEntry } = entry as Costume & { clip?: AnimatedCostumeClip };
+          const {
+            clip: _existingClip,
+            editorSource: _existingEditorSource,
+            ...restEntry
+          } = entry as Costume & { clip?: AnimatedCostumeClip; editorSource?: CostumeEditorSource };
           return {
             ...restEntry,
             kind: nextKind,
@@ -308,7 +339,9 @@ export function applyCostumeEditorState(
               ? {
                   clip: cloneAnimatedCostumeClip(nextClip!),
                 }
-              : {}),
+              : nextEditorSource
+                ? { editorSource: cloneCostumeEditorSource(nextEditorSource) }
+                : {}),
           } as Costume;
         })()
       : entry

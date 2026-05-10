@@ -237,6 +237,17 @@ export interface CostumeDocument {
   layers: CostumeLayer[];
 }
 
+export interface ScratchPaintCostumeEditorSource {
+  engine: 'scratch-paint';
+  version: 1;
+  format: 'svg';
+  source: string;
+  rotationCenterX: number;
+  rotationCenterY: number;
+}
+
+export type CostumeEditorSource = ScratchPaintCostumeEditorSource;
+
 export type AnimatedCostumePlayback = 'play-once' | 'loop' | 'ping-pong';
 
 export interface AnimatedCostumeCelBase {
@@ -311,6 +322,7 @@ export interface CostumeBase {
 export interface StaticCostume extends CostumeBase {
   kind: 'static';
   document: CostumeDocument; // Canonical source of truth for persisted artwork
+  editorSource?: CostumeEditorSource; // Optional source for external editors; runtime still uses assetId/document
 }
 
 export interface AnimatedCostume extends CostumeBase {

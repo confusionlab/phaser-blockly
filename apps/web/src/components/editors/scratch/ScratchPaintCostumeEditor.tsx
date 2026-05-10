@@ -29,6 +29,7 @@ import {
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import { getCanvas2dContext } from '@/utils/canvas2d';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
+import { createScratchPaintSvgEditorSource } from '@/lib/costume/costumeEditorSource';
 import type { Costume, CostumeBounds } from '@/types';
 import type {
   CostumeEditorObjectTarget,
@@ -134,6 +135,16 @@ async function composeScratchImageToCostumeSurface(
 }
 
 async function createScratchImageStateFromCostume(costume: Costume): Promise<ScratchPaintImageState> {
+  if (costume.kind === 'static' && costume.editorSource?.engine === 'scratch-paint') {
+    return {
+      image: costume.editorSource.source,
+      imageFormat: costume.editorSource.format,
+      imageId: costume.id,
+      rotationCenterX: costume.editorSource.rotationCenterX,
+      rotationCenterY: costume.editorSource.rotationCenterY,
+    };
+  }
+
   const preview = await renderCostumePreview(costume);
   return {
     image: preview.dataUrl || costume.assetId,
@@ -344,14 +355,17 @@ export function ScratchPaintCostumeEditor() {
     }
 
     const source = typeof image === 'string'
-      ? (isVector ? svgStringToDataUrl(image) : image)
+      ? image
       : imageDataToDataUrl(image);
     if (source === latestCommittedImageRef.current) {
       return;
     }
 
     const sequence = ++commitSequenceRef.current;
-    const composed = await composeScratchImageToCostumeSurface(source, rotationCenterX, rotationCenterY);
+    const sourceForComposition = isVector && typeof image === 'string'
+      ? svgStringToDataUrl(image)
+      : source;
+    const composed = await composeScratchImageToCostumeSurface(sourceForComposition, rotationCenterX, rotationCenterY);
     if (sequence !== commitSequenceRef.current) {
       return;
     }
@@ -370,6 +384,13 @@ export function ScratchPaintCostumeEditor() {
       assetId: composed.dataUrl,
       bounds: composed.bounds,
       document: createBitmapCostumeDocument(composed.dataUrl, currentCostume.name || 'Layer 1'),
+      editorSource: isVector && typeof image === 'string'
+        ? createScratchPaintSvgEditorSource({
+            source: image,
+            rotationCenterX: rotationCenterX ?? SCRATCH_STAGE_CENTER,
+            rotationCenterY: rotationCenterY ?? SCRATCH_STAGE_CENTER,
+          })
+        : null,
     };
 
     updateCostumeFromEditor(currentCostumeTarget, nextState, {
