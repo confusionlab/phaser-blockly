@@ -5,7 +5,7 @@ import type { Id } from '@convex-generated/dataModel';
 import { Button } from '@/components/ui/button';
 import { LibraryBrowserDialog } from '@/components/dialogs/LibraryBrowserDialog';
 import { Loader2, Upload } from '@/components/ui/icons';
-import type { CostumeBounds, CostumeDocument } from '@/types';
+import type { CostumeBounds, CostumeDocument, CostumeEditorSource } from '@/types';
 import { processImage } from '@/utils/imageProcessor';
 import { createBitmapCostumeDocument, createStaticCostumeFromDocument } from '@/lib/costume/costumeDocument';
 import {
@@ -24,6 +24,7 @@ interface CostumeLibraryBrowserProps {
     dataUrl: string;
     bounds?: CostumeBounds;
     document: CostumeDocument;
+    editorSource?: CostumeEditorSource;
   }) => void;
 }
 

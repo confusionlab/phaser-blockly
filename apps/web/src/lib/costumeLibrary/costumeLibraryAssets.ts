@@ -11,8 +11,9 @@ import {
   getActiveCostumeLayer,
   isBitmapCostumeLayer,
 } from '@/lib/costume/costumeDocument';
+import { cloneCostumeEditorSource } from '@/lib/costume/costumeEditorSource';
 import { renderCostumeDocumentPreview } from '@/lib/costume/costumeDocumentRender';
-import type { Costume, CostumeBounds, CostumeDocument } from '@/types';
+import type { Costume, CostumeBounds, CostumeDocument, CostumeEditorSource } from '@/types';
 import { createDefaultGameObject, createDefaultScene } from '@/types';
 import { generateThumbnail } from '@/utils/convexHelpers';
 import {
@@ -35,6 +36,7 @@ export interface CostumeLibraryListItemData {
   thumbnail: string;
   bounds?: CostumeBounds;
   document: CostumeDocument;
+  editorSource?: CostumeEditorSource;
   assetRefs: Array<CostumeLibraryAssetRef & { url: string | null }>;
   imageUrl: string | null;
   scope: TemplateLibraryScope;
@@ -46,6 +48,7 @@ export interface CostumeLibraryCreatePayload {
   thumbnail: string;
   bounds?: CostumeBounds;
   document: CostumeDocument;
+  editorSource?: CostumeEditorSource;
 }
 
 export async function prepareCostumeLibraryCreatePayload(costume: Costume): Promise<{
@@ -77,6 +80,7 @@ export async function prepareCostumeLibraryCreatePayload(costume: Costume): Prom
       thumbnail: await generateThumbnail(thumbnailSource, 128),
       bounds: rendered?.bounds ?? costume.bounds,
       document: normalizedDocument,
+      editorSource: costume.kind === 'static' ? cloneCostumeEditorSource(costume.editorSource) : undefined,
     },
     assetRefs: collectUniqueLibraryAssetRefs(assetRefs),
   };
@@ -89,6 +93,7 @@ export async function hydrateCostumeLibraryItemForInsertion(
   dataUrl: string;
   bounds?: CostumeBounds;
   document: CostumeDocument;
+  editorSource?: CostumeEditorSource;
 }> {
   const schemaVersion = assertSupportedTemplateSchemaVersion(
     item.schemaVersion,
@@ -110,6 +115,7 @@ export async function hydrateCostumeLibraryItemForInsertion(
           assetId: '',
           bounds: item.bounds,
           document: cloneCostumeDocument(item.document),
+          editorSource: cloneCostumeEditorSource(item.editorSource),
         })],
         currentCostumeIndex: 0,
         sounds: [],
@@ -137,6 +143,9 @@ export async function hydrateCostumeLibraryItemForInsertion(
     name: migratedCostume.name,
     bounds: migratedCostume.bounds,
     document: cloneCostumeDocument(ensureCostumeDocument(migratedCostume)),
+    editorSource: migratedCostume.kind === 'static'
+      ? cloneCostumeEditorSource(migratedCostume.editorSource)
+      : undefined,
   };
 
   await ensureLibraryAssetsAvailableLocally(migratedItem.assetRefs);
@@ -178,5 +187,6 @@ export async function hydrateCostumeLibraryItemForInsertion(
     dataUrl,
     bounds: rendered?.bounds ?? migratedItem.bounds,
     document,
+    editorSource: cloneCostumeEditorSource(migratedItem.editorSource),
   };
 }

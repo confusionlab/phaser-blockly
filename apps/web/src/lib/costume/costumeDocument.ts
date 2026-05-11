@@ -23,6 +23,7 @@ import type {
   StaticCostume,
   CostumeVectorDocument,
   CostumeVectorLayer,
+  CostumeEditorSource,
 } from '@/types';
 import {
   cloneCostumeAssetFrame,
@@ -721,6 +722,7 @@ export function createStaticCostumeFromDocument(options: {
   bounds?: CostumeBounds;
   assetFrame?: CostumeAssetFrame | null;
   document: CostumeDocument;
+  editorSource?: CostumeEditorSource | null;
 }): StaticCostume {
   return {
     id: options.id ?? crypto.randomUUID(),
@@ -730,6 +732,7 @@ export function createStaticCostumeFromDocument(options: {
     bounds: options.bounds ? { ...options.bounds } : undefined,
     assetFrame: cloneCostumeAssetFrame(options.assetFrame),
     document: cloneCostumeDocument(options.document),
+    editorSource: cloneCostumeEditorSource(options.editorSource),
   };
 }
 

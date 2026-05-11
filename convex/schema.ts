@@ -1,6 +1,10 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
+import {
+  boundsValidator,
+  costumeDocumentValidator,
+  costumeEditorSourceValidator,
+} from "./costumeValidators";
 import {
   colliderValidator,
   physicsValidator,
@@ -39,6 +43,7 @@ export default defineSchema({
     thumbnail: v.string(), // Base64 small preview
     bounds: v.optional(boundsValidator),
     document: costumeDocumentValidator,
+    editorSource: v.optional(costumeEditorSourceValidator),
     assetRefs: v.optional(v.array(v.object({
       assetId: v.string(),
       kind: v.literal("image"),
@@ -91,6 +96,7 @@ export default defineSchema({
         storageId: v.optional(v.id("_storage")),
         bounds: v.optional(boundsValidator),
         document: costumeDocumentValidator,
+        editorSource: v.optional(costumeEditorSourceValidator),
       }),
     ),
     sounds: v.array(

@@ -25,7 +25,7 @@ import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowse
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
 import { useAssetSidebarDrag } from '@/components/editors/shared/useAssetSidebarDrag';
-import type { Costume, CostumeAssetFrame, CostumeBounds, CostumeDocument } from '@/types';
+import type { Costume, CostumeAssetFrame, CostumeBounds, CostumeDocument, CostumeEditorSource } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
 import {
@@ -402,6 +402,7 @@ export const CostumeList = memo(({
     dataUrl: string;
     bounds?: CostumeBounds;
     document: CostumeDocument;
+    editorSource?: CostumeEditorSource;
   }) => {
     try {
       const newCostume: Costume = createStaticCostumeFromDocument({
@@ -410,6 +411,7 @@ export const CostumeList = memo(({
         assetId: data.dataUrl,
         bounds: data.bounds,
         document: cloneCostumeDocument(data.document),
+        editorSource: data.editorSource,
       });
       onAddCostume(newCostume);
     } catch (error) {

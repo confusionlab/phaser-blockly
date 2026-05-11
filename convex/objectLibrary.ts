@@ -1,7 +1,11 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
+import {
+  boundsValidator,
+  costumeDocumentValidator,
+  costumeEditorSourceValidator,
+} from "./costumeValidators";
 import {
   colliderValidator,
   costumeValidator,
@@ -34,6 +38,7 @@ const objectLibraryCostumeWithPreviewValidator = v.object({
   name: v.string(),
   bounds: v.optional(boundsValidator),
   document: costumeDocumentValidator,
+  editorSource: v.optional(costumeEditorSourceValidator),
   previewUrl: v.union(v.string(), v.null()),
 });
 
@@ -159,6 +164,7 @@ export const list = query({
         storageId?: Id<"_storage">;
         bounds?: unknown;
         document: typeof costumeDocumentValidator.type;
+        editorSource?: typeof costumeEditorSourceValidator.type;
       }>;
       sounds: Array<{
         id: string;
@@ -209,11 +215,13 @@ export const list = query({
             storageId?: Id<"_storage">;
             bounds?: unknown;
             document: typeof costumeDocumentValidator.type;
+            editorSource?: typeof costumeEditorSourceValidator.type;
           }>).map(async (costume) => ({
             id: costume.id,
             name: costume.name,
             bounds: normalizeBounds(costume.bounds),
             document: costume.document,
+            editorSource: costume.editorSource,
             previewUrl: costume.storageId ? await ctx.storage.getUrl(costume.storageId) : null,
           })),
         );

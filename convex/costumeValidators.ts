@@ -61,3 +61,14 @@ export const costumeDocumentValidator = v.object({
   activeLayerId: v.string(),
   layers: v.array(costumeLayerValidator),
 });
+
+export const scratchPaintCostumeEditorSourceValidator = v.object({
+  engine: v.literal("scratch-paint"),
+  version: v.literal(1),
+  format: v.literal("svg"),
+  source: v.string(),
+  rotationCenterX: v.number(),
+  rotationCenterY: v.number(),
+});
+
+export const costumeEditorSourceValidator = scratchPaintCostumeEditorSourceValidator;

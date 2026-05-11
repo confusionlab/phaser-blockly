@@ -12,12 +12,14 @@ import {
   getActiveCostumeLayer,
   isBitmapCostumeLayer,
 } from '@/lib/costume/costumeDocument';
+import { cloneCostumeEditorSource } from '@/lib/costume/costumeEditorSource';
 import { renderCostumeDocumentPreview } from '@/lib/costume/costumeDocumentRender';
 import type {
   ColliderConfig,
   Costume,
   CostumeBounds,
   CostumeDocument,
+  CostumeEditorSource,
   PhysicsConfig,
   Sound,
   Variable,
@@ -46,6 +48,7 @@ export interface ObjectLibraryStoredCostume {
   name: string;
   bounds?: CostumeBounds;
   document: CostumeDocument;
+  editorSource?: CostumeEditorSource;
   previewUrl?: string | null;
 }
 
@@ -82,6 +85,7 @@ export interface ObjectLibraryCreatePayload {
     name: string;
     bounds?: CostumeBounds;
     document: CostumeDocument;
+    editorSource?: CostumeEditorSource;
   }>;
   sounds: Array<{
     id: string;
@@ -130,6 +134,7 @@ interface SaveObjectLibraryItemApi extends CloudAssetApi {
       name: string;
       bounds?: CostumeBounds;
       document: CostumeDocument;
+      editorSource?: CostumeEditorSource;
     }>;
     sounds: Array<{
       id: string;
@@ -194,6 +199,7 @@ export async function prepareObjectLibraryCreatePayload(data: {
         name: costume.name,
         bounds: rendered?.bounds ?? costume.bounds,
         document: normalizedDocument,
+        editorSource: costume.kind === 'static' ? cloneCostumeEditorSource(costume.editorSource) : undefined,
       };
     }),
   );
@@ -312,6 +318,7 @@ export async function hydrateObjectLibraryItemForInsertion(
       name: costume.name,
       bounds: costume.bounds,
       document: cloneCostumeDocument(ensureCostumeDocument(costume)),
+      editorSource: costume.kind === 'static' ? cloneCostumeEditorSource(costume.editorSource) : undefined,
     })),
     sounds: migratedObject.sounds.map((sound) => ({
       id: sound.id,
@@ -367,6 +374,7 @@ export async function hydrateObjectLibraryItemForInsertion(
         assetFrame: rendered?.assetFrame ?? undefined,
         bounds: rendered?.bounds ?? costume.bounds,
         document,
+        editorSource: cloneCostumeEditorSource(costume.editorSource),
       }) satisfies Costume;
     }),
   );
@@ -411,6 +419,7 @@ function cloneCostumesForMigration(costumes: ObjectLibraryStoredCostume[]): Cost
     assetId: '',
     bounds: costume.bounds,
     document: cloneCostumeDocument(ensureCostumeDocument(costume)),
+    editorSource: cloneCostumeEditorSource(costume.editorSource),
   }));
 }
 

@@ -1,7 +1,11 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
+import {
+  boundsValidator,
+  costumeDocumentValidator,
+  costumeEditorSourceValidator,
+} from "./costumeValidators";
 import {
   buildTemplateRenamePatch,
   buildUserTemplateMetadata,
@@ -30,6 +34,7 @@ const costumeWithUrlValidator = v.object({
   thumbnail: v.string(),
   bounds: v.optional(boundsValidator),
   document: costumeDocumentValidator,
+  editorSource: v.optional(costumeEditorSourceValidator),
   assetRefs: v.array(costumeLibraryAssetWithUrlValidator),
   imageUrl: v.union(v.string(), v.null()),
   createdAt: v.number(),
@@ -72,6 +77,7 @@ export const list = query({
       thumbnail: string;
       bounds?: { x: number; y: number; width: number; height: number };
       document: typeof costumeDocumentValidator.type;
+      editorSource?: typeof costumeEditorSourceValidator.type;
       assetRefs?: Array<{ assetId: string; kind: "image" }>;
       storageId?: Id<"_storage">;
       createdAt: number;
@@ -100,6 +106,7 @@ export const list = query({
         thumbnail: item.thumbnail,
         bounds: item.bounds,
         document: item.document,
+        editorSource: item.editorSource,
         assetRefs: resolvedAssetRefs,
         imageUrl: resolvedAssetRefs.find((asset) => asset.url)?.url ?? (
           item.storageId ? await ctx.storage.getUrl(item.storageId) : null
@@ -126,6 +133,7 @@ export const create = mutation({
     thumbnail: v.string(),
     bounds: v.optional(boundsValidator),
     document: costumeDocumentValidator,
+    editorSource: v.optional(costumeEditorSourceValidator),
   },
   returns: v.id("costumeLibrary"),
   handler: async (ctx, args) => {
@@ -143,6 +151,7 @@ export const create = mutation({
       thumbnail: args.thumbnail,
       bounds: args.bounds,
       document: args.document,
+      editorSource: args.editorSource,
       assetRefs,
     });
   },

@@ -1,5 +1,9 @@
 import { v } from "convex/values";
-import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
+import {
+  boundsValidator,
+  costumeDocumentValidator,
+  costumeEditorSourceValidator,
+} from "./costumeValidators";
 
 export const hierarchyFolderValidator = v.object({
   id: v.string(),
@@ -155,6 +159,7 @@ export const costumeValidator = v.object({
   name: v.string(),
   bounds: v.optional(boundsValidator),
   document: costumeDocumentValidator,
+  editorSource: v.optional(costumeEditorSourceValidator),
 });
 
 export const componentDefinitionValidator = v.object({
