@@ -259,3 +259,22 @@ test('Scratch Paint vector costumes keep their native editor when the default is
   expect(summary.editorSourceEngine).toBe('scratch-paint');
   expect(summary.layerKind).toBe('bitmap');
 });
+
+test('Scratch Paint More menu opens inside the frame', async ({ page }) => {
+  const reactChildErrors: string[] = [];
+  page.on('pageerror', (error) => {
+    if (/Objects are not valid as a React child|Portal/i.test(error.message)) {
+      reactChildErrors.push(error.message);
+    }
+  });
+
+  await openCostumeTab(page, `Scratch More Menu ${Date.now()}`, 'scratch');
+
+  const frame = getScratchPaintFrame(page);
+  await expect(page.getByTestId('scratch-paint-costume-editor')).toBeVisible({ timeout: 20000 });
+  await frame.getByRole('button', { name: /convert to vector/i }).click();
+  await frame.getByText('More').click();
+
+  await expect(frame.locator('.Popover-body').filter({ hasText: 'Front' })).toBeVisible({ timeout: 10000 });
+  expect(reactChildErrors).toEqual([]);
+});
