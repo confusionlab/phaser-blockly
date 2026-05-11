@@ -41,10 +41,3 @@ export type ScratchPaintFrameMessage =
   | ScratchPaintFrameLoadMessage
   | ScratchPaintFrameUpdateMessage
   | ScratchPaintFrameRenameMessage;
-
-export function getScratchPaintFrameTargetOrigin(): string {
-  if (typeof window === 'undefined' || window.location.origin === 'null') {
-    return '*';
-  }
-  return window.location.origin;
-}

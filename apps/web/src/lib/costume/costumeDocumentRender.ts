@@ -443,27 +443,29 @@ export async function renderCostumeDocument(
   if (canUseCostumeDocumentPreviewWorker()) {
     try {
       const renderableLayers = await createRenderableCostumePreviewLayers(document);
-      const rendered = await renderCostumePreviewLayersInWorker(COSTUME_CANVAS_SIZE, renderableLayers, {
-        mimeType: options.mimeType,
-        quality: options.quality,
-        trimTransparentFrame: true,
-      });
-      const surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(
-        rendered.dataUrl,
-        rendered.assetFrame,
-      );
-      const fallbackCanvas = globalThis.document?.createElement('canvas') ?? null;
-      if (fallbackCanvas) {
-        fallbackCanvas.width = COSTUME_CANVAS_SIZE;
-        fallbackCanvas.height = COSTUME_CANVAS_SIZE;
-      }
+      if (!hasWorkerUnsupportedPreviewSource(renderableLayers)) {
+        const rendered = await renderCostumePreviewLayersInWorker(COSTUME_CANVAS_SIZE, renderableLayers, {
+          mimeType: options.mimeType,
+          quality: options.quality,
+          trimTransparentFrame: true,
+        });
+        const surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(
+          rendered.dataUrl,
+          rendered.assetFrame,
+        );
+        const fallbackCanvas = globalThis.document?.createElement('canvas') ?? null;
+        if (fallbackCanvas) {
+          fallbackCanvas.width = COSTUME_CANVAS_SIZE;
+          fallbackCanvas.height = COSTUME_CANVAS_SIZE;
+        }
 
-      return {
-        canvas: surfaceCanvas ?? fallbackCanvas ?? await renderCostumeLayerStackToCanvas(document.layers),
-        assetFrame: cloneCostumeAssetFrame(rendered.assetFrame),
-        dataUrl: rendered.dataUrl,
-        bounds: rendered.bounds,
-      };
+        return {
+          canvas: surfaceCanvas ?? fallbackCanvas ?? await renderCostumeLayerStackToCanvas(document.layers),
+          assetFrame: cloneCostumeAssetFrame(rendered.assetFrame),
+          dataUrl: rendered.dataUrl,
+          bounds: rendered.bounds,
+        };
+      }
     } catch (error) {
       console.warn('Failed to render optimized costume asset in the background worker. Falling back to the main thread renderer.', error);
     }
@@ -498,6 +500,13 @@ async function createRenderableCostumePreviewLayers(
   return previewLayers;
 }
 
+function hasWorkerUnsupportedPreviewSource(layers: RenderableCostumePreviewLayer[]): boolean {
+  return layers.some((layer) => {
+    const source = layer.source.trimStart().toLowerCase();
+    return source.startsWith('data:image/svg+xml') || source.startsWith('<svg');
+  });
+}
+
 export async function renderCostumeDocumentPreview(document: CostumeDocument): Promise<{
   assetFrame?: CostumeAssetFrame | null;
   dataUrl: string;
@@ -513,10 +522,12 @@ export async function renderCostumeDocumentPreview(document: CostumeDocument): P
     if (canUseCostumeDocumentPreviewWorker()) {
       try {
         const renderableLayers = await createRenderableCostumePreviewLayers(document);
-        return rememberResolvedPreview(
-          signature,
-          await renderCostumePreviewLayersInWorker(COSTUME_CANVAS_SIZE, renderableLayers),
-        );
+        if (!hasWorkerUnsupportedPreviewSource(renderableLayers)) {
+          return rememberResolvedPreview(
+            signature,
+            await renderCostumePreviewLayersInWorker(COSTUME_CANVAS_SIZE, renderableLayers),
+          );
+        }
       } catch (error) {
         console.warn('Failed to render costume preview in the background worker. Falling back to the main thread renderer.', error);
       }

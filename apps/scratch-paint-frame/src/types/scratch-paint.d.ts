@@ -24,7 +24,3 @@ declare module 'scratch-paint/dist/scratch-paint' {
   export const ScratchPaintReducer: Reducer;
   export default PaintEditor;
 }
-
-declare module 'scratch-paint' {
-  export { default, ScratchPaintReducer } from 'scratch-paint/dist/scratch-paint';
-}

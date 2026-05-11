@@ -1,5 +1,5 @@
 diff --git a/build/index.js b/build/index.js
-index 9dd5db54a1cd5c83211373a44b8587ebffb7668d..b7a509ce4386df744d9d1052ccea696eba7698a3 100644
+index 9dd5db54a1cd5c83211373a44b8587ebffb7668d..4db54278f9d5ca2414d94c0753ba1357bfa59ed8 100644
 --- a/build/index.js
 +++ b/build/index.js
 @@ -148,6 +148,12 @@ var Popover = function (_React$Component) {
@@ -31,16 +31,23 @@ index 9dd5db54a1cd5c83211373a44b8587ebffb7668d..b7a509ce4386df744d9d1052ccea696e
        if (this.props.isOpen) this.enter();
      }
    }, {
-@@ -516,6 +513,8 @@ var Popover = function (_React$Component) {
+@@ -516,6 +513,15 @@ var Popover = function (_React$Component) {
            style = _props$style === undefined ? {} : _props$style,
            tipSize = _props.tipSize;
        var standing = this.state.standing;
-+      var child = _react2.default.Children.only(this.props.children);
-+      var target = _react2.default.isValidElement(child) ? _react2.default.cloneElement(child, { ref: this.getTargetNodeRef }) : child;
++      var didAttachTargetRef = false;
++      var attachTargetRef = function attachTargetRef(child) {
++        if (!didAttachTargetRef && _react2.default.isValidElement(child)) {
++          didAttachTargetRef = true;
++          return _react2.default.cloneElement(child, { ref: this.getTargetNodeRef });
++        }
++        return child;
++      }.bind(this);
++      var target = Array.isArray(this.props.children) ? this.props.children.map(attachTargetRef) : attachTargetRef(this.props.children);
  
  
        var popoverProps = {
-@@ -529,7 +528,7 @@ var Popover = function (_React$Component) {
+@@ -529,7 +535,7 @@ var Popover = function (_React$Component) {
          _react2.default.createElement("div", { className: "Popover-body", children: this.props.body }),
          _react2.default.createElement(_tip2.default, { direction: faces[standing], size: tipSize })
        );
@@ -50,7 +57,7 @@ index 9dd5db54a1cd5c83211373a44b8587ebffb7668d..b7a509ce4386df744d9d1052ccea696e
    }]);
  
 diff --git a/source/index.js b/source/index.js
-index c6138b9f180dde759998dd548b8c11b0fd0c3ad1..61979c5d2786b18e51ea31f3d4b72a154dfa11df 100644
+index c6138b9f180dde759998dd548b8c11b0fd0c3ad1..3d75d04172897ee4309f13db8bac0c33100849f5 100644
 --- a/source/index.js
 +++ b/source/index.js
 @@ -85,15 +85,6 @@ class Popover extends React.Component {
@@ -69,7 +76,7 @@ index c6138b9f180dde759998dd548b8c11b0fd0c3ad1..61979c5d2786b18e51ea31f3d4b72a15
      if (this.props.isOpen) this.enter()
    }
    componentWillReceiveProps(propsNext) {
-@@ -486,9 +477,19 @@ class Popover extends React.Component {
+@@ -486,9 +477,26 @@ class Popover extends React.Component {
    getContainerNodeRef = containerEl => {
      Object.assign(this, { containerEl })
    }
@@ -82,14 +89,21 @@ index c6138b9f180dde759998dd548b8c11b0fd0c3ad1..61979c5d2786b18e51ea31f3d4b72a15
    render() {
      const { className = "", style = {}, tipSize } = this.props
      const { standing } = this.state
-+    const child = React.Children.only(this.props.children)
-+    const target = React.isValidElement(child)
-+      ? React.cloneElement(child, { ref: this.getTargetNodeRef })
-+      : child
++    let didAttachTargetRef = false
++    const attachTargetRef = child => {
++      if (!didAttachTargetRef && React.isValidElement(child)) {
++        didAttachTargetRef = true
++        return React.cloneElement(child, { ref: this.getTargetNodeRef })
++      }
++      return child
++    }
++    const target = Array.isArray(this.props.children)
++      ? this.props.children.map(attachTargetRef)
++      : attachTargetRef(this.props.children)
  
      const popoverProps = {
        className: `Popover Popover-${standing} ${className}`,
-@@ -502,7 +503,7 @@ class Popover extends React.Component {
+@@ -502,7 +510,7 @@ class Popover extends React.Component {
        </div>
      )
      return [
@@ -98,3 +112,6 @@ index c6138b9f180dde759998dd548b8c11b0fd0c3ad1..61979c5d2786b18e51ea31f3d4b72a15
        Platform.isClient &&
          ReactDOM.createPortal(popover, this.props.appendTarget),
      ]
+diff --git a/yarn.lock b/yarn.lock
+deleted file mode 100644
+index 391879b06c7fc3bcfe51dad6b313f0eb8c3af2aa..0000000000000000000000000000000000000000

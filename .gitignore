@@ -11,6 +11,7 @@ node_modules
 dist
 dist-desktop
 dist-ssr
+apps/web/public/scratch-paint-frame/
 .turbo
 out
 dist-electron

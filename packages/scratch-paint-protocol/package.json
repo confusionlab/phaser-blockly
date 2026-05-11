@@ -1,0 +1,18 @@
+{
+  "name": "@pochacoding/scratch-paint-protocol",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "echo 'No build step yet'",
+    "lint": "echo 'No lint step yet'",
+    "typecheck": "tsc --noEmit --pretty false",
+    "test": "echo 'No tests yet'"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}

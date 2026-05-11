@@ -37,13 +37,12 @@ import {
   SCRATCH_PAINT_FRAME_RENAME,
   SCRATCH_PAINT_FRAME_READY,
   SCRATCH_PAINT_FRAME_UPDATE,
-  getScratchPaintFrameTargetOrigin,
   type ScratchPaintFrameLoadMessage,
   type ScratchPaintFrameMessage,
   type ScratchPaintFrameRenameMessage,
   type ScratchPaintFrameUpdateMessage,
   type ScratchPaintImageState,
-} from './ScratchPaintFrameTypes';
+} from '@pochacoding/scratch-paint-protocol';
 
 const SCRATCH_STAGE_SIZE = 1024;
 const SCRATCH_STAGE_CENTER = SCRATCH_STAGE_SIZE / 2;
@@ -156,18 +155,32 @@ function cloneCostumes(costumes: Costume[]): Costume[] {
 }
 
 function getScratchPaintFrameSrc(): string {
+  const configuredFrameUrl = import.meta.env.VITE_SCRATCH_PAINT_FRAME_URL?.trim();
+  if (configuredFrameUrl) {
+    return configuredFrameUrl;
+  }
+
   if (typeof window === 'undefined') {
-    return '/scratch-paint-frame';
+    return '/scratch-paint-frame/';
   }
 
-  const isHashRouter = Boolean(window.desktopAssistant) || window.location.protocol === 'file:';
-  if (isHashRouter) {
-    const url = new URL(window.location.href);
-    url.hash = '/scratch-paint-frame';
-    return url.toString();
+  if (window.location.protocol === 'file:') {
+    return new URL('./scratch-paint-frame/index.html', window.location.href).toString();
   }
 
-  return new URL('/scratch-paint-frame', window.location.origin).toString();
+  if (import.meta.env.DEV) {
+    return 'http://localhost:5175/';
+  }
+
+  return new URL('/scratch-paint-frame/', window.location.origin).toString();
+}
+
+function getScratchPaintFrameTargetOrigin(frameSrc: string): string {
+  if (typeof window === 'undefined' || window.location.origin === 'null') {
+    return '*';
+  }
+  const frameUrl = new URL(frameSrc, window.location.href);
+  return frameUrl.origin;
 }
 
 function isFrameReadyMessage(data: unknown): data is ScratchPaintFrameMessage {
@@ -217,6 +230,7 @@ export function ScratchPaintCostumeEditor() {
   const commitSequenceRef = useRef(0);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const latestCommittedImageRef = useRef<string | null>(null);
+  const scratchPaintFrameSrc = getScratchPaintFrameSrc();
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
@@ -470,8 +484,25 @@ export function ScratchPaintCostumeEditor() {
       type: SCRATCH_PAINT_FRAME_LOAD,
       payload: scratchImageState,
     };
-    iframeRef.current?.contentWindow?.postMessage(message, getScratchPaintFrameTargetOrigin());
-  }, [isFrameReady, scratchImageState]);
+    try {
+      iframeRef.current?.contentWindow?.postMessage(message, getScratchPaintFrameTargetOrigin(scratchPaintFrameSrc));
+    } catch (error) {
+      console.warn('Scratch Paint frame is not ready to receive the costume payload.', error);
+      setLoadError('Scratch Paint could not load. Make sure the Scratch Paint frame app is running.');
+    }
+  }, [isFrameReady, scratchImageState, scratchPaintFrameSrc]);
+
+  useEffect(() => {
+    if (!scratchImageState || isFrameReady || loadError) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setLoadError('Scratch Paint could not load. Make sure the Scratch Paint frame app is running.');
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isFrameReady, loadError, scratchImageState]);
 
   useEffect(() => {
     const handler: UndoRedoHandler = {
@@ -535,8 +566,7 @@ export function ScratchPaintCostumeEditor() {
               key={scratchImageState.imageId}
               ref={iframeRef}
               title="Scratch Paint costume editor"
-              src={getScratchPaintFrameSrc()}
-              sandbox="allow-scripts allow-same-origin"
+              src={scratchPaintFrameSrc}
               className="min-h-0 flex-1 border-0 bg-card"
               data-testid="scratch-paint-frame"
             />

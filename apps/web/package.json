@@ -4,8 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "VITE_APP_BRANCH=$(git rev-parse --abbrev-ref HEAD) vite",
-    "build": "tsc -b && vite build",
+    "dev": "concurrently -k \"pnpm --dir ../.. --filter @pochacoding/scratch-paint-frame dev\" \"env VITE_SCRATCH_PAINT_FRAME_URL=http://localhost:5175/ VITE_APP_BRANCH=$(git rev-parse --abbrev-ref HEAD) vite\"",
+    "dev:vite": "VITE_APP_BRANCH=$(git rev-parse --abbrev-ref HEAD) vite",
+    "build": "pnpm --filter @pochacoding/scratch-paint-frame build && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "playwright test",
@@ -13,7 +14,9 @@
     "test:headed": "playwright test --headed",
     "typecheck": "tsc -b --pretty false"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@pochacoding/scratch-paint-protocol": "workspace:*"
+  },
   "devDependencies": {
     "@xmldom/xmldom": "^0.8.11"
   }

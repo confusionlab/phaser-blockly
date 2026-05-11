@@ -2,7 +2,9 @@
   "files": [],
   "references": [
     { "path": "./apps/web" },
+    { "path": "./apps/scratch-paint-frame" },
     { "path": "./apps/desktop" },
+    { "path": "./packages/scratch-paint-protocol" },
     { "path": "./packages/ui-shared" }
   ]
 }
