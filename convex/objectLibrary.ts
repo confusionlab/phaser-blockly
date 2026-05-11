@@ -304,7 +304,7 @@ export const create = mutation({
       refs: assetRefs,
     });
 
-    return await ctx.db.insert("objectLibrary", {
+    const row = {
       ...buildUserTemplateMetadata(ownerUserId),
       name: args.name,
       thumbnail: args.thumbnail,
@@ -313,10 +313,12 @@ export const create = mutation({
       sounds: args.sounds,
       blocklyXml: args.blocklyXml,
       currentCostumeIndex: args.currentCostumeIndex,
-      physics: args.physics,
-      collider: args.collider,
       localVariables: args.localVariables,
-    });
+      ...(args.physics === undefined ? {} : { physics: args.physics }),
+      ...(args.collider === undefined ? {} : { collider: args.collider }),
+    };
+
+    return await ctx.db.insert("objectLibrary", row);
   },
 });
 

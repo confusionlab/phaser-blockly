@@ -145,15 +145,17 @@ export const create = mutation({
       refs: assetRefs,
     });
 
-    return await ctx.db.insert("costumeLibrary", {
+    const row = {
       ...buildUserTemplateMetadata(ownerUserId),
       name: args.name,
       thumbnail: args.thumbnail,
-      bounds: args.bounds,
       document: args.document,
-      editorSource: args.editorSource,
       assetRefs,
-    });
+      ...(args.bounds === undefined ? {} : { bounds: args.bounds }),
+      ...(args.editorSource === undefined ? {} : { editorSource: args.editorSource }),
+    };
+
+    return await ctx.db.insert("costumeLibrary", row);
   },
 });
 

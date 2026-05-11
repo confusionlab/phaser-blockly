@@ -122,16 +122,18 @@ export const create = mutation({
       scope: "user",
     });
 
-    return await ctx.db.insert("soundLibrary", {
+    const row = {
       ...buildUserTemplateMetadata(ownerUserId),
       name: args.name,
       assetId: args.assetId,
-      mimeType: asset?.mimeType,
-      size: asset?.size,
-      duration: args.duration,
-      trimStart: args.trimStart,
-      trimEnd: args.trimEnd,
-    });
+      ...(asset?.mimeType === undefined ? {} : { mimeType: asset.mimeType }),
+      ...(asset?.size === undefined ? {} : { size: asset.size }),
+      ...(args.duration === undefined ? {} : { duration: args.duration }),
+      ...(args.trimStart === undefined ? {} : { trimStart: args.trimStart }),
+      ...(args.trimEnd === undefined ? {} : { trimEnd: args.trimEnd }),
+    };
+
+    return await ctx.db.insert("soundLibrary", row);
   },
 });
 
