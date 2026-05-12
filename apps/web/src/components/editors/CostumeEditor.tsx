@@ -2491,7 +2491,13 @@ export function CostumeEditor() {
         </div>
       )}
       {(isImageDragActive || isImportingDroppedImages) && (
-        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-background/55 backdrop-blur-[1px]">
+        <div
+          className="absolute inset-0 z-[70] flex items-center justify-center bg-background/55 backdrop-blur-[1px]"
+          onDragEnter={handleImageDragEnter}
+          onDragOver={handleImageDragOver}
+          onDragLeave={handleImageDragLeave}
+          onDrop={handleImageDrop}
+        >
           <div className="flex min-h-36 min-w-72 flex-col items-center justify-center rounded-lg border-2 border-dashed border-primary/55 bg-background/75 px-8 py-6 text-primary shadow-lg">
             <Upload className="mb-3 size-8" />
             <div className="text-sm font-semibold">

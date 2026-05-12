@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { CostumeList } from '@/components/editors/costume/CostumeList';
-import { Palette, TriangleAlert } from '@/components/ui/icons';
+import { Palette, TriangleAlert, Upload } from '@/components/ui/icons';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import {
@@ -25,6 +25,10 @@ import {
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import { getCanvas2dContext } from '@/utils/canvas2d';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
+import {
+  createBitmapCostumesFromImageFiles,
+  hasImportableImageDataTransfer,
+} from '@/lib/costume/costumeImageImport';
 import { createScratchPaintSvgEditorSource } from '@/lib/costume/costumeEditorSource';
 import type { Costume, CostumeBounds } from '@/types';
 import type {
@@ -229,9 +233,12 @@ export function ScratchPaintCostumeEditor() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPreparingImage, setIsPreparingImage] = useState(false);
   const [isFrameReady, setIsFrameReady] = useState(false);
+  const [isImageDragActive, setIsImageDragActive] = useState(false);
+  const [isImportingDroppedImages, setIsImportingDroppedImages] = useState(false);
   const commitSequenceRef = useRef(0);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const latestCommittedImageRef = useRef<string | null>(null);
+  const imageDragDepthRef = useRef(0);
   const scratchPaintFrameSrc = getScratchPaintFrameSrc();
 
   const handleFrameRef = useCallback((node: HTMLIFrameElement | null) => {
@@ -338,6 +345,78 @@ export function ScratchPaintCostumeEditor() {
     }
     return applyCostumeEditorOperation(currentObjectTarget, { operation });
   }, [applyCostumeEditorOperation, currentObjectTarget]);
+
+  const handleAddCostume = useCallback((costume: Costume) => {
+    const didApply = applyOperationToCurrentObject({ type: 'add', costume });
+    if (didApply) {
+      setSelectedCostumeIds([costume.id]);
+    }
+  }, [applyOperationToCurrentObject]);
+
+  const handleImageDragEnter = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!currentObjectTarget || !hasImportableImageDataTransfer(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    imageDragDepthRef.current += 1;
+    setIsImageDragActive(true);
+  }, [currentObjectTarget]);
+
+  const handleImageDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!currentObjectTarget || !hasImportableImageDataTransfer(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+    setIsImageDragActive(true);
+  }, [currentObjectTarget]);
+
+  const handleImageDragLeave = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!hasImportableImageDataTransfer(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    imageDragDepthRef.current = Math.max(0, imageDragDepthRef.current - 1);
+    if (imageDragDepthRef.current === 0) {
+      setIsImageDragActive(false);
+    }
+  }, []);
+
+  const handleImageDrop = useCallback(async (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!currentObjectTarget || !hasImportableImageDataTransfer(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    imageDragDepthRef.current = 0;
+    setIsImageDragActive(false);
+
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length === 0) {
+      return;
+    }
+
+    setIsImportingDroppedImages(true);
+    try {
+      const newCostumes = await createBitmapCostumesFromImageFiles(files, {
+        onFileError: (file, error) => console.error('Failed to process dropped Scratch image:', file.name, error),
+      });
+      for (const costume of newCostumes) {
+        handleAddCostume(costume);
+      }
+    } catch (error) {
+      console.error('Failed to import dropped Scratch image files:', error);
+    } finally {
+      setIsImportingDroppedImages(false);
+    }
+  }, [currentObjectTarget, handleAddCostume]);
 
   const handleSelectCostume = useCallback((
     costumeId: string,
@@ -543,13 +622,20 @@ export function ScratchPaintCostumeEditor() {
   }
 
   return (
-    <div className="relative flex h-full overflow-hidden" data-testid="scratch-paint-costume-editor">
+    <div
+      className="relative flex h-full overflow-hidden"
+      data-testid="scratch-paint-costume-editor"
+      onDragEnter={handleImageDragEnter}
+      onDragOver={handleImageDragOver}
+      onDragLeave={handleImageDragLeave}
+      onDrop={handleImageDrop}
+    >
       <CostumeList
         costumes={costumes}
         activeCostumeId={activeCostumeId}
         selectedCostumeIds={selectedCostumeIds}
         onSelectCostume={handleSelectCostume}
-        onAddCostume={(costume) => applyOperationToCurrentObject({ type: 'add', costume })}
+        onAddCostume={handleAddCostume}
         onDeleteCostumes={handleDeleteCostumes}
         onRenameCostume={(costumeId, name) => applyOperationToCurrentObject({ type: 'rename', costumeId, name })}
         onReplaceCostumes={replaceCostumeList}
@@ -595,6 +681,23 @@ export function ScratchPaintCostumeEditor() {
           )}
         </div>
       </div>
+
+      {(isImageDragActive || isImportingDroppedImages) && (
+        <div
+          className="absolute inset-0 z-[70] flex items-center justify-center bg-background/55 backdrop-blur-[1px]"
+          onDragEnter={handleImageDragEnter}
+          onDragOver={handleImageDragOver}
+          onDragLeave={handleImageDragLeave}
+          onDrop={handleImageDrop}
+        >
+          <div className="flex min-h-36 min-w-72 flex-col items-center justify-center rounded-lg border-2 border-dashed border-primary/55 bg-background/75 px-8 py-6 text-primary shadow-lg">
+            <Upload className="mb-3 size-8" />
+            <div className="text-sm font-semibold">
+              {isImportingDroppedImages ? 'Importing Image...' : 'Drop to Import Image'}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

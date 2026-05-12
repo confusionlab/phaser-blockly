@@ -19,10 +19,11 @@ export function hasImportableImageDataTransfer(dataTransfer: DataTransfer): bool
 
   const items = Array.from(dataTransfer.items ?? []);
   if (items.length > 0) {
-    return items.some((item) => item.kind === 'file' && item.type.startsWith('image/'));
+    return items.some((item) => item.kind === 'file' && (item.type === '' || item.type.startsWith('image/')));
   }
 
-  return Array.from(dataTransfer.files ?? []).some(isImportableImageFile);
+  return Array.from(dataTransfer.types).includes('Files')
+    || Array.from(dataTransfer.files ?? []).some(isImportableImageFile);
 }
 
 export async function createBitmapCostumesFromImageFiles(
