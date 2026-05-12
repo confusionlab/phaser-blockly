@@ -19,8 +19,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Plus, Upload, Loader2, Library, Copy, CopyPlus, Trash2, Clipboard, Scissors } from '@/components/ui/icons';
-import { processImage } from '@/utils/imageProcessor';
-import { calculateVisibleBounds } from '@/utils/imageBounds';
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
@@ -28,12 +26,12 @@ import { useAssetSidebarDrag } from '@/components/editors/shared/useAssetSidebar
 import type { Costume, CostumeAssetFrame, CostumeBounds, CostumeDocument, CostumeEditorSource } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
+import { createBitmapCostumesFromImageFiles } from '@/lib/costume/costumeImageImport';
 import {
   cloneCostume,
   cloneCostumeDocument,
   createStaticCostumeFromDocument,
   createBlankCostumeDocument,
-  createBitmapCostumeDocument,
   convertStaticCostumeToAnimated,
   isAnimatedCostume,
 } from '@/lib/costume/costumeDocument';
@@ -369,28 +367,14 @@ export const CostumeList = memo(({
     setIsProcessing(true);
 
     try {
-      for (const file of Array.from(files)) {
-        if (!file.type.startsWith('image/')) continue;
-
-        try {
-          const processedDataUrl = await processImage(file);
-          // Calculate bounds for the uploaded image
-          const bounds = await calculateVisibleBounds(processedDataUrl);
-          const newCostume: Costume = createStaticCostumeFromDocument({
-            id: crypto.randomUUID(),
-            name: file.name.replace(/\.[^/.]+$/, ''),
-            assetId: processedDataUrl,
-            bounds: bounds || undefined,
-            document: createBitmapCostumeDocument(
-              processedDataUrl,
-              file.name.replace(/\.[^/.]+$/, '') || 'Layer 1',
-            ),
-          });
-          onAddCostume(newCostume);
-        } catch (error) {
-          console.error('Failed to process image:', file.name, error);
-        }
+      const newCostumes = await createBitmapCostumesFromImageFiles(Array.from(files), {
+        onFileError: (file, error) => console.error('Failed to process image:', file.name, error),
+      });
+      for (const costume of newCostumes) {
+        onAddCostume(costume);
       }
+    } catch (error) {
+      console.error('Failed to process imported image files:', error);
     } finally {
       setIsProcessing(false);
       e.target.value = '';

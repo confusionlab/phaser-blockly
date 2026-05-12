@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo, type DragEvent as ReactDragEvent } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import {
@@ -116,6 +116,10 @@ import {
   rasterizeCostumeLayer,
 } from '@/lib/costume/costumeLayerOperations';
 import {
+  createBitmapCostumesFromImageFiles,
+  hasImportableImageDataTransfer,
+} from '@/lib/costume/costumeImageImport';
+import {
   handleSelectionClipboardShortcuts,
   handleSelectionDeleteShortcut,
   handleSelectionGroupingShortcuts,
@@ -124,6 +128,7 @@ import {
 } from '@/lib/editor/editorSurfaceShortcuts';
 import type { FinishPendingEditsOptions } from '@/lib/editor/interactionSurface';
 import { useBulkAssetSelection } from './shared/useBulkAssetSelection';
+import { Upload } from '@/components/ui/icons';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'brush', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
 const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
@@ -479,6 +484,9 @@ export function CostumeEditor() {
   const [canvasPreviewScale, setCanvasPreviewScale] = useState(DEFAULT_COSTUME_PREVIEW_SCALE);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [showSessionLoadingOverlay, setShowSessionLoadingOverlay] = useState(false);
+  const [isImageDragActive, setIsImageDragActive] = useState(false);
+  const [isImportingDroppedImages, setIsImportingDroppedImages] = useState(false);
+  const imageDragDepthRef = useRef(0);
   const vectorStyleRef = useRef(vectorStyle);
   const vectorStyleMixedStateRef = useRef(vectorStyleMixedState);
   const editorMode: CostumeEditorMode = activeLayer?.kind ?? canvasEditorMode;
@@ -1519,6 +1527,71 @@ export function CostumeEditor() {
     });
   }, [applyOperationToCurrentObject, currentObjectTarget, replaceSelectedCostumeIds]);
 
+  const handleImageDragEnter = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!currentObjectTarget || !hasImportableImageDataTransfer(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    imageDragDepthRef.current += 1;
+    setIsImageDragActive(true);
+  }, [currentObjectTarget]);
+
+  const handleImageDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!currentObjectTarget || !hasImportableImageDataTransfer(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+    setIsImageDragActive(true);
+  }, [currentObjectTarget]);
+
+  const handleImageDragLeave = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!hasImportableImageDataTransfer(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    imageDragDepthRef.current = Math.max(0, imageDragDepthRef.current - 1);
+    if (imageDragDepthRef.current === 0) {
+      setIsImageDragActive(false);
+    }
+  }, []);
+
+  const handleImageDrop = useCallback(async (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!currentObjectTarget || !hasImportableImageDataTransfer(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    imageDragDepthRef.current = 0;
+    setIsImageDragActive(false);
+
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length === 0) {
+      return;
+    }
+
+    setIsImportingDroppedImages(true);
+    try {
+      const newCostumes = await createBitmapCostumesFromImageFiles(files, {
+        onFileError: (file, error) => console.error('Failed to process dropped image:', file.name, error),
+      });
+      for (const costume of newCostumes) {
+        handleAddCostume(costume);
+      }
+    } catch (error) {
+      console.error('Failed to import dropped image files:', error);
+    } finally {
+      setIsImportingDroppedImages(false);
+    }
+  }, [currentObjectTarget, handleAddCostume]);
+
   const handleDeleteCostumes = useCallback((costumeIds: string[]) => {
     if (!currentObjectTarget) return;
     if (costumeIds.length === 0) return;
@@ -2207,7 +2280,14 @@ export function CostumeEditor() {
   }
 
   return (
-    <div className="relative flex h-full overflow-visible" data-testid="pocha-costume-editor">
+    <div
+      className="relative flex h-full overflow-visible"
+      data-testid="pocha-costume-editor"
+      onDragEnter={handleImageDragEnter}
+      onDragOver={handleImageDragOver}
+      onDragLeave={handleImageDragLeave}
+      onDrop={handleImageDrop}
+    >
       <CostumeList
         costumes={costumes}
         activeCostumeId={activeCostumeId}
@@ -2408,6 +2488,16 @@ export function CostumeEditor() {
       {isSessionLoading && (
         <div className={`absolute inset-0 z-20 ${showSessionLoadingOverlay ? 'flex items-center justify-center bg-surface-wash text-sm text-muted-foreground backdrop-blur-[1px]' : 'bg-transparent'}`}>
           {showSessionLoadingOverlay ? 'Switching costume editor to the selected object...' : null}
+        </div>
+      )}
+      {(isImageDragActive || isImportingDroppedImages) && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-background/55 backdrop-blur-[1px]">
+          <div className="flex min-h-36 min-w-72 flex-col items-center justify-center rounded-lg border-2 border-dashed border-primary/55 bg-background/75 px-8 py-6 text-primary shadow-lg">
+            <Upload className="mb-3 size-8" />
+            <div className="text-sm font-semibold">
+              {isImportingDroppedImages ? 'Importing Image...' : 'Drop to Import Image'}
+            </div>
+          </div>
         </div>
       )}
     </div>
