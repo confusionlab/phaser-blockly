@@ -62,6 +62,17 @@ async function readActiveCostumeAssetId(page: Page): Promise<string | null> {
   });
 }
 
+async function readActiveCostumeId(page: Page): Promise<string | null> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const scene = project?.scenes[0];
+    const object = scene?.objects[0];
+    const costume = object?.costumes[object.currentCostumeIndex ?? 0];
+    return costume?.id ?? null;
+  });
+}
+
 async function readActiveCostumeDocumentSummary(page: Page): Promise<{
   kind: string | null;
   layerKind: string | null;
@@ -167,6 +178,68 @@ test('can toggle Scratch Paint and commit through the normal costume document', 
   expect(summary.layerKind).toBe('bitmap');
   expect(summary.layerAssetId).toMatch(/^data:image\/png;base64,/);
   expect(summary.editorSourceEngine).toBeNull();
+});
+
+test('keeps the Scratch Paint iframe mounted when switching costumes', async ({ page }) => {
+  await openCostumeTab(page, `Scratch Costume Warm Frame ${Date.now()}`, 'scratch');
+
+  await expect(page.getByTestId('scratch-paint-costume-editor')).toBeVisible({ timeout: 20000 });
+  await expect.poll(async () => await getScratchPaintFrame(page).locator('canvas').count(), { timeout: 20000 })
+    .toBeGreaterThan(0);
+
+  const iframe = page.getByTestId('scratch-paint-frame');
+  await iframe.evaluate((node) => {
+    (node as HTMLElement).dataset.mountToken = 'warm-frame';
+  });
+
+  const [firstCostumeId, secondCostumeId] = await page.evaluate(async () => {
+    const [{ useProjectStore }, { cloneCostume }] = await Promise.all([
+      import('/src/store/projectStore.ts'),
+      import('/src/lib/costume/costumeDocument.ts'),
+    ]);
+    const projectStore = useProjectStore.getState();
+    const project = projectStore.project;
+    const scene = project?.scenes[0];
+    const object = scene?.objects[0];
+    const firstCostume = object?.costumes[object.currentCostumeIndex ?? 0];
+    if (!scene || !object || !firstCostume) {
+      throw new Error('Expected an object with a costume before switching Scratch Paint costumes.');
+    }
+
+    const secondCostume = cloneCostume(firstCostume);
+    secondCostume.id = `scratch-warm-frame-${Date.now()}`;
+    secondCostume.name = 'Warm Frame Second';
+    projectStore.applyCostumeEditorOperation(
+      { sceneId: scene.id, objectId: object.id },
+      { operation: { type: 'add', costume: secondCostume }, recordHistory: false },
+    );
+    return [firstCostume.id, secondCostume.id];
+  });
+
+  await expect.poll(async () => await readActiveCostumeId(page), { timeout: 10000 }).toBe(secondCostumeId);
+  await expect.poll(async () => await iframe.evaluate((node) => (node as HTMLElement).dataset.mountToken), {
+    timeout: 10000,
+  }).toBe('warm-frame');
+
+  await page.evaluate(async (costumeId) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const projectStore = useProjectStore.getState();
+    const project = projectStore.project;
+    const scene = project?.scenes[0];
+    const object = scene?.objects[0];
+    if (!scene || !object) {
+      throw new Error('Expected an object before switching back to the first Scratch Paint costume.');
+    }
+    projectStore.applyCostumeEditorOperation(
+      { sceneId: scene.id, objectId: object.id },
+      { operation: { type: 'select', costumeId }, recordHistory: false },
+    );
+  }, firstCostumeId);
+
+  await expect.poll(async () => await readActiveCostumeId(page), { timeout: 10000 }).toBe(firstCostumeId);
+  await expect.poll(async () => await iframe.evaluate((node) => (node as HTMLElement).dataset.mountToken), {
+    timeout: 10000,
+  }).toBe('warm-frame');
 });
 
 test('preserves Scratch Paint vector source while keeping a normal runtime bitmap', async ({ page }) => {

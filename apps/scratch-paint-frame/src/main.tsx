@@ -91,6 +91,7 @@ function ScratchPaintFrameApp() {
               onUpdateImage={(isVector, image, rotationCenterX, rotationCenterY) => {
                 postToParent({
                   type: SCRATCH_PAINT_FRAME_UPDATE,
+                  imageId: imageState.imageId,
                   isVector,
                   image,
                   rotationCenterX,
@@ -100,6 +101,7 @@ function ScratchPaintFrameApp() {
               onUpdateName={(name) => {
                 postToParent({
                   type: SCRATCH_PAINT_FRAME_RENAME,
+                  imageId: imageState.imageId,
                   name,
                 });
               }}

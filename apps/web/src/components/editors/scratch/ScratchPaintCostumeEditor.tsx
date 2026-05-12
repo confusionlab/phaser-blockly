@@ -195,7 +195,8 @@ function isFrameUpdateMessage(data: unknown): data is ScratchPaintFrameUpdateMes
   return (
     typeof data === 'object' &&
     data !== null &&
-    (data as ScratchPaintFrameMessage).type === SCRATCH_PAINT_FRAME_UPDATE
+    (data as ScratchPaintFrameMessage).type === SCRATCH_PAINT_FRAME_UPDATE &&
+    typeof (data as ScratchPaintFrameUpdateMessage).imageId === 'string'
   );
 }
 
@@ -203,7 +204,8 @@ function isFrameRenameMessage(data: unknown): data is ScratchPaintFrameRenameMes
   return (
     typeof data === 'object' &&
     data !== null &&
-    (data as ScratchPaintFrameMessage).type === SCRATCH_PAINT_FRAME_RENAME
+    (data as ScratchPaintFrameMessage).type === SCRATCH_PAINT_FRAME_RENAME &&
+    typeof (data as ScratchPaintFrameRenameMessage).imageId === 'string'
   );
 }
 
@@ -231,6 +233,16 @@ export function ScratchPaintCostumeEditor() {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const latestCommittedImageRef = useRef<string | null>(null);
   const scratchPaintFrameSrc = getScratchPaintFrameSrc();
+
+  const handleFrameRef = useCallback((node: HTMLIFrameElement | null) => {
+    if (iframeRef.current === node) {
+      return;
+    }
+    iframeRef.current = node;
+    if (node) {
+      setIsFrameReady(false);
+    }
+  }, []);
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
@@ -266,7 +278,7 @@ export function ScratchPaintCostumeEditor() {
     }
 
     let cancelled = false;
-    setIsFrameReady(false);
+    commitSequenceRef.current += 1;
     setIsPreparingImage(true);
     setLoadError(null);
     void createScratchImageStateFromCostume(currentCostume).then((nextState) => {
@@ -456,6 +468,9 @@ export function ScratchPaintCostumeEditor() {
       }
 
       if (isFrameUpdateMessage(event.data)) {
+        if (event.data.imageId !== activeCostumeId) {
+          return;
+        }
         void commitScratchImage(
           event.data.isVector,
           event.data.image,
@@ -466,6 +481,9 @@ export function ScratchPaintCostumeEditor() {
       }
 
       if (isFrameRenameMessage(event.data) && activeCostumeId) {
+        if (event.data.imageId !== activeCostumeId) {
+          return;
+        }
         setScratchImageState((current) => current ? { ...current, name: event.data.name } : current);
         applyOperationToCurrentObject({ type: 'rename', costumeId: activeCostumeId, name: event.data.name });
       }
@@ -563,8 +581,7 @@ export function ScratchPaintCostumeEditor() {
             </div>
           ) : scratchImageState ? (
             <iframe
-              key={scratchImageState.imageId}
-              ref={iframeRef}
+              ref={handleFrameRef}
               title="Scratch Paint costume editor"
               src={scratchPaintFrameSrc}
               className="min-h-0 flex-1 border-0 bg-card"

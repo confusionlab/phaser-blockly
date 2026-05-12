@@ -25,6 +25,7 @@ export interface ScratchPaintFrameLoadMessage {
 
 export interface ScratchPaintFrameUpdateMessage {
   type: typeof SCRATCH_PAINT_FRAME_UPDATE;
+  imageId: string;
   isVector: boolean;
   image: string | ImageData;
   rotationCenterX?: number;
@@ -33,6 +34,7 @@ export interface ScratchPaintFrameUpdateMessage {
 
 export interface ScratchPaintFrameRenameMessage {
   type: typeof SCRATCH_PAINT_FRAME_RENAME;
+  imageId: string;
   name: string;
 }
 
