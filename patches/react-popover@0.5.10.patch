@@ -1,21 +1,27 @@
 diff --git a/build/index.js b/build/index.js
-index 9dd5db54a1cd5c83211373a44b8587ebffb7668d..4db54278f9d5ca2414d94c0753ba1357bfa59ed8 100644
+index 9dd5db5..2ff1f37 100644
 --- a/build/index.js
 +++ b/build/index.js
-@@ -148,6 +148,12 @@ var Popover = function (_React$Component) {
+@@ -116,6 +116,7 @@ var Popover = function (_React$Component) {
+     };
+ 
+     _this.checkForOuterAction = function (event) {
++      if (!_this.containerEl || !_this.targetEl) return;
+       var isOuterAction = !_this.containerEl.contains(event.target) && !_this.targetEl.contains(event.target);
+       if (isOuterAction) _this.props.onOuterAction(event);
+     };
+@@ -148,6 +149,10 @@ var Popover = function (_React$Component) {
        Object.assign(_this, { containerEl: containerEl });
      };
  
 +    _this.getTargetNodeRef = function (targetEl) {
 +      _this.targetEl = targetEl;
-+      var childRef = _this.props.children && _this.props.children.ref;
-+      if (typeof childRef === "function") childRef(targetEl);else if (childRef && typeof childRef === "object") childRef.current = targetEl;
 +    };
 +
      _this.state = {
        standing: "above",
        exited: !_this.props.isOpen, // for animation-dependent rendering, should popover close/open?
-@@ -160,15 +166,6 @@ var Popover = function (_React$Component) {
+@@ -160,15 +165,6 @@ var Popover = function (_React$Component) {
    _createClass(Popover, [{
      key: "componentDidMount",
      value: function componentDidMount() {
@@ -31,23 +37,39 @@ index 9dd5db54a1cd5c83211373a44b8587ebffb7668d..4db54278f9d5ca2414d94c0753ba1357
        if (this.props.isOpen) this.enter();
      }
    }, {
-@@ -516,6 +513,15 @@ var Popover = function (_React$Component) {
+@@ -444,6 +440,8 @@ var Popover = function (_React$Component) {
+ 
+       /* Get references to DOM elements. */
+ 
++      if (!this.containerEl || !this.targetEl) return;
++
+       this.bodyEl = this.containerEl.querySelector(".Popover-body");
+       this.tipEl = this.containerEl.querySelector(".Popover-tip");
+ 
+@@ -493,7 +491,9 @@ var Popover = function (_React$Component) {
+     key: "untrackPopover",
+     value: function untrackPopover() {
+       clearInterval(this.checkLayoutInterval);
+-      this.frameEl.removeEventListener("scroll", this.onFrameScroll);
++      if (this.frameEl) {
++        this.frameEl.removeEventListener("scroll", this.onFrameScroll);
++      }
+       _onResize2.default.off(this.frameEl, this.onFrameResize);
+       _onResize2.default.off(this.containerEl, this.onPopoverResize);
+       _onResize2.default.off(this.targetEl, this.onTargetResize);
+@@ -516,6 +516,11 @@ var Popover = function (_React$Component) {
            style = _props$style === undefined ? {} : _props$style,
            tipSize = _props.tipSize;
        var standing = this.state.standing;
-+      var didAttachTargetRef = false;
-+      var attachTargetRef = function attachTargetRef(child) {
-+        if (!didAttachTargetRef && _react2.default.isValidElement(child)) {
-+          didAttachTargetRef = true;
-+          return _react2.default.cloneElement(child, { ref: this.getTargetNodeRef });
-+        }
-+        return child;
-+      }.bind(this);
-+      var target = Array.isArray(this.props.children) ? this.props.children.map(attachTargetRef) : attachTargetRef(this.props.children);
++      var target = _react2.default.createElement(
++        "div",
++        { ref: this.getTargetNodeRef, style: { display: "inline-flex" } },
++        this.props.children
++      );
  
  
        var popoverProps = {
-@@ -529,7 +535,7 @@ var Popover = function (_React$Component) {
+@@ -529,7 +534,7 @@ var Popover = function (_React$Component) {
          _react2.default.createElement("div", { className: "Popover-body", children: this.props.body }),
          _react2.default.createElement(_tip2.default, { direction: faces[standing], size: tipSize })
        );
@@ -56,8 +78,38 @@ index 9dd5db54a1cd5c83211373a44b8587ebffb7668d..4db54278f9d5ca2414d94c0753ba1357
      }
    }]);
  
+diff --git a/build/on-resize.js b/build/on-resize.js
+index 7bb7c25..e149f72 100644
+--- a/build/on-resize.js
++++ b/build/on-resize.js
+@@ -22,6 +22,7 @@ var isIE = _platform.isServer ? false : navigator.userAgent.match(/Trident/);
+ var namespace = "__resizeDetector__";
+ 
+ var uninitialize = function uninitialize(el) {
++  if (!el || !el[namespace]) return;
+   el[namespace].destroy();
+   el[namespace] = undefined;
+ };
+@@ -85,6 +86,8 @@ var on = function on(el, fn) {
+   /* Window object natively publishes resize events. We handle it as a
+   special case here so that users do not have to think about two APIs. */
+ 
++  if (!el) return;
++
+   if (el === _platform.window) {
+     _platform.window.addEventListener("resize", fn);
+     return;
+@@ -97,6 +100,8 @@ var on = function on(el, fn) {
+ };
+ 
+ var off = function off(el, fn) {
++  if (!el) return;
++
+   if (el === _platform.window) {
+     _platform.window.removeEventListener("resize", fn);
+     return;
 diff --git a/source/index.js b/source/index.js
-index c6138b9f180dde759998dd548b8c11b0fd0c3ad1..3d75d04172897ee4309f13db8bac0c33100849f5 100644
+index c6138b9..7f5258d 100644
 --- a/source/index.js
 +++ b/source/index.js
 @@ -85,15 +85,6 @@ class Popover extends React.Component {
@@ -76,34 +128,53 @@ index c6138b9f180dde759998dd548b8c11b0fd0c3ad1..3d75d04172897ee4309f13db8bac0c33
      if (this.props.isOpen) this.enter()
    }
    componentWillReceiveProps(propsNext) {
-@@ -486,9 +477,26 @@ class Popover extends React.Component {
+@@ -381,6 +372,8 @@ class Popover extends React.Component {
+ 
+     /* Get references to DOM elements. */
+ 
++    if (!this.containerEl || !this.targetEl) return
++
+     this.bodyEl = this.containerEl.querySelector(".Popover-body")
+     this.tipEl = this.containerEl.querySelector(".Popover-tip")
+ 
+@@ -442,6 +435,7 @@ class Popover extends React.Component {
+     this.resolvePopoverLayout()
+   }
+   checkForOuterAction = event => {
++    if (!this.containerEl || !this.targetEl) return
+     const isOuterAction =
+       !this.containerEl.contains(event.target) &&
+       !this.targetEl.contains(event.target)
+@@ -449,7 +443,9 @@ class Popover extends React.Component {
+   }
+   untrackPopover() {
+     clearInterval(this.checkLayoutInterval)
+-    this.frameEl.removeEventListener("scroll", this.onFrameScroll)
++    if (this.frameEl) {
++      this.frameEl.removeEventListener("scroll", this.onFrameScroll)
++    }
+     resizeEvent.off(this.frameEl, this.onFrameResize)
+     resizeEvent.off(this.containerEl, this.onPopoverResize)
+     resizeEvent.off(this.targetEl, this.onTargetResize)
+@@ -486,9 +482,17 @@ class Popover extends React.Component {
    getContainerNodeRef = containerEl => {
      Object.assign(this, { containerEl })
    }
 +  getTargetNodeRef = targetEl => {
 +    this.targetEl = targetEl
-+    const childRef = this.props.children && this.props.children.ref
-+    if (typeof childRef === "function") childRef(targetEl)
-+    else if (childRef && typeof childRef === "object") childRef.current = targetEl
 +  }
    render() {
      const { className = "", style = {}, tipSize } = this.props
      const { standing } = this.state
-+    let didAttachTargetRef = false
-+    const attachTargetRef = child => {
-+      if (!didAttachTargetRef && React.isValidElement(child)) {
-+        didAttachTargetRef = true
-+        return React.cloneElement(child, { ref: this.getTargetNodeRef })
-+      }
-+      return child
-+    }
-+    const target = Array.isArray(this.props.children)
-+      ? this.props.children.map(attachTargetRef)
-+      : attachTargetRef(this.props.children)
++    const target = (
++      <div ref={this.getTargetNodeRef} style={{ display: "inline-flex" }}>
++        {this.props.children}
++      </div>
++    )
  
      const popoverProps = {
        className: `Popover Popover-${standing} ${className}`,
-@@ -502,7 +510,7 @@ class Popover extends React.Component {
+@@ -502,7 +506,7 @@ class Popover extends React.Component {
        </div>
      )
      return [
@@ -112,6 +183,33 @@ index c6138b9f180dde759998dd548b8c11b0fd0c3ad1..3d75d04172897ee4309f13db8bac0c33
        Platform.isClient &&
          ReactDOM.createPortal(popover, this.props.appendTarget),
      ]
-diff --git a/yarn.lock b/yarn.lock
-deleted file mode 100644
-index 391879b06c7fc3bcfe51dad6b313f0eb8c3af2aa..0000000000000000000000000000000000000000
+diff --git a/source/on-resize.js b/source/on-resize.js
+index cb51b48..2837e71 100644
+--- a/source/on-resize.js
++++ b/source/on-resize.js
+@@ -24,6 +24,7 @@ const isIE = isServer ? false : navigator.userAgent.match(/Trident/)
+ const namespace = "__resizeDetector__"
+ 
+ const uninitialize = el => {
++  if (!el || !el[namespace]) return
+   el[namespace].destroy()
+   el[namespace] = undefined
+ }
+@@ -90,6 +91,8 @@ const on = (el, fn) => {
+   /* Window object natively publishes resize events. We handle it as a
+   special case here so that users do not have to think about two APIs. */
+ 
++  if (!el) return
++
+   if (el === window) {
+     window.addEventListener("resize", fn)
+     return
+@@ -102,6 +105,8 @@ const on = (el, fn) => {
+ }
+ 
+ const off = (el, fn) => {
++  if (!el) return
++
+   if (el === window) {
+     window.removeEventListener("resize", fn)
+     return
